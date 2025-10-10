@@ -1,0 +1,20 @@
+factory_id,factory_name,parent_company,address,latitude,longitude
+SZ-OCH,Ochsenfurt,Südzucker,"Marktbreiter Straße 74, 97199 Ochsenfurt",49.6644,10.0611
+SZ-OFN,Offenau,Südzucker,"Ludwig-Kayser-Straße, 74254 Offenau",49.2558,9.1764
+SZ-OFS,Offstein,Südzucker,"Wormser Straße 11, 67283 Obrigheim/Pfalz",49.5997,8.2192
+SZ-PLT,Plattling,Südzucker,"Dr.-Ludwig-Kayser-Straße 1, 94447 Plattling",48.7758,12.8847
+SZ-RAI,Rain,Südzucker,"Donauwörther Straße 50, 86641 Rain",48.6828,10.9022
+SZ-WAB,Wabern,Südzucker,"Homberger Straße 1, 34590 Wabern",51.0967,9.3514
+SZ-ZTZ,Zeitz,Südzucker,"Albrechtstraße 54, 06712 Zeitz",51.0378,12.1386
+NZ-CLA,Clauen,Nordzucker,"Zuckerfabrik 3, 31249 Hohenhameln",52.2484,10.0257
+NZ-NOR,Nordstemmen,Nordzucker,"Calenberger Straße 36, 31171 Nordstemmen",52.1636,9.7883
+NZ-UEL,Uelzen,Nordzucker,"An der Zuckerfabrik 1, 29525 Uelzen",52.9711,10.5519
+NZ-KLW,Klein Wanzleben,Nordzucker,"Magdeburger Landstrasse 1-5, 39164 Wanzleben-Börde",52.0701,11.3853
+NZ-SCH,Schladen,Nordzucker,"Bahnhofstrasse 13, 38315 Schladen",52.0225,10.5486
+NZ-GMU,Groß Munzel,Nordzucker,"Spielburg 9, 30890 Barsinghausen",52.3486,9.4983
+PL-APP,Appeldorn,Pfeifer & Langen,"Reeser Straße 231, 47546 Kalkar",51.7719,6.3314
+PL-ELS,Elsdorf,Pfeifer & Langen,"Dürener Str. 40, 50189 Elsdorf",50.9397,6.5686
+PL-EUS,Euskirchen,Pfeifer & Langen,"Bonner Str. 2, 53879 Euskirchen",50.6567,6.7915
+PL-JUL,Jülich,Pfeifer & Langen,"Dürener Str. 20, 52428 Jülich",50.9122,6.3683
+PL-KON,Könnern,Pfeifer & Langen,"An den Sieben Stücken, 06420 Könnern",51.6708,11.7761
+PL-LAG,Lage,Pfeifer & Langen,"Pivitsheider Str. 2, 32791 Lage",51.9861,8.7844
