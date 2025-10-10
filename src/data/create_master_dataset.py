@@ -1,172 +1,186 @@
 import pandas as pd
+import geopandas as gpd
 import os
+import logging
+from pathlib import Path
+
+# --- Setup basic logging ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- CONFIGURATION: SELECT THE ECONOMIC FEATURES TO INCLUDE ---
+# This list now controls which economic indicators are processed and included.
+ECONOMIC_FEATURES_TO_INCLUDE = [
+    # --- Producer Price ---
+    'LWPR-1',    # Pflanzliche Erzeugung
+    'LWPR-132',  # Zuckerrüben (Sugar Beets)
+
+    #'LWBM',  # Landwirtschaftliche Betriebsmittel (Total Agricultural Inputs)
+
+    # --- Current Consumption ---
+    #'LWBM-1',
+    # Waren und Dienstleist. des lfd. landw. Verbrauchs (Goods and services for current agricultural consumption)
+    'LWBM-11',  # Saat- und Pflanzgut (Seeds and Planting Material)
+    'LWBM-12',  # Energie und Schmierstoffe (Energy and Lubricants)
+    'LWBM-13',  # Düngemittel (Fertilizer)
+    'LWBM-14',  # Pflanzenschutzmittel (Plant Protection Products)
+]
 
 
-def process_campaign_features(campaign_file_path):
+def process_economic_features(producer_price_file, input_price_file, feature_ids_to_include):
     """
-    Calculates national-level harvest campaign features for each year.
+    Loads, processes, and prepares all specified economic data from raw sources,
+    calculating annual averages for input prices.
     """
-    print("Processing campaign history data...")
-    campaign_history = pd.read_csv(campaign_file_path)
+    logging.info(f"Processing {len(feature_ids_to_include)} selected economic features from raw files...")
 
-    campaign_history['campaign_start_date'] = pd.to_datetime(campaign_history['campaign_start_date'], errors='coerce')
-    campaign_history['campaign_end_date'] = pd.to_datetime(campaign_history['campaign_end_date'], errors='coerce')
+    # --- Producer Prices (Annual Data) ---
+    df_producer_prices = pd.DataFrame()
+    try:
+        df_prod = pd.read_csv(producer_price_file)
+        # Filter for only the producer price IDs specified in the config list
+        producer_prices_filtered = df_prod[df_prod['ID'].isin(feature_ids_to_include)].copy()
 
-    national_averages = campaign_history.groupby('year').agg(
-        avg_start_date=('campaign_start_date', 'mean'),
-        avg_end_date=('campaign_end_date', 'mean')
-    ).reset_index()
+        if not producer_prices_filtered.empty:
+            df_melted_prod = producer_prices_filtered.melt(
+                id_vars=['ID', 'Description'],
+                var_name='year',
+                value_name='price_index'
+            )
+            # Create a clean feature name (e.g., 'zuckerrben')
+            df_melted_prod['feature_name'] = df_melted_prod['Description'].str.lower().str.replace(' ',
+                                                                                                   '_').str.replace(
+                '[^a-zA-Z0-9_]', '', regex=True)
+            df_producer_prices = df_melted_prod.pivot_table(index='year', columns='feature_name',
+                                                            values='price_index')
+            df_producer_prices.index = pd.to_numeric(df_producer_prices.index)
+        logging.info(" -> Producer prices processed.")
+    except Exception as e:
+        logging.error(f"Could not process producer prices. Error: {e}")
+        # Return an empty dataframe with a 'year' index to prevent merge errors
+        return pd.DataFrame(index=pd.Index([], name='year'))
 
-    national_averages['national_campaign_start_day_of_year'] = national_averages['avg_start_date'].dt.dayofyear
-    national_averages['national_campaign_end_day_of_year'] = national_averages['avg_end_date'].dt.dayofyear
-    national_averages['national_campaign_duration'] = (
-                national_averages['avg_end_date'] - national_averages['avg_start_date']).dt.days
+    # --- Input Prices (to be averaged annually) ---
+    df_input_prices_final = pd.DataFrame()
+    try:
+        df_in = pd.read_csv(input_price_file)
+        df_inputs_filtered = df_in[df_in['ID'].isin(feature_ids_to_include)].copy()
 
-    print("  -> Campaign features created successfully.")
-    return national_averages[['year', 'national_campaign_start_day_of_year', 'national_campaign_end_day_of_year',
-                              'national_campaign_duration']]
+        if not df_inputs_filtered.empty:
+            df_melted = df_inputs_filtered.melt(
+                id_vars=['ID', 'Description'],
+                var_name='period',
+                value_name='price_index'
+            )
+            df_melted['feature_name'] = df_melted['Description'].str.lower().str.replace(' ', '_').str.replace(
+                '[^a-zA-Z0-9_]', '', regex=True)
+            # Extract year from 'MM/YYYY' format
+            df_melted['year'] = pd.to_numeric(df_melted['period'].str.split('/').str[1], errors='coerce')
+            df_melted.dropna(subset=['year'], inplace=True)
+            df_melted['year'] = df_melted['year'].astype(int)
+            # Calculate the annual average from quarterly data
+            df_annual_avg = df_melted.groupby(['year', 'feature_name'])['price_index'].mean().reset_index()
+            df_input_prices_final = df_annual_avg.pivot(index='year', columns='feature_name', values='price_index')
+        logging.info(" -> Input prices processed and averaged annually.")
+    except Exception as e:
+        logging.error(f"Could not process input prices. Error: {e}")
+        # Return an empty dataframe with a 'year' index
+        return pd.DataFrame(index=pd.Index([], name='year'))
+
+    # --- Combine all economic data ---
+    df_economic = df_producer_prices.join(df_input_prices_final, how='outer')
+    logging.info("All selected economic features processed successfully.")
+    return df_economic.reset_index()
 
 
-def process_producer_prices(producer_price_file):
+def process_district_geography(geojson_path):
     """
-    Loads and transforms the producer price index for sugar beets.
-    This function is specifically designed to handle the comma-delimited format
-    where numbers like '91,4' are split into two columns.
+    Loads the districts GeoJSON and creates a simple lookup table with
+    ID, state, and centroid coordinates.
     """
-    print("Processing producer price data...")
-    # Read the raw CSV content without headers
-    df = pd.read_csv(producer_price_file, header=None, delimiter=',')
+    logging.info("Processing district geography data from GeoJSON...")
+    try:
+        gdf = gpd.read_file(geojson_path)
+        gdf.rename(columns={'id': 'district_no', 'state': 'state_name'}, inplace=True)
 
-    # The first row is the header. Let's grab it.
-    header = list(df.iloc[0])
+        # Ensure CRS is set, then calculate centroids
+        if gdf.crs is None:
+            gdf = gdf.set_crs("EPSG:4326")
+        gdf_proj = gdf.to_crs('+proj=cea')  # Use an equal-area projection for accurate centroids
+        centroids = gdf_proj['geometry'].centroid.to_crs(epsg=4326)  # Convert back to lat/lon
 
-    # The actual data is in the following rows
-    data = df.iloc[1:]
+        gdf['latitude'] = centroids.y
+        gdf['longitude'] = centroids.x
 
-    # Find the row containing "Zuckerrüben"
-    # Column 1 contains the description
-    sugar_beet_raw_row = data[data[1].str.contains("Zuckerrüben")]
+        # Select and clean final columns
+        districts_df = gdf[['district_no', 'state_name', 'latitude', 'longitude']].copy()
+        districts_df['district_no'] = districts_df['district_no'].astype(str).str.zfill(5)
 
-    if sugar_beet_raw_row.empty:
-        raise ValueError("Could not find 'Zuckerrüben' in the producer price file.")
-
-    # Prepare data for the new, clean DataFrame
-    clean_data = {'year': [], 'producer_price_index': []}
-
-    # Iterate through the YEAR columns. They start at column index 2 and jump by 2.
-    # e.g., index 2 is '2015', index 4 is '2016', etc.
-    for i in range(2, len(header), 2):
-        year = int(header[i])
-
-        # The integer part is at index i, the decimal part is at i+1
-        integer_part = pd.to_numeric(sugar_beet_raw_row.iloc[0, i])
-        decimal_part = pd.to_numeric(sugar_beet_raw_row.iloc[0, i + 1])
-
-        full_value = integer_part + (decimal_part / 10.0)
-
-        clean_data['year'].append(year)
-        clean_data['producer_price_index'].append(full_value)
-
-    final_df = pd.DataFrame(clean_data)
-    print("  -> Producer prices processed successfully.")
-    return final_df
-
-
-def process_input_prices(input_price_file):
-    """
-    Loads and transforms key input price indices (Energy, Fertilizer).
-    This function also handles the comma-delimited format where numbers are split.
-    """
-    print("Processing input price data...")
-    df = pd.read_csv(input_price_file, header=None, delimiter=',')
-
-    # The first row is the header
-    header = list(df.iloc[0])
-
-    # The rest is data
-    data = df.iloc[1:]
-
-    # Find the rows we need
-    key_inputs_pattern = "Energie und Schmierstoffe|Düngemittel"
-    input_prices_raw = data[data[1].str.contains(key_inputs_pattern)]
-
-    if input_prices_raw.empty:
-        raise ValueError("Could not find required descriptions in the input price file.")
-
-    # We will build a clean "long" format table first
-    long_format_data = []
-
-    # Iterate over each required row (Energy, Fertilizer)
-    for index, row in input_prices_raw.iterrows():
-        description = row[1]  # The name of the category
-        # Iterate through the PERIOD columns, which start at index 2 and jump by 2
-        for i in range(2, len(header), 2):
-            period = header[i]  # e.g., '01/2018'
-
-            integer_part = pd.to_numeric(row.iloc[i])
-            decimal_part = pd.to_numeric(row.iloc[i + 1])
-
-            price_index = integer_part + (decimal_part / 10.0)
-            year = int(period.split('/')[1])
-
-            long_format_data.append([year, description, price_index])
-
-    # Convert to a DataFrame for easy processing
-    melted_df = pd.DataFrame(long_format_data, columns=['year', 'Description', 'price_index'])
-
-    # Calculate the annual average from the quarterly data
-    annual_avg_prices = melted_df.groupby(['year', 'Description'])['price_index'].mean().reset_index()
-
-    # Pivot the table to get one row per year
-    final_input_prices = annual_avg_prices.pivot(index='year', columns='Description',
-                                                 values='price_index').reset_index()
-    final_input_prices.rename(
-        columns={'Energie und Schmierstoffe': 'energy_price_index', 'Düngemittel': 'fertilizer_price_index'},
-        inplace=True)
-
-    print("  -> Input prices processed successfully.")
-    return final_input_prices
+        logging.info(" -> District geography lookup created successfully.")
+        return districts_df
+    except Exception as e:
+        logging.error(f"FATAL: Could not process GeoJSON file. Error: {e}")
+        return None
 
 
 def main():
     """Main function to orchestrate the data merging and saving."""
+    logging.info("--- Starting Comprehensive Master Dataset Creation ---")
 
     # --- Define File Paths ---
-    climate_yield_file = 'data/03_processed/final_dataset_with_advanced_features.csv'
-    static_features_file = 'data/03_processed/static_features_districts_advanced.csv'
-    campaign_file = 'data/01_raw/HarvestData/campaign_history.csv'
-    producer_price_file = 'data/01_raw/61211-0002_de/61211-0001_de.csv'
-    input_price_file = 'data/01_raw/61211-0002_de/61221-0003_de.csv'
+    base_data_file = Path('data/03_processed/final_dataset_with_advanced_features.csv')
+    static_features_file = Path('data/03_processed/static_features_districts_advanced.csv')
+    producer_price_file = Path('data/01_raw/61211-0002_de/61211-0001_de.csv')
+    input_price_file = Path('data/01_raw/61211-0002_de/61221-0003_de.csv')
+    geojson_path = Path('data/01_raw/districts_official.geojson')
 
-    output_path = 'data/04_master/'
-    output_file = os.path.join(output_path, 'master_dataset.csv')
-    os.makedirs(output_path, exist_ok=True)
+    output_path = Path('data/04_master/')
+    output_file = output_path / 'master_dataset.csv'
+    output_path.mkdir(exist_ok=True)
 
-    # --- Load and Process Data ---
-    print("Loading base data...")
-    climate_yield_data = pd.read_csv(climate_yield_file)
-    static_features = pd.read_csv(static_features_file)
+    # --- Step 1: Load Base and Static Data ---
+    logging.info("Loading base yield/weather and static soil/elevation data...")
+    try:
+        base_df = pd.read_csv(base_data_file)
+        base_df['district_no'] = base_df['district_no'].astype(str).str.zfill(5)
 
-    campaign_features = process_campaign_features(campaign_file)
-    producer_prices = process_producer_prices(producer_price_file)
-    input_prices = process_input_prices(input_price_file)
+        static_features = pd.read_csv(static_features_file)
+        static_features['district_no'] = static_features['district_no'].astype(str).str.zfill(5)
+    except FileNotFoundError as e:
+        logging.error(f"A required input file was not found. Please check paths. Error: {e}")
+        return
 
-    # --- Merge Datasets into Master Table ---
-    print("\nMerging all datasets into a master table...")
-    master_df = climate_yield_data.copy()
+    # --- Step 2: Process Geography and Economic Data ---
+    districts_df = process_district_geography(geojson_path)
+    if districts_df is None: return
 
+    df_economic = process_economic_features(producer_price_file, input_price_file, ECONOMIC_FEATURES_TO_INCLUDE)
+    if df_economic.empty:
+        logging.warning("Economic features dataframe is empty. Continuing without it.")
+
+    # --- Step 3: Merge All Datasets into Master Table ---
+    logging.info("\nMerging all datasets into a master table...")
+    # Start with the base yield/weather data
+    master_df = base_df.copy()
+
+    # Merge geographic data
+    master_df = pd.merge(master_df, districts_df, on='district_no', how='left')
+
+    # Merge static features (soil, elevation)
     master_df = pd.merge(master_df, static_features, on='district_no', how='left')
-    master_df = pd.merge(master_df, campaign_features, on='year', how='left')
-    master_df = pd.merge(master_df, producer_prices, on='year', how='left')
-    master_df = pd.merge(master_df, input_prices, on='year', how='left')
 
-    print("  -> Merging complete.")
+    # Merge economic data on 'year'
+    if not df_economic.empty:
+        master_df = pd.merge(master_df, df_economic, on='year', how='left')
 
-    # --- Save Final Dataset ---
+    logging.info("-> Merging complete.")
+
+    # --- Step 4: Save Final Dataset ---
     master_df.to_csv(output_file, index=False)
-    print(f"\nMaster dataset successfully created and saved to: {output_file}")
-    print(f"Master dataset has {master_df.shape[0]} rows and {master_df.shape[1]} columns.")
+    logging.info(f"\nMaster dataset successfully created and saved to: {output_file}")
+    logging.info(f"Master dataset has {master_df.shape[0]} rows and {master_df.shape[1]} columns.")
+    logging.info(f"Columns: {master_df.columns.tolist()}")
 
 
 if __name__ == '__main__':
     main()
+

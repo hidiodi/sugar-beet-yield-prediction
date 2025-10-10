@@ -3,95 +3,90 @@
 """
 Processes the raw harmonized district-level data from the Thünen Institute.
 
-This script performs the following steps:
+This script performs the following streamlined steps:
 1.  Loads the 'Final_data.csv' file from the 'data/01_raw/' directory.
-2.  Filters the data to keep only records related to 'sugarbeet'.
-3.  Pivots the data from a long format (with 'measure' and 'value' columns)
-    to a wide format, creating separate 'area' and 'yield' columns.
-4.  Drops rows where both 'area' and 'yield' are missing.
-5.  Saves the cleaned, wide-format sugar beet data to the
+2.  Filters the data to keep only records where 'var' is 'sugarbeet' AND
+    'measure' is 'yield'.
+3.  Drops any rows where the yield value is missing.
+4.  Selects and renames the essential columns: 'district_no', 'year', and 'yield'.
+5.  Saves the cleaned, focused sugar beet yield data to the
     'data/02_intermediate/' directory.
 """
 
 import os
 import pandas as pd
+import logging
+
+# --- Setup basic logging ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 def main():
     """
-    Runs the data preprocessing steps for the agronomic data.
+    Runs the simplified data preprocessing steps for the agronomic data.
     """
-    print("--- 01: Preprocessing Agronomic Data ---")
+    logging.info("--- 01: Preprocessing Agronomic Data (Simplified) ---")
 
-    # Define file paths
+    # --- 1. Define File Paths ---
     raw_data_path = 'data/01_raw/Final_data.csv'
     intermediate_dir = 'data/02_intermediate'
-    output_path = os.path.join(intermediate_dir, 'sugarbeet_yield_area.csv')
+    # The output file is now more accurately named.
+    output_path = os.path.join(intermediate_dir, 'sugarbeet_yield.csv')
 
-    # --- 1. Check for Input File ---
-    print(f"Checking for raw data file at '{raw_data_path}'...")
+    # --- 2. Check for Input File ---
+    logging.info(f"Checking for raw data file at '{raw_data_path}'...")
     if not os.path.exists(raw_data_path):
-        print(f"ERROR: File not found at '{raw_data_path}'.")
-        print("Please download 'Final_data.csv' from https://doi.org/10.3220/DATA20231117103252-0")
-        print("and place it in the 'data/01_raw/' directory.")
-        return  # Exit if the source file is not found
+        logging.error(f"File not found at '{raw_data_path}'.")
+        logging.error("Please download 'Final_data.csv' from https://doi.org/10.3220/DATA20231117103252-0")
+        logging.error("and place it in the 'data/01_raw/' directory.")
+        return
 
-    print("SUCCESS: Raw data file found.")
+    logging.info("SUCCESS: Raw data file found.")
 
-    # --- 2. Load and Filter Data ---
-    print("Loading and filtering for 'sugarbeet' data...")
+    # --- 3. Load and Filter Data Efficiently ---
+    logging.info("Loading and filtering for 'sugarbeet' yield data...")
     try:
         # Load the data, recognizing 'NA' as a null value
         df = pd.read_csv(raw_data_path, na_values='NA')
 
-        # Filter for rows where the variable is 'sugarbeet'
-        df_sugarbeet = df[df['var'] == 'sugarbeet'].copy()
-
-        # We no longer need the 'var' or 'outlier' columns
-        df_sugarbeet = df_sugarbeet.drop(columns=['var', 'outlier'])
+        # Chain the filtering conditions for a single, efficient operation
+        df_filtered = df[
+            (df['var'] == 'sugarbeet') &
+            (df['measure'] == 'yield')
+            ].copy()
+        logging.info(f"Found {len(df_filtered)} raw 'sugarbeet' yield records.")
 
     except Exception as e:
-        print(f"An error occurred while reading or filtering the data: {e}")
+        logging.error(f"An error occurred while reading or filtering the data: {e}")
         return
 
-    # --- 3. Reshape Data (Pivot) ---
-    print("Reshaping data from long to wide format...")
-    # Set the index for our unique identifiers
-    id_vars = ['district_no', 'district', 'nuts_id', 'year']
+    # --- 4. Clean and Finalize the Dataset ---
+    logging.info("Cleaning data and selecting final columns...")
 
-    # Pivot the 'measure' column so 'area' and 'yield' become columns
-    df_wide = df_sugarbeet.pivot_table(
-        index=id_vars,
-        columns='measure',
-        values='value'
-    ).reset_index()
+    # Drop rows where the 'value' (our yield column) is missing
+    initial_rows = len(df_filtered)
+    df_filtered.dropna(subset=['value'], inplace=True)
+    rows_dropped = initial_rows - len(df_filtered)
+    if rows_dropped > 0:
+        logging.info(f"Dropped {rows_dropped} rows with missing yield values.")
 
-    # Clean up the column index name left by the pivot operation
-    df_wide.columns.name = None
+    # Select only the columns we need for the final output
+    df_processed = df_filtered[['district_no', 'year', 'value']].copy()
 
-    print(f"Initial processed rows: {len(df_wide)}")
-
-    # --- 4. Clean Missing Data ---
-    # As per the requirements, we drop a record only if BOTH area and yield are missing.
-    print("Dropping records where both 'area' and 'yield' are missing...")
-    df_processed = df_wide.dropna(subset=['area', 'yield'], how='all')
-
-    rows_dropped = len(df_wide) - len(df_processed)
-    print(f"Dropped {rows_dropped} rows.")
+    # Rename 'value' to 'yield' for clarity in downstream scripts
+    df_processed.rename(columns={'value': 'yield'}, inplace=True)
 
     # --- 5. Save Processed Data ---
     try:
-        # Ensure the output directory exists
         os.makedirs(intermediate_dir, exist_ok=True)
-
-        # Save the final dataframe to a new CSV file
         df_processed.to_csv(output_path, index=False)
 
-        print("--- Preprocessing Complete ---")
-        print(f"SUCCESS: Processed data saved to '{output_path}'.")
+        logging.info("--- Preprocessing Complete ---")
+        logging.info(f"SUCCESS: Processed data saved to '{output_path}'.")
+        logging.info(f"Final dataset has {len(df_processed)} rows and columns: {df_processed.columns.tolist()}")
 
     except Exception as e:
-        print(f"An error occurred while saving the data: {e}")
+        logging.error(f"An error occurred while saving the data: {e}")
 
 
 if __name__ == '__main__':

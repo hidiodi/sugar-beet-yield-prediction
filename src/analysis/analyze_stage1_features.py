@@ -1,131 +1,119 @@
 import pandas as pd
 import numpy as np
-import seaborn as sns
 import matplotlib.pyplot as plt
-from pathlib import Path
-import logging
-import shap
+import seaborn as sns
+import os
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 
-# --- Setup basic logging ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# --- Configuration ---
+output_dir = 'reports/stage2_feature_diagnostics/figures'
+os.makedirs(output_dir, exist_ok=True)
 
+file_path = 'data/05_model_input/final_imputed_dataset.csv'
+target = 'kreisYield'  # Explicitly define target
 
-def analyze_final_stage1_features():
-    """
-    Performs an advanced analysis of the final Stage 1 training data using SHAP.
-    """
-    logging.info("--- Starting Advanced Stage 1 Feature Analysis (with SHAP) ---")
+# --- Load Dataset ---
+try:
+    df = pd.read_csv(file_path)
+except FileNotFoundError:
+    raise SystemExit(f"❌ File not found: {file_path}")
 
-    # --- Define Paths ---
-    input_file = Path('data/05_model_input/stage1_final_training_data.csv')
-    reports_path = Path('reports/stage1_final_analysis/')
-    figures_path = reports_path / 'figures'
-    reports_path.mkdir(parents=True, exist_ok=True)
-    figures_path.mkdir(parents=True, exist_ok=True)
+print(f"✅ Loaded dataset: {df.shape[0]} rows × {df.shape[1]} columns\n")
 
-    try:
-        df = pd.read_csv(input_file)
-        logging.info(f"Successfully loaded dataset from '{input_file}'. Shape: {df.shape}")
-    except FileNotFoundError:
-        logging.error(f"FATAL: Input file not found at '{input_file}'.")
-        return
+# --- Inspect Target ---
+if target not in df.columns:
+    raise ValueError(f"Target column '{target}' not found in dataset")
 
-    # --- 1. Correlation of Key Drivers (Weather & Forecasts) ---
-    logging.info("\nAnalyzing correlations of primary driver features...")
-    driver_cols = [
-        'yield', 'avg_elevation', 'avg_soil_pawc',
-        'winter_temp_anomaly', 'winter_precip_anomaly',
-        'forecasted_temp_anomaly', 'forecasted_precip_anomaly'
-    ]
-    # Ensure all driver columns exist before trying to correlate them
-    driver_cols_exist = [col for col in driver_cols if col in df.columns]
+# --- Descriptive Stats ---
+print("📊 Descriptive Statistics:")
+print(df.describe().T)
 
-    if len(driver_cols_exist) > 1:
-        df_driver_corr = df[driver_cols_exist].corr()
-        plt.figure(figsize=(10, 8))
-        sns.heatmap(df_driver_corr, cmap='coolwarm', annot=True, fmt=".2f")
-        plt.title('Correlation Heatmap of Primary Drivers and Yield')
-        fig_path = figures_path / 'primary_drivers_heatmap.png'
-        plt.savefig(fig_path, bbox_inches='tight')
-        plt.close()
-        logging.info(f" -> Saved primary drivers heatmap to '{fig_path}'")
+# --- Target Distribution ---
+plt.figure(figsize=(14,6))
+plt.subplot(1,2,1)
+sns.histplot(df[target], kde=True, bins=30, color='skyblue')
+plt.title(f"Distribution of {target}")
+plt.subplot(1,2,2)
+sns.boxplot(y=df[target], color='lightcoral')
+plt.title(f"Boxplot of {target}")
+plt.tight_layout()
+plt.savefig(os.path.join(output_dir, f'{target}_distribution.png'))
+plt.close()
 
-    # --- 2. Visualize Forecast Impact ---
-    logging.info("Visualizing impact of seasonal forecast anomalies on yield...")
-    for col in ['forecasted_temp_anomaly', 'forecasted_precip_anomaly']:
-        if col in df.columns:
-            plt.figure(figsize=(10, 6))
-            sns.regplot(data=df, x=col, y='yield', line_kws={"color": "red"})
-            plt.title(f'Impact of {col.replace("_", " ").title()} on Yield')
-            plt.xlabel(f'{col.replace("_", " ").title()}')
-            plt.ylabel('Yield')
-            plt.grid(True)
-            fig_path = figures_path / f'{col}_vs_yield.png'
-            plt.savefig(fig_path)
-            plt.close()
-            logging.info(f" -> Saved {col} plot to '{fig_path}'")
+# --- Correlation Matrix ---
+corr = df.corr(numeric_only=True)
+plt.figure(figsize=(18,14))
+sns.heatmap(corr, cmap='RdBu_r', center=0, annot=False)
+plt.title("Correlation Matrix of All Variables")
+plt.tight_layout()
+plt.savefig(os.path.join(output_dir, 'correlation_matrix.png'))
+plt.close()
 
-    # --- 3. Advanced Feature Importance with SHAP ---
-    logging.info("\nCalculating advanced feature importance using SHAP...")
+# --- Correlation Ranking ---
+corr_target = corr[target].drop(target).sort_values(ascending=False)
+top_pos = corr_target.head(15)
+top_neg = corr_target.tail(15)
+print("\n🔥 Top 15 Positive Correlations with Target:")
+print(top_pos)
+print("\n❄️ Top 15 Negative Correlations with Target:")
+print(top_neg)
 
-    try:
-        from sklearn.ensemble import RandomForestRegressor
-    except ImportError:
-        logging.error("Scikit-learn is not installed. Please run 'pip install scikit-learn'.")
-        return
+# --- Multicollinearity (VIF) ---
+print("\n🔍 Variance Inflation Factor (VIF) Check:")
+numeric_features = df.select_dtypes(include=[np.number]).drop(columns=[target])
+vif_df = pd.DataFrame({
+    'feature': numeric_features.columns,
+    'VIF': [variance_inflation_factor(numeric_features.values, i)
+            for i in range(numeric_features.shape[1])]
+})
+print(vif_df.sort_values('VIF', ascending=False).head(10))
 
-    # Prepare data for the model
-    df_model = df.drop(columns=['district_no', 'year']).dropna()
+# --- Feature Distributions + Skewness ---
+skew_df = df[numeric_features.columns].skew().sort_values(ascending=False)
+print("\n📈 Features with High Skewness (>|1|):")
+print(skew_df[abs(skew_df) > 1])
 
-    if df_model.empty or 'yield' not in df_model.columns:
-        logging.warning("Dataset is empty or 'yield' column is missing. Cannot calculate SHAP values.")
-        return
+# --- Scatter Plots: Top Correlated Features ---
+top_predictors = list(top_pos.head(6).index)
+fig, axes = plt.subplots(2, 3, figsize=(18,10))
+axes = axes.flatten()
+for i, feat in enumerate(top_predictors):
+    sns.regplot(x=df[feat], y=df[target], ax=axes[i], scatter_kws={'alpha':0.5}, line_kws={'color':'red'})
+    axes[i].set_title(f"{target} vs {feat}")
+plt.tight_layout()
+plt.savefig(os.path.join(output_dir, 'top_predictor_scatterplots.png'))
+plt.close()
 
-    X = df_model.drop(columns=['yield'])
-    y = df_model['yield']
-
-    # Train a Random Forest model
-    logging.info("Training a Random Forest model to explain...")
-    model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
-    model.fit(X, y)
-
-    # Calculate SHAP values
-    logging.info("Calculating SHAP values (this may take a moment)...")
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X)
-
-    # --- Generate SHAP Summary Plot (Beeswarm) ---
-    logging.info("Generating SHAP summary plot...")
-    plt.figure()
-    shap.summary_plot(shap_values, X, plot_type="bar", show=False)
-    plt.title('SHAP Feature Importance (Mean Absolute SHAP Value)')
-    fig_path = figures_path / 'shap_feature_importance_bar.png'
-    plt.savefig(fig_path, bbox_inches='tight')
+# --- Time Trend of Target ---
+if 'year' in df.columns:
+    yearly = df.groupby('year')[target].sum()
+    plt.figure(figsize=(12,6))
+    plt.plot(yearly.index, yearly.values, marker='o')
+    plt.title(f"{target} Over Time")
+    plt.xlabel("Year")
+    plt.ylabel(target)
+    plt.grid(True)
+    plt.savefig(os.path.join(output_dir, f'{target}_time_series.png'))
     plt.close()
 
-    # Beeswarm plot shows feature impact
-    plt.figure()
-    shap.summary_plot(shap_values, X, show=False)
-    plt.title('SHAP Summary Plot (Impact of Features on Yield Prediction)')
-    fig_path = figures_path / 'shap_summary_plot_beeswarm.png'
-    plt.savefig(fig_path, bbox_inches='tight')
+# --- Yield by District ---
+if 'district_no' in df.columns:
+    district_summary = df.groupby('district_no')[target].sum().sort_values(ascending=False)
+    plt.figure(figsize=(16,6))
+    sns.barplot(x=district_summary.index, y=district_summary.values, palette='viridis')
+    plt.xticks(rotation=90)
+    plt.title(f"Total {target} by District")
+    plt.ylabel(f"Total {target}")
+    plt.xlabel("District")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'yield_by_district.png'))
     plt.close()
-    logging.info(f" -> SHAP plots saved to '{figures_path}'")
 
-    # --- Save SHAP Importance Report ---
-    # Calculate mean absolute SHAP value for each feature
-    shap_importance = pd.DataFrame(np.abs(shap_values).mean(axis=0), index=X.columns, columns=['mean_abs_shap_value'])
-    shap_importance = shap_importance.sort_values(by='mean_abs_shap_value', ascending=False)
+# --- Summary Export ---
+summary_dir = os.path.join(output_dir, '../tables')
+os.makedirs(summary_dir, exist_ok=True)
+vif_df.to_csv(os.path.join(summary_dir, 'vif_report.csv'), index=False)
+corr_target.to_csv(os.path.join(summary_dir, f'{target}_correlations.csv'))
 
-    report_path = reports_path / 'shap_feature_importance.csv'
-    shap_importance.to_csv(report_path)
-    logging.info(f" -> SHAP importance report saved to '{report_path}'")
-
-    print("\n--- SHAP Feature Importance (Top 20) ---")
-    print(shap_importance.head(20))
-
-    logging.info("\n--- Analysis Complete ---")
-
-
-if __name__ == '__main__':
-    analyze_final_stage1_features()
+print("\n✅ Analysis Complete. Outputs saved to:")
+print(output_dir)
