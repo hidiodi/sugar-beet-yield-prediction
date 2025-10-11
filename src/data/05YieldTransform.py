@@ -1,29 +1,21 @@
 import pandas as pd
 import json
 import sys
+import os
+import logging
+
+# --- Setup basic logging ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-def process_district_file(filepath):
-    """
-    Processes the district JSON file to create a mapping from district ID to state name.
-    """
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            features = data.get('features', [])
-            if not features:
-                f.seek(0)
-                features = [json.loads(line) for line in f if line.strip()]
-            return {int(f['id']): f['properties']['state'] for f in features}
-    except Exception as e:
-        print(f"Error: Could not parse '{filepath}'. Details: {e}", file=sys.stderr)
-        sys.exit(1)
+# Removed the function process_district_file as it is no longer needed.
 
 
 def load_and_process_economic_data(producer_price_file, input_price_file):
     """
     Loads, processes, and merges the separate economic data files into a single,
     analysis-ready DataFrame with annual data.
+    (Content remains the same)
     """
     print("\nStep 2a: Loading and processing external economic data sources...")
     try:
@@ -117,9 +109,10 @@ def main():
     Main function to execute the data merging and transformation workflow.
     """
     # --- Configuration with corrected file paths ---
+    # master_file is the intermediate weather-district data (from 04_create_crop_dataset_with_weather.py)
     master_file = 'data/04_master/master_dataset.csv'
-    state_level_file = 'data/01_raw/final_data2.csv'
-    districts_file = 'data/01_raw/districts_official.geojson'
+    # The new yield/area data file (from 01_preprocess_agronomic_data.py)
+    yield_area_file = 'data/02_intermediate/sugarbeet_yield_area.csv'
     producer_price_file = 'data/01_raw/61211-0002_de/61211-0001_de.csv'
     input_price_file = 'data/01_raw/61211-0002_de/61221-0003_de.csv'
     output_file = 'data/04_master/merged_final_dataset.csv'
@@ -128,8 +121,9 @@ def main():
     print("Step 1: Loading base CSV datasets...")
     try:
         master_df = pd.read_csv(master_file)
-        state_df = pd.read_csv(state_level_file, na_values=['-', '/', '.'])
-        print(f"'{master_file}' and '{state_level_file}' loaded successfully.")
+        # Load the clean yield/area data (which should contain both)
+        yield_area_df = pd.read_csv(yield_area_file, na_values=['-', '/', '.'])
+        print(f"'{master_file}' and '{yield_area_file}' loaded successfully.")
     except FileNotFoundError as e:
         print(f"Error: Could not find a required file. {e}", file=sys.stderr)
         sys.exit(1)
@@ -139,22 +133,20 @@ def main():
     if df_economic is None:
         sys.exit(1)
 
-    # --- Step 3: Map districts to states ---
-    print("\nStep 3: Processing districts file to map districts to states...")
-    district_to_state_map = process_district_file(districts_file)
-    master_df['state'] = master_df['district_no'].map(district_to_state_map)
-    print("District-to-state mapping completed.")
+    # --- Step 3: Remove state mapping (No longer needed) ---
+    print("\nStep 3: State-level mapping removed. Merging yield/area data directly.")
+    # No process_district_file or map needed.
 
     # --- Step 4: Merge all datasets ---
     print("\nStep 4: Merging all data sources...")
     master_df['year'] = master_df['year'].astype(int)
-    state_df['Year'] = state_df['Year'].astype(int)
+    yield_area_df['year'] = yield_area_df['year'].astype(int)
 
-    # Merge master with state-level data
+    # Merge master (weather, static) with yield/area data
     merged_df = pd.merge(
-        master_df, state_df,
-        left_on=['year', 'state'], right_on=['Year', 'Land'],
-        how='left'
+        master_df, yield_area_df,
+        on=['district_no', 'year'],
+        how='left'  # Keep all weather data rows, but match yield/area only where present
     )
 
     # Drop original economic columns to avoid conflicts, then merge new economic data
@@ -165,22 +157,25 @@ def main():
 
     # --- Step 5: Transform data and finalize features ---
     print("\nStep 5: Transforming data and calculating new features...")
-    merged_df.rename(columns={'yield': 'kreisYield'}, inplace=True)
+    # Rename 'yield' (t/ha) to 'kreisYield' (dt/ha) - Multiply by 10 since 1 t/ha = 10 dt/ha
+    merged_df.rename(columns={'yield': 'kreisYield_t_ha'}, inplace=True)
+    merged_df['kreisYield'] = pd.to_numeric(merged_df['kreisYield_t_ha'], errors='coerce') * 10
 
-    cols_to_convert = ['kreisYield', 'Yield_dt/ha', 'Field_ha']
-    for col in cols_to_convert:
-        merged_df[col] = pd.to_numeric(merged_df[col], errors='coerce')
+    # Assuming the area column is named 'Field_ha' in the yield_area_df
+    merged_df.rename(columns={'Field_ha': 'kreisField_ha'}, inplace=True)
+
+    # Drop the intermediate t/ha column
+    merged_df.drop(columns=['kreisYield_t_ha'], inplace=True, errors='ignore')
 
     initial_rows = len(merged_df)
+    # CRITICAL: Drop rows where the target (kreisYield) is missing
     merged_df.dropna(subset=['kreisYield'], inplace=True)
     rows_dropped = initial_rows - len(merged_df)
     if rows_dropped > 0:
         print(f" -> Dropped {rows_dropped} rows where 'kreisYield' was not provided.")
 
-    epsilon = 1e-6
-    merged_df['kreisField_ha'] = (merged_df['kreisYield'] / (merged_df['Yield_dt/ha'] + epsilon)) * merged_df[
-        'Field_ha']
-    print(" -> Calculated 'kreisField_ha' feature.")
+    # The calculation for kreisField_ha is NO LONGER needed since it's loaded directly.
+    # The complex calculation using Yield_dt/ha and Field_ha is removed.
 
     # --- Step 6: Analyze data BEFORE any potential imputation ---
     analyze_missing_data(merged_df, stage="BEFORE imputation")
@@ -190,8 +185,9 @@ def main():
 
     # --- Step 7: Select and order the final columns ---
     print("\nStep 7: Finalizing columns for the output file...")
+    # Remove the redundant columns from the final list
     final_columns = [
-        'district_no', 'year', 'Field_ha', 'Harvested_t', 'Yield_dt/ha', 'kreisYield', 'kreisField_ha',
+        'district_no', 'year', 'kreisYield', 'kreisField_ha',  # Keep the final, verified yield/area
         'precip_total_peak_growth', 'temp_mean_peak_growth', 'heat_stress_days_peak_growth',
         'temp_mean_early_growth', 'solar_rad_peak_growth', 'avg_elevation', 'avg_soil_pawc',
         'national_campaign_start_day_of_year', 'national_campaign_end_day_of_year',
@@ -199,7 +195,9 @@ def main():
         'energy_price_index'
     ]
 
-    final_df = merged_df[final_columns]
+    # Filter to only the columns that exist in the dataframe after drops/renames
+    existing_cols = [col for col in final_columns if col in merged_df.columns]
+    final_df = merged_df[existing_cols]
     print("Columns selected and ordered.")
 
     # --- Step 8: Save the result ---
@@ -217,4 +215,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

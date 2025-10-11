@@ -9,7 +9,7 @@ import time
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-def download_agera5_data_final(start_year=2017, end_year=2024):
+def download_agera5_data_final(start_year=1979, end_year=2024):
     """
     Downloads daily AgERA5 data for Germany, making one request per variable/statistic per year.
     This version incorporates the mandatory 'version' parameter and correct list formatting.

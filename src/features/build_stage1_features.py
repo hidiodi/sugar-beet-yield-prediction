@@ -144,6 +144,12 @@ def main():
     df_featured = engineer_antecedent_weather(df_featured, agera5_file)
     logging.info(f"Feature engineering complete. Shape is now: {df_featured.shape}")
 
+    # --- Antecedent Water Index Calculation (Oct-Mar Water Budget Proxy) ---
+    if {'actual_winter_temp', 'actual_winter_precip'}.issubset(df_featured.columns):
+        # Index = Precipitation (Inflow) - Temperature (Proxy for Evaporation/Sublimation)
+        df_featured['antecedent_water_index'] = df_featured['actual_winter_precip'] - df_featured['actual_winter_temp']
+        logging.info("Created antecedent_water_index feature (Oct-Mar Water Budget Proxy).")
+
     # --- Derived / Normalized Targets ---
     if {'kreisYield', 'kreisField_ha'}.issubset(df_featured.columns):
         df_featured['yield_density'] = df_featured['kreisYield'] / (df_featured['kreisField_ha'] + 1e-6)
@@ -164,7 +170,27 @@ def main():
     cols_to_remove = [
         'yield', 'Yield_dt/ha', 'Field_ha', 'Harvested_t', 'state_name', 'latitude', 'longitude',
         'pflanzliche_erzeugung', 'zuckerrben', 'dngemittel', 'energie_und_schmierstoffe',
-        'pflanzenschutzmittel', 'saat_und_pflanzgut'
+        'pflanzenschutzmittel', 'saat_und_pflanzgut',
+        'fertilizer_price_index',
+        #'year', # keep for now since we cover a large timespan with scientific progress
+        'national_campaign_duration',
+        'input_price_index',
+        'zuckerrben_lag1',
+        'pflanzliche_erzeugung_lag1',
+        'pflanzenschutzmittel_lag1',
+        'pflanzenschutzmittel_lag1_log',
+        'temp_mean_peak_growth',
+        'temp_mean_early_growth',
+        'solar_rad_peak_growth',
+        'energy_price_index',
+        'avg_soil_pawc',
+        'DTR_accumulation_phase',
+        'temp_min_peak_growth',
+        'temp_max_peak_growth',
+        'winter_temp_anomaly',
+        'winter_precip_anomaly',
+        'actual_winter_temp',
+        'actual_winter_precip',
     ]
     df_featured.drop(columns=cols_to_remove, inplace=True, errors='ignore')
     logging.info(f"Removed intermediate columns. Kept {len(df_featured.columns)} columns.")
