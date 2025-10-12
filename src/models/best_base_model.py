@@ -31,6 +31,18 @@ def perform_robust_cross_validation_with_feature_selection():
     except FileNotFoundError:
         print(f"Error: Dataset not found at {file_path}. Please run the feature engineering script.")
         return
+    """
+        !!!! this runs for 13 hours !!!!
+        --- Best Feature Combination ---
+        Features: ['district_no', 'avg_elevation', 'avg_soil_pawc', 'winter_temp_anomaly', 'spring_precip_anomaly_hybrid', 'summer_temp_anomaly_hybrid', 'summer_precip_anomaly_hybrid', 'fertilizer_price_index', 'energy_price_index']
+        Average R-squared (R2): 0.8808
+        Average RMSE: 46.95 dt/ha
+        -------------------------------------------------
+        
+        --- Training Final Model on All Available Data with Best Features for Deployment ---
+        
+        ✅ Final XGBoost model successfully trained on all data with the best features and saved to src/models\final_xgb_model_champion.joblib
+    """
 
     # --- This is our pool of potential features ---
     all_feature_cols = [
