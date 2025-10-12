@@ -1,6 +1,6 @@
 # File: src/models/base_model.py
 # Description: MODIFIED to use a time-based split for validation, holding out the last 5 years of data.
-# *** UPDATED with satellite features and corrected for pre-season forecasting (no data leakage). ***
+# *** FINAL RECOMMENDED VERSION: Combines detrending, an explicit trend feature, AND a regime-switching flag. ***
 
 import pandas as pd
 from xgboost import XGBRegressor
@@ -19,9 +19,8 @@ IMPORTANCE_PLOT_PATH = os.path.join('reports/figures', 'feature_importance.png')
 
 def train_and_validate_with_holdout():
     """
-    Loads pre-season data, splits it into a training set (all data except the last 5 years)
-    and a validation set (the last 5 years), trains the champion XGBoost model,
-    evaluates it, and then retrains the final model on all available training data.
+    Loads pre-season data, DETRENDS the target variable, splits the data,
+    trains a sophisticated XGBoost model, evaluates it, and retrains the final model.
     """
     file_path = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
     try:
@@ -30,44 +29,35 @@ def train_and_validate_with_holdout():
         print(f"Error: Dataset not found at {file_path}. Please run the feature engineering script.")
         return
 
-    # --- UPDATED: Champion Feature Set for Pre-Season Forecast ---
-    # This list now ONLY includes features available by the end of March.
-    # All "peak_growth", "spring", and "summer" features have been removed to prevent data leakage.
-    # The new satellite features have been added.
+    # --- FINAL HYBRID Feature Set ---
+    # Combines the explicit trend feature with the regime-switching flag
+    # to give the model maximum flexibility and explanatory power.
     feature_cols = [
-        # 'district_no',
-        # 'year',  # Note: 'year' as a direct feature can introduce time trends, be mindful.
-        'precip_total_peak_growth',
-        'temp_mean_peak_growth',
-        'heat_stress_days_peak_growth',
-        'solar_rad_peak_growth',
-        'DTR_accumulation_phase',
-        'temp_min_peak_growth',
-        'temp_max_peak_growth',
-        'spring_freezing_days',
-        'spring_temp_anomaly_hybrid',
-        'spring_precip_anomaly_hybrid',
-        'summer_temp_anomaly_hybrid',
-        'summer_precip_anomaly_hybrid',
+        # Static & Geographic Features
         'avg_elevation',
         'avg_soil_pawc',
-        # 'producer_price_index',  # Contemporaneous feature
-        # 'energy_price_index',
-        # 'fertilizer_price_index',
         'lon',
         'lat',
+
+        # Antecedent (Winter) Weather Features
         'winter_temp_anomaly',
         'winter_precip_anomaly',
-        # 'national_avg_yield',  # Contemporaneous feature
-        'national_avg_yield_lag1',
 
-        # --- NEW Satellite Features ---
+        # Lagged Economic & Yield Features
+        'national_avg_yield_lag1',
+        'producer_price_index_lag1',
+
+        # Satellite Features
         'winter_cropland_ndvi_mean',
         'winter_cropland_ndvi_anomaly',
         'winter_cropland_LST_mean',
         'winter_cropland_LST_anomaly',
         'winter_cropland_snow_cover_days',
-        'has_satellite_data'  # The crucial flag for the model
+
+        # --- COMBINED Evolutionary Features ---
+        'year_trend',  # Models the continuous technological/genetic gain
+        'has_satellite_data',  # Models the structural break between eras
+        'post_quota_era'  # Models the 2017 economic shock
     ]
     target_col = 'kreisYield'
 
@@ -77,21 +67,34 @@ def train_and_validate_with_holdout():
         print(f"Error: The following feature columns are missing from the input file: {missing_cols}")
         return
 
+    # ==============================================================================
+    # === DETRENDING STAGE ===
+    # ==============================================================================
+    print("\n--- Applying Detrending to Target Variable ---")
+    df.sort_values(by=['district_no', 'year'], inplace=True)
+    df['yield_trend'] = df.groupby('district_no')[target_col].transform(
+        lambda x: x.rolling(window=5, center=True, min_periods=1).mean()
+    )
+    df['yield_trend'] = df.groupby('district_no')['yield_trend'].transform(lambda x: x.fillna(method='ffill'))
+    detrended_target_col = 'kreisYield_detrended'
+    df[detrended_target_col] = df[target_col] - df['yield_trend']
+    print(" -> Detrending complete. Model will now predict the anomaly from the trend.")
+
     # --- Time-Based Split ---
     last_year = df['year'].max()
     validation_start_year = last_year - 5
 
-    print(f"--- Using Last 5 Years for Validation ---")
+    print(f"\n--- Using Last 5 Years for Validation ---")
     print(f"Training data will be from years before {validation_start_year + 1}")
     print(f"Validation data will be from years {validation_start_year + 1} to {last_year}")
 
-    train_df = df[df['year'] <= validation_start_year]
-    validation_df = df[df['year'] > validation_start_year]
+    train_df = df[df['year'] <= validation_start_year].copy()
+    validation_df = df[df['year'] > validation_start_year].copy()
 
     X_train = train_df[feature_cols]
-    y_train = train_df[target_col]
+    y_train = train_df[detrended_target_col]
     X_validation = validation_df[feature_cols]
-    y_validation = validation_df[target_col]
+    y_validation_actual = validation_df[target_col]
 
     print(f"Training set size: {len(X_train)} samples")
     print(f"Validation set size: {len(X_validation)} samples")
@@ -103,39 +106,46 @@ def train_and_validate_with_holdout():
         random_state=42, n_jobs=-1,
     )
     xgb.fit(X_train, y_train)
-    y_pred_xgb = xgb.predict(X_validation)
+    y_pred_detrended = xgb.predict(X_validation)
+    y_pred_final = y_pred_detrended + validation_df['yield_trend']
 
-    r2 = r2_score(y_validation, y_pred_xgb)
-    rmse = np.sqrt(mean_squared_error(y_validation, y_pred_xgb))
+    # --- Evaluate on the original, non-detrended scale ---
+    r2 = r2_score(y_validation_actual, y_pred_final)
+    rmse = np.sqrt(mean_squared_error(y_validation_actual, y_pred_final))
 
     print("\n--- Validation Performance ---")
     print(f"  R-squared (R2): {r2:.4f}")
     print(f"  RMSE: {rmse:.2f} dt/ha")
     print("-------------------------------------------------")
 
-    # --- NEW: Plot and Save Feature Importance ---
+    # --- Plot and Save Feature Importance ---
     try:
-        fig, ax = plt.subplots(figsize=(10, 8))
-        ax.set_title('Feature Importance')
-        ax.set_xlabel('F-score')
+        importance_scores = xgb.feature_importances_
+        feature_importance = sorted(zip(feature_cols, importance_scores), key=lambda x: x[1], reverse=False)
+        features, scores = zip(*feature_importance)
+
+        fig, ax = plt.subplots(figsize=(12, 8))
+        ax.barh(features, scores)
+        ax.set_title('Feature Importance (Final Hybrid Model)')
+        ax.set_xlabel('Feature Importance Score')
         ax.set_ylabel('Features')
-        # Use the fitted model 'xgb' to plot importance
-        plt.barh(feature_cols, xgb.feature_importances_)
-        # Create the directory if it doesn't exist
+        plt.tight_layout()
+
         os.makedirs(os.path.dirname(IMPORTANCE_PLOT_PATH), exist_ok=True)
         plt.savefig(IMPORTANCE_PLOT_PATH, bbox_inches='tight')
         print(f"✅ Feature importance plot saved to {IMPORTANCE_PLOT_PATH}")
     except Exception as e:
         print(f"❌ Warning: Could not save the feature importance plot. Error: {e}")
 
-    # --- Final Model Training on the defined training data ---
+    # --- Final Model Training ---
     print("\n--- Training Final Model on Data Before the Holdout Period for Deployment ---")
     final_model = XGBRegressor(
         objective='reg:squarederror', n_estimators=500, learning_rate=0.03,
         max_depth=5, subsample=0.8, colsample_bytree=0.8,
         random_state=42, n_jobs=-1,
     )
-    final_model.fit(X_train, y_train)
+    final_model.fit(df[df['year'] <= validation_start_year][feature_cols],
+                    df[df['year'] <= validation_start_year][detrended_target_col])
 
     try:
         os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)

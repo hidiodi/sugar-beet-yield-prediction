@@ -73,7 +73,6 @@ def load_and_prepare_data(path_yield_data, path_districts_geo, path_weather_data
 
     return df_yield, gdf_districts, ds_weather
 
-
 def rasterize_districts(gdf_districts, ds_weather):
     """
     Creates a raster layer where each cell contains the district ID,
@@ -115,7 +114,6 @@ def rasterize_districts(gdf_districts, ds_weather):
 
     logging.info("District rasterization complete. Ready for GroupBy operation.")
     return ds_weather
-
 
 def calculate_weather_features_for_districts_optimized(ds_weather):
     """

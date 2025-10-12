@@ -1,6 +1,7 @@
 # File: build_stage1_features.py
 # Description: MODIFIED to create features for a STAGE 1 (pre-season) forecast model.
 # Creates lagged features and only uses data available at the end of March.
+# *** FINAL VERSION: Integrates satellite features AND engineers evolutionary trend features. ***
 
 import pandas as pd
 import xarray as xr
@@ -140,8 +141,8 @@ def main():
     producer_price_file = Path('data/01_raw/61211-0002_de/61211-0001_de.csv')
     input_price_file = Path('data/01_raw/61211-0002_de/61221-0003_de.csv')
     agera5_file = Path('data/02_intermediate/agera5_germany_merged.nc')
+    satellite_features_file = Path('data/03_primary/satellite_features_districts_2001-2021.csv')
     output_path = Path('data/05_model_input/')
-    # MODIFIED: Renamed output file to reflect its purpose
     output_file = output_path / 'stage1_preseason_features.csv'
     output_path.mkdir(exist_ok=True, parents=True)
 
@@ -163,6 +164,30 @@ def main():
         logging.info(f"Dropped {rows_dropped} rows where 'kreisYield' (target variable) was missing or invalid.")
 
     # ==============================================================================
+    # STAGE 1.5: Integrating Satellite Features
+    # ==============================================================================
+    logging.info("\n--- STAGE 1.5: Merging Satellite Features ---")
+    if not satellite_features_file.exists():
+        logging.error(f"FATAL: Satellite features file not found at '{satellite_features_file}'. Please run the GEE script first.")
+        sys.exit(1)
+
+    logging.info(f"Loading satellite features from '{satellite_features_file}'...")
+    df_satellite = pd.read_csv(satellite_features_file)
+    df_satellite['district_no'] = df_satellite['district_no'].astype(str).str.zfill(5)
+    merged_df = pd.merge(merged_df, df_satellite, on=['district_no', 'year'], how='left')
+    logging.info("Satellite data merged. Applying 'Hybrid Feature with Flag' method...")
+
+    merged_df['has_satellite_data'] = (merged_df['year'] >= 2001).astype(int)
+    satellite_cols = [
+        'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly',
+        'winter_cropland_LST_mean', 'winter_cropland_LST_anomaly',
+        'winter_cropland_snow_cover_days'
+    ]
+    merged_df[satellite_cols] = merged_df[satellite_cols].fillna(0)
+    logging.info(" -> Satellite features successfully integrated.")
+
+
+    # ==============================================================================
     # STAGE 2: Feature Engineering for Pre-Season
     # ==============================================================================
     logging.info("\n--- STAGE 2: Engineering Pre-Season Features ---")
@@ -171,16 +196,19 @@ def main():
     df_featured = engineer_antecedent_weather(merged_df, agera5_file)
     logging.info(f"Antecedent weather features engineered. Shape is now: {df_featured.shape}")
 
-    # --- MODIFIED: Create Lagged Features (last year's data) ---
-    logging.info("Creating lagged features for forecasting...")
-    # Sort data chronologically to ensure correct lagging
-    df_featured = df_featured.sort_values(by=['district_no', 'year'])
+    # === NEW: Engineering features for structural agricultural change ===
+    logging.info("Engineering features for long-term agricultural trends...")
+    # 1. Continuous time trend for technology and genetic improvement
+    df_featured['year_trend'] = df_featured['year'] - df_featured['year'].min()
+    # 2. Flag for the post-2017 EU sugar quota abolition economic shock
+    df_featured['post_quota_era'] = (df_featured['year'] >= 2017).astype(int)
+    logging.info(" -> Trend and economic shock features created.")
 
-    # Create national average yield from previous year's harvest
+    # --- Create Lagged Features (last year's data) ---
+    logging.info("Creating lagged features for forecasting...")
+    df_featured = df_featured.sort_values(by=['district_no', 'year'])
     df_featured['national_avg_yield'] = df_featured.groupby('year')['kreisYield'].transform('mean')
     df_featured['national_avg_yield_lag1'] = df_featured.groupby('district_no')['national_avg_yield'].shift(1)
-
-    # Create producer price index from previous year
     df_featured['producer_price_index_lag1'] = df_featured.groupby('district_no')['producer_price_index'].shift(1)
     logging.info(" -> Lagged features (lag1) created.")
 
@@ -190,14 +218,11 @@ def main():
     logging.info("\n--- STAGE 3: Finalizing Dataset ---")
 
     logging.info("Dropping columns that are unknown at the time of a pre-season forecast...")
-    # MODIFIED: This list now removes all "future" information.
     cols_to_remove = [
-        # Redundant identifiers and target leakage
         'yield', 'state_name', 'latitude', 'longitude',
     ]
     df_featured.drop(columns=cols_to_remove, inplace=True, errors='ignore')
 
-    # Drop rows with NaNs created by the shift() operation (i.e., the very first year for each district)
     initial_rows = len(df_featured)
     df_featured.dropna(inplace=True)
     logging.info(
@@ -219,7 +244,6 @@ def main():
     logging.info(f"Dataset saved to '{output_file}' with {df_imputed.shape[0]} rows.")
     logging.info(f"Final columns ({len(df_imputed.columns)} total): {df_imputed.columns.tolist()}")
     logging.info(f"-------------------------------------------------")
-
 
 if __name__ == '__main__':
     main()

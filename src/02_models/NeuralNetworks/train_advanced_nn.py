@@ -21,9 +21,12 @@ warnings.filterwarnings("ignore")
 # --- Configuration ---
 CATEGORICAL_FEATURES = ['district_no']
 CONTINUOUS_FEATURES = [
-    'avg_elevation', 'avg_soil_pawc', 'winter_temp_anomaly', 'winter_precip_anomaly',
-    'national_avg_yield_lag1', 'producer_price_index_lag1', 'spring_temp_anomaly_hybrid',
-    'spring_precip_anomaly_hybrid', 'summer_temp_anomaly_hybrid', 'summer_precip_anomaly_hybrid',
+    'avg_elevation', 'avg_soil_pawc', 'lon', 'lat',
+    'winter_temp_anomaly', 'winter_precip_anomaly',
+    'national_avg_yield_lag1', 'producer_price_index_lag1',
+    'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly',
+    'winter_cropland_LST_mean', 'winter_cropland_LST_anomaly',
+    'winter_cropland_snow_cover_days', 'has_satellite_data'
 ]
 TARGET_COL = 'kreisYield'
 DATA_PATH = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
