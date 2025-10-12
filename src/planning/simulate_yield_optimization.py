@@ -15,7 +15,7 @@ from tqdm import tqdm
 BREAK_EVEN_YIELD = 450.0  # dt/ha
 
 # --- Configuration ---
-MODEL_PATH = os.path.join('src/models', 'stage1_preseason_xgb_model.joblib')
+MODEL_PATH = os.path.join('src/models', 'final_xgb_model_random_split.joblib')
 DATA_PATH = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
 OUTPUT_DIR = os.path.join('reports', 'value_demonstration')
 os.makedirs(OUTPUT_DIR, exist_ok=True)

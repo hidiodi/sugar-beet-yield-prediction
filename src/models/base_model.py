@@ -1,10 +1,8 @@
-# File: src/models/train_final_model.py
-# Description: MODIFIED to use a random split of districts within each year for evaluation.
+# File: src/models/base_model.py
+# Description: FINALIZED to use a robust 10-fold cross-validation to build confidence in the champion model's performance.
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import Ridge
 from xgboost import XGBRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 import numpy as np
@@ -14,13 +12,13 @@ import joblib
 
 warnings.filterwarnings("ignore")
 
-MODEL_PATH = os.path.join('src/models', 'final_xgb_model_random_split.joblib')
+MODEL_PATH = os.path.join('src/models', 'final_xgb_model_champion.joblib')
 
 
-def train_with_random_split():
+def perform_robust_cross_validation():
     """
-    Loads pre-season data, performs a random split of districts within each year,
-    evaluates models, and trains a final model on all data.
+    Loads pre-season data, performs a 10-fold cross-validation with different random splits
+    to robustly evaluate the champion XGBoost model, and then trains one final model on all data.
     """
     file_path = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
     try:
@@ -29,6 +27,7 @@ def train_with_random_split():
         print(f"Error: Dataset not found at {file_path}. Please run the feature engineering script.")
         return
 
+    # --- This is our champion feature set ---
     feature_cols = [
         'district_no',
         'avg_elevation',
@@ -36,71 +35,88 @@ def train_with_random_split():
         'winter_temp_anomaly',
         'winter_precip_anomaly',
         'national_avg_yield_lag1',
-        'producer_price_index_lag1'
+        'producer_price_index_lag1',
+        'spring_temp_anomaly_hybrid',
+        'spring_precip_anomaly_hybrid',
+        'summer_temp_anomaly_hybrid',
+        'summer_precip_anomaly_hybrid',
+        # Unused economic features
+        'fertilizer_price_index', 'energy_price_index',
+
+        # --- CRITICAL: Remove all peak-growth (summer) weather features ---
+        #'precip_total_peak_growth', 'temp_mean_peak_growth', 'heat_stress_days_peak_growth', 'solar_rad_peak_growth',
+        #'DTR_accumulation_phase', 'temp_min_peak_growth', 'temp_max_peak_growth', 'spring_freezing_days',
+
+        # --- CRITICAL: Remove contemporaneous features that are replaced by lagged versions ---
+        #'national_avg_yield', 'producer_price_index'
     ]
     target_col = 'kreisYield'
 
-    # --- Random Split of Districts Within Each Year ---
-    print("--- Performing random 80/20 split of districts WITHIN each year ---")
+    # --- Data Integrity Check ---
+    missing_cols = [col for col in feature_cols if col not in df.columns]
+    if missing_cols:
+        print(f"Error: The following feature columns are missing from the input file: {missing_cols}")
+        return
 
-    X_train_list, X_test_list = [], []
-    y_train_list, y_test_list = [], []
+    print(f"--- Starting 10-Fold Cross-Validation for Champion XGBoost Model ---")
+    print(f"Using {len(feature_cols)} features.")
 
-    # Loop through each year in the dataset
-    for year in df['year'].unique():
-        df_year = df[df['year'] == year]
+    # Lists to store the performance metrics from each fold
+    r2_scores = []
+    rmse_scores = []
 
-        X_year = df_year[feature_cols]
-        y_year = df_year[target_col]
+    N_FOLDS = 10
+    for i in range(N_FOLDS):
+        print(f"\n--- FOLD {i + 1}/{N_FOLDS} ---")
 
-        # Perform a standard random split on this year's data
-        X_train_yr, X_test_yr, y_train_yr, y_test_yr = train_test_split(
-            X_year, y_year, test_size=0.2, random_state=42
+        # We use the same yearly split logic, but change the random_state for each fold
+        # to ensure we are training and testing on different subsets of the data.
+        X_train_list, X_test_list = [], []
+        y_train_list, y_test_list = [], []
+
+        for year in df['year'].unique():
+            df_year = df[df['year'] == year]
+            X_year = df_year[feature_cols]
+            y_year = df_year[target_col]
+
+            # The only change is here: random_state=i
+            X_train_yr, X_test_yr, y_train_yr, y_test_yr = train_test_split(
+                X_year, y_year, test_size=0.2, random_state=i
+            )
+            X_train_list.append(X_train_yr)
+            X_test_list.append(X_test_yr)
+            y_train_list.append(y_train_yr)
+            y_test_list.append(y_test_yr)
+
+        X_train = pd.concat(X_train_list)
+        X_test = pd.concat(X_test_list)
+        y_train = pd.concat(y_train_list)
+        y_test = pd.concat(y_test_list)
+
+        # --- Train and Evaluate the XGBoost Model for this Fold ---
+        xgb = XGBRegressor(
+            objective='reg:squarederror', n_estimators=500, learning_rate=0.03,
+            max_depth=5, subsample=0.8, colsample_bytree=0.8,
+            random_state=42, n_jobs=-1,
         )
+        xgb.fit(X_train, y_train)
+        y_pred_xgb = xgb.predict(X_test)
 
-        X_train_list.append(X_train_yr)
-        X_test_list.append(X_test_yr)
-        y_train_list.append(y_train_yr)
-        y_test_list.append(y_test_yr)
+        fold_r2 = r2_score(y_test, y_pred_xgb)
+        fold_rmse = np.sqrt(mean_squared_error(y_test, y_pred_xgb))
 
-    # Concatenate the splits from all years into final training and testing sets
-    X_train = pd.concat(X_train_list)
-    X_test = pd.concat(X_test_list)
-    y_train = pd.concat(y_train_list)
-    y_test = pd.concat(y_test_list)
+        r2_scores.append(fold_r2)
+        rmse_scores.append(fold_rmse)
 
-    print(f"Total training samples: {len(X_train)}")
-    print(f"Total testing samples: {len(X_test)}")
+        print(f"  R-squared (R2): {fold_r2:.4f}")
+        print(f"  RMSE: {fold_rmse:.2f} dt/ha")
 
-    # --- Scaling ---
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-
-    # --- Train and Evaluate Ridge Regression ---
-    print("\n--- Training Models ---")
-    ridge = Ridge(alpha=10.0, random_state=42)
-    ridge.fit(X_train_scaled, y_train)
-    y_pred_ridge = ridge.predict(X_test_scaled)
-
-    # --- Train and Evaluate XGBoost ---
-    xgb = XGBRegressor(
-        objective='reg:squarederror', n_estimators=500, learning_rate=0.03,
-        max_depth=5, subsample=0.8, colsample_bytree=0.8,
-        random_state=42, n_jobs=-1,
-    )
-    xgb.fit(X_train, y_train)
-    y_pred_xgb = xgb.predict(X_test)
-
-    # --- Print Results ---
-    print("\n--- Model Performance (Random Split Evaluation) ---")
-    print("\nModel: Ridge Regression")
-    print(f"  R-squared (R2): {r2_score(y_test, y_pred_ridge):.4f}")
-    print(f"  RMSE: {np.sqrt(mean_squared_error(y_test, y_pred_ridge)):.2f} dt/ha")
-
-    print("\nModel: XGBoost")
-    print(f"  R-squared (R2): {r2_score(y_test, y_pred_xgb):.4f}")
-    print(f"  RMSE: {np.sqrt(mean_squared_error(y_test, y_pred_xgb)):.2f} dt/ha")
+    # --- Print Final Cross-Validation Results ---
+    print("\n-------------------------------------------------")
+    print("--- Final Cross-Validation Performance Summary ---")
+    print(f"Average R-squared (R2): {np.mean(r2_scores):.4f} +/- {np.std(r2_scores):.4f}")
+    print(f"Average RMSE: {np.mean(rmse_scores):.2f} +/- {np.std(rmse_scores):.2f} dt/ha")
+    print("-------------------------------------------------")
 
     # --- Final Model Training on ALL data ---
     print("\n--- Training Final Model on All Available Data for Deployment ---")
@@ -120,4 +136,4 @@ def train_with_random_split():
 
 
 if __name__ == "__main__":
-    train_with_random_split()
+    perform_robust_cross_validation()

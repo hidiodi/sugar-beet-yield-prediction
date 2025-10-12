@@ -194,16 +194,6 @@ def main():
     cols_to_remove = [
         # Redundant identifiers and target leakage
         'yield', 'state_name', 'latitude', 'longitude',
-
-        # Unused economic features
-        'fertilizer_price_index', 'energy_price_index',
-
-        # --- CRITICAL: Remove all peak-growth (summer) weather features ---
-        'precip_total_peak_growth', 'temp_mean_peak_growth', 'heat_stress_days_peak_growth', 'solar_rad_peak_growth',
-        'DTR_accumulation_phase', 'temp_min_peak_growth', 'temp_max_peak_growth', 'spring_freezing_days',
-
-        # --- CRITICAL: Remove contemporaneous features that are replaced by lagged versions ---
-        'national_avg_yield', 'producer_price_index'
     ]
     df_featured.drop(columns=cols_to_remove, inplace=True, errors='ignore')
 

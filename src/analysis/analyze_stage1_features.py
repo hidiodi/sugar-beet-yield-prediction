@@ -9,7 +9,7 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 output_dir = 'reports/stage2_feature_diagnostics/figures'
 os.makedirs(output_dir, exist_ok=True)
 
-file_path = 'data/05_model_input/final_imputed_dataset.csv'
+file_path = 'data/05_model_input/stage1_preseason_features.csv'
 target = 'kreisYield'  # Explicitly define target
 
 # --- Load Dataset ---

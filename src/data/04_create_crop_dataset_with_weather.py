@@ -111,7 +111,6 @@ def rasterize_districts(gdf_districts, ds_weather):
     )
 
     # Assign the raster as a coordinate to the weather dataset
-    # This may implicitly trigger dimension stacking (e.g., to 'stacked_lat_lon')
     ds_weather = ds_weather.assign_coords(district_id_raster=district_raster)
 
     logging.info("District rasterization complete. Ready for GroupBy operation.")
@@ -121,83 +120,90 @@ def rasterize_districts(gdf_districts, ds_weather):
 def calculate_weather_features_for_districts_optimized(ds_weather):
     """
     Calculates weather features for all districts simultaneously using Xarray GroupBy.
-    (FIXED: Dynamically identifies the spatial reduction dimension to account for stacking.)
+    (FIXED: Dynamically identifies the internal 'stacked' dimension created by groupby for reduction.)
     """
-    logging.info("Starting optimized GroupBy zonal statistics for weather features...")
+    logging.info("--- Starting Optimized Zonal Statistics ---")
+
+    # --- Step 1: In-depth logging of the initial state ---
+    logging.info(f"[PRE-GROUPBY] Initial ds_weather object:\n{ds_weather}")
+    logging.info(f"[PRE-GROUPBY] Dimensions of ds_weather: {ds_weather.dims}")
+    logging.info(
+        f"[PRE-GROUPBY] Dimensions of a data variable (Precipitation_Flux): {ds_weather['Precipitation_Flux'].dims}")
+    logging.info(f"[PRE-GROUPBY] List of coordinates: {list(ds_weather.coords.keys())}")
 
     results = []
     ACCUMULATION_MONTHS = [7, 8, 9]
 
-    # --- CRITICAL FIX: Identify the correct spatial dimension for reduction ---
-    # The spatial dimensions are the ones that are NOT 'time' and NOT the grouping coordinate.
-    # We check the dimensions of a data variable (e.g., Precipitation_Flux) for the check.
-    spatial_dims = [d for d in ds_weather['Precipitation_Flux'].dims if d not in ('time', 'district_id_raster')]
+    # --- Step 2: Create the GroupBy object separately to inspect it ---
+    logging.info("Creating the GroupBy object...")
+    grouped_by_district = ds_weather.groupby('district_id_raster')
+    logging.info(f"[POST-GROUPBY] Type of grouped object: {type(grouped_by_district)}")
+    logging.info(f"[POST-GROUPBY] Dimensions available in the grouped object context: {grouped_by_district.dims}")
 
-    if len(spatial_dims) == 1:
-        spatial_dim_for_mean = spatial_dims[0]
-        logging.info(f"Reducing spatial dimensions using dynamically identified dimension: '{spatial_dim_for_mean}'.")
-    else:
-        # Fallback to the dimension name indicated in the traceback: 'stacked_lat_lon'
-        spatial_dim_for_mean = 'stacked_lat_lon'
-        logging.warning(
-            f"Could not dynamically identify single spatial dimension ({spatial_dims}). Falling back to '{spatial_dim_for_mean}'.")
-    # -------------------------------------------------------------------------
+    # --- Step 3: CRITICAL FIX - Dynamically find the stacked dimension ---
+    # The dimensions available for reduction are those in the grouped object that are NOT the grouping coordinate.
+    available_reduce_dims = {k: v for k, v in grouped_by_district.dims.items() if k != 'district_id_raster'}
+    # From this, we want the spatial dimension, which is the one that is NOT 'time'.
+    spatial_dims_in_grouped_context = [d for d in available_reduce_dims if d != 'time']
 
-    # Step 1: Group and calculate the spatial mean
-    daily_mean_weather_by_district = ds_weather.groupby('district_id_raster').mean(dim=spatial_dim_for_mean)
+    if len(spatial_dims_in_grouped_context) != 1:
+        logging.error(
+            f"FATAL: Expected to find exactly one stacked spatial dimension, but found: {spatial_dims_in_grouped_context}")
+        raise ValueError("Could not determine the correct stacked dimension for reduction.")
+
+    reduction_dim = spatial_dims_in_grouped_context[0]
+    logging.info(f"SUCCESS: Dynamically identified the correct reduction dimension: '{reduction_dim}'")
+
+    # --- Step 4: Perform the mean calculation using the correct dimension name ---
+    logging.info(f"Calculating spatial mean for each district by reducing over dimension '{reduction_dim}'...")
+    daily_mean_weather_by_district = grouped_by_district.mean(dim=reduction_dim)
+    logging.info("Spatial mean calculation complete.")
+    logging.info(f"Resulting dimensions after mean: {daily_mean_weather_by_district.dims}")
 
     # Drop the background (fill=0) group
     if 0 in daily_mean_weather_by_district.district_id_raster.values:
         daily_mean_weather_by_district = daily_mean_weather_by_district.sel(
             district_id_raster=daily_mean_weather_by_district.district_id_raster != 0)
 
-    # Step 2: Iterate over years and calculate time-based features
+    # --- Step 5: Iterate over years and calculate time-based features (unchanged) ---
     for year in tqdm(range(1979, 2025), desc="Processing Years"):
         year_data = daily_mean_weather_by_district.sel(time=str(year))
 
         # --- A. Accumulation Phase (July, Aug, Sep) ---
         peak_growth = year_data.sel(time=year_data.time.dt.month.isin(ACCUMULATION_MONTHS))
 
-        # Perform all aggregations simultaneously across all districts for the time period
-        temp_max_peak = peak_growth['Temperature_Air_2m_Max_24h']
-        temp_min_peak = peak_growth['Temperature_Air_2m_Min_24h']
-
+        # Perform all aggregations simultaneously
         precip_total_peak_growth = peak_growth['Precipitation_Flux'].sum(dim='time')
         temp_mean_peak_growth = peak_growth['Temperature_Air_2m_Mean_24h'].mean(dim='time')
-        heat_stress_days_peak_growth = (temp_max_peak > 30).sum(dim='time').values.astype(int)
+        heat_stress_days_peak_growth = (peak_growth['Temperature_Air_2m_Max_24h'] > 30).sum(dim='time').astype(int)
         solar_rad_peak_growth = peak_growth['Solar_Radiation_Flux'].mean(dim='time')
-
-        mean_t_max = temp_max_peak.mean(dim='time')
-        mean_t_min = temp_min_peak.mean(dim='time')
+        mean_t_max = peak_growth['Temperature_Air_2m_Max_24h'].mean(dim='time')
+        mean_t_min = peak_growth['Temperature_Air_2m_Min_24h'].mean(dim='time')
         DTR_accumulation_phase = mean_t_max - mean_t_min
 
         # --- B. Early Spring Period (Mar 1 to Apr 15) ---
         early_spring_filter = ((year_data.time.dt.month == 3) |
                                ((year_data.time.dt.month == 4) & (year_data.time.dt.day <= 15)))
-
         early_spring_data = year_data.sel(time=early_spring_filter)
-        freezing_days = (early_spring_data['Temperature_Air_2m_Min_24h'] < 0).sum(dim='time').values.astype(int)
+        freezing_days = (early_spring_data['Temperature_Air_2m_Min_24h'] < 0).sum(dim='time').astype(int)
 
         # Step 3: Combine results into a DataFrame
         district_ids = [str(int(d)).zfill(5) for d in precip_total_peak_growth.district_id_raster.values]
-
         year_results = pd.DataFrame({
-            'district_no': district_ids,
-            'year': year,
+            'district_no': district_ids, 'year': year,
             'precip_total_peak_growth': precip_total_peak_growth.values,
             'temp_mean_peak_growth': temp_mean_peak_growth.values,
-            'heat_stress_days_peak_growth': heat_stress_days_peak_growth,
+            'heat_stress_days_peak_growth': heat_stress_days_peak_growth.values,
             'solar_rad_peak_growth': solar_rad_peak_growth.values,
             'DTR_accumulation_phase': DTR_accumulation_phase.values,
             'temp_min_peak_growth': mean_t_min.values,
             'temp_max_peak_growth': mean_t_max.values,
-            'spring_freezing_days': freezing_days,
+            'spring_freezing_days': freezing_days.values,
         })
         results.append(year_results)
 
-    # Final concatenation of all yearly results
+    logging.info("--- Finished Optimized Zonal Statistics ---")
     return pd.concat(results, ignore_index=True)
-
 
 def main():
     """Main orchestrator for creating the crop dataset with weather features."""
@@ -207,6 +213,10 @@ def main():
     path_yield_data = Path("data/02_intermediate/sugarbeet_yield.csv")
     path_districts_geo = Path("data/01_raw/districts_official.geojson")
     path_weather_data = Path("data/02_intermediate/agera5_germany_merged.nc")
+
+    # --- NEW: Add path to the pre-processed forecast features ---
+    path_forecast_features = Path("data/03_processed/final_hybrid_features_only.csv")
+
     output_dir = Path("data/03_processed")
     output_dir.mkdir(parents=True, exist_ok=True)
     output_filepath = output_dir / "final_dataset_with_advanced_features.csv"
@@ -220,43 +230,53 @@ def main():
         path_yield_data, path_districts_geo, path_weather_data
     )
 
-    # --- NEW STEP: Rasterize Districts (Performance Critical) ---
+    # --- 3. Rasterize Districts and Perform Zonal Statistics ---
     ds_weather = rasterize_districts(gdf_districts, ds_weather)
-
-    # --- 3. Perform Zonal Statistics (Optimized) ---
     df_weather_features = calculate_weather_features_for_districts_optimized(ds_weather)
 
-    # --- 4. Assemble, Merge, and Impute Missing Weather Data ---
+    # --- 4. Assemble and Merge All Datasets ---
     logging.info("Assembling final dataset...")
+    # Merge yield data with the calculated ground-truth weather features
     final_df = pd.merge(df_yield, df_weather_features, on=['district_no', 'year'], how='left')
 
-    # --- 4a. State-Level Imputation ---
-    weather_cols = [
-        'precip_total_peak_growth',
-        'temp_mean_peak_growth',
-        'heat_stress_days_peak_growth',
-        'solar_rad_peak_growth',
-        'DTR_accumulation_phase',
-        'temp_min_peak_growth',
-        'temp_max_peak_growth',
-        'spring_freezing_days'
-    ]
+    # --- NEW STEP: Load and merge the forecast features ---
+    logging.info(f"Loading pre-processed forecast features from '{path_forecast_features}'...")
+    if not path_forecast_features.exists():
+        logging.error(
+            f"FATAL: Forecast features file not found at '{path_forecast_features}'. Please run the forecast processing scripts first.")
+        return
 
+    df_forecast = pd.read_csv(path_forecast_features)
+    # Ensure district_no is a zero-padded string for a reliable merge
+    df_forecast['district_no'] = df_forecast['district_no'].astype(str).str.zfill(5)
+
+    # Merge forecast data into the main dataframe
+    final_df = pd.merge(final_df, df_forecast, on=['district_no', 'year'], how='left')
+    logging.info("Successfully merged forecast features.")
+
+    # --- NEW: Check for missingness after forecast merge, as these cannot be imputed ---
+    forecast_cols = [col for col in df_forecast.columns if col not in ['year', 'district_no']]
+    missing_forecasts = final_df[forecast_cols].isnull().sum().sum()
+    if missing_forecasts > 0:
+        logging.warning(
+            f"Found {missing_forecasts} missing forecast data points after merging (this can happen for years without forecasts).")
+        initial_rows = len(final_df)
+        final_df.dropna(subset=forecast_cols, inplace=True)
+        rows_dropped = initial_rows - len(final_df)
+        logging.info(f"Dropped {rows_dropped} rows due to missing forecast features.")
+
+    # --- 5. Impute Missing Ground-Truth Weather Data ---
+    weather_cols = [col for col in df_weather_features.columns if col not in ['year', 'district_no']]
     missing_before = final_df[weather_cols].isnull().sum().sum()
 
     if missing_before > 0:
-        logging.info(f"Found {missing_before} missing weather data points. Starting state-level imputation...")
-
+        logging.info(
+            f"Found {missing_before} missing ground-truth weather data points. Starting state-level imputation...")
         districts_to_state = gdf_districts[['district_no', 'state']].drop_duplicates()
-        initial_merge_rows = len(final_df)
         final_df = pd.merge(final_df, districts_to_state, on='district_no', how='left')
-
-        if len(final_df) != initial_merge_rows:
-            logging.warning("Merge with state info changed the row count. Check GeoJSON for duplicate districts.")
 
         state_yearly_means = final_df.groupby(['state', 'year'])[weather_cols].transform('mean')
         final_df[weather_cols] = final_df[weather_cols].fillna(state_yearly_means)
-
         final_df.drop(columns=['state'], inplace=True)
 
         missing_after = final_df[weather_cols].isnull().sum().sum()
@@ -266,20 +286,24 @@ def main():
     initial_rows = len(final_df)
     final_df.dropna(subset=weather_cols, inplace=True)
     rows_dropped = initial_rows - len(final_df)
-    logging.info(f"Dropped {rows_dropped} rows where weather data could not be imputed.")
+    if rows_dropped > 0:
+        logging.info(f"Dropped {rows_dropped} rows where ground-truth weather data could not be imputed.")
 
-    # --- 4b. Format Columns ---
+    # --- 6. Format and Save Final Dataset ---
     logging.info("Formatting numeric columns...")
-    for col in weather_cols:
-        final_df[col] = pd.to_numeric(final_df[col], errors='coerce').round(5)
+    all_feature_cols = weather_cols + forecast_cols
+    for col in all_feature_cols:
+        if col in final_df.columns:
+            final_df[col] = pd.to_numeric(final_df[col], errors='coerce').round(5)
 
-    # --- 5. Save Final Dataset ---
     logging.info(f"Saving final dataset with {len(final_df)} rows to '{output_filepath}'")
     final_df.to_csv(output_filepath, index=False)
 
     logging.info("--- SUCCESS: Dataset created! ---")
     print("\n--- Final Dataset Preview ---")
     print(final_df.head())
+    print("\n--- Final Dataset Columns ---")
+    print(final_df.columns.tolist())
 
 
 if __name__ == "__main__":

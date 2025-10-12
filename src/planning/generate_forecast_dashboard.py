@@ -15,7 +15,7 @@ from jinja2 import Template
 # You can change this to any year to create a different case study
 CASE_STUDY_YEAR = 2018
 
-MODEL_PATH = os.path.join('src/models', 'stage1_preseason_xgb_model.joblib')
+MODEL_PATH = os.path.join('src/models', 'final_xgb_model_random_split.joblib')
 DATA_PATH = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
 GEOJSON_PATH = os.path.join('data', '01_raw', 'districts_official.geojson')
 OUTPUT_DIR = os.path.join('reports', 'value_story')
