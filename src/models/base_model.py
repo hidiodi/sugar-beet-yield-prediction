@@ -29,8 +29,8 @@ def train_and_validate_with_holdout():
 
     # --- This is our champion feature set ---
     feature_cols = [
-        'district_no',
-        'year',  # Note: 'year' as a direct feature can introduce time trends, be mindful.
+        #'district_no',
+        #'year',  # Note: 'year' as a direct feature can introduce time trends, be mindful.
         'precip_total_peak_growth',
         'temp_mean_peak_growth',
         'heat_stress_days_peak_growth',
