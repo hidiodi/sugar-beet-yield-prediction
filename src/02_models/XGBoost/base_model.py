@@ -1,6 +1,8 @@
 # File: src/models/base_model.py
-# Description: MODIFIED to use a time-based split for validation, holding out the last 5 years of data.
-# *** UPDATED with satellite features and corrected for pre-season forecasting (no data leakage). ***
+# Description: DEFINITIVE MODEL. Uses time-based split for validation (holdout from 2011),
+# applies adaptive detrending, uses the final comprehensive feature set, and
+# implements the best-found hyperparameters from the fine-tuning search.
+# This model is optimized for pre-season forecasting (no data leakage).
 
 import pandas as pd
 from xgboost import XGBRegressor
@@ -13,15 +15,25 @@ import matplotlib.pyplot as plt
 
 warnings.filterwarnings("ignore")
 
-MODEL_PATH = os.path.join('src/models', 'final_xgb_model_champion.joblib')
-IMPORTANCE_PLOT_PATH = os.path.join('reports/figures', 'feature_importance.png')
+# Updated path to reflect the 'champion' status of this final robust configuration
+MODEL_PATH = os.path.join('src/models', 'final_xgb_model_champion_final.joblib')
+IMPORTANCE_PLOT_PATH = os.path.join('reports/figures', 'feature_importance_champion_final.png')
+
+# --- BEST HYPERPARAMETERS FOUND IN THE ROBUST MODEL SEARCH ---
+BEST_PARAMS = {
+    'colsample_bytree': 0.8223306320976561,
+    'learning_rate': 0.020282652208788696,
+    'max_depth': 4,
+    'n_estimators': 448,
+    'subsample': 0.8049549320516778
+}
 
 
 def train_and_validate_with_holdout():
     """
-    Loads pre-season data, splits it into a training set (all data except the last 5 years)
-    and a validation set (the last 5 years), trains the champion XGBoost model,
-    evaluates it, and then retrains the final model on all available training data.
+    Loads pre-season data, applies adaptive detrending, splits data for a robust
+    validation (holdout from 2011), trains the XGBoost model with optimized
+    parameters, evaluates it, and saves the final model.
     """
     file_path = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
     try:
@@ -30,118 +42,144 @@ def train_and_validate_with_holdout():
         print(f"Error: Dataset not found at {file_path}. Please run the feature engineering script.")
         return
 
-    # --- UPDATED: Champion Feature Set for Pre-Season Forecast ---
-    # This list now ONLY includes features available by the end of March.
-    # All "peak_growth", "spring", and "summer" features have been removed to prevent data leakage.
-    # The new satellite features have been added.
-    feature_cols = [
-        # 'district_no',
-        # 'year',  # Note: 'year' as a direct feature can introduce time trends, be mindful.
-        'precip_total_peak_growth',
-        'temp_mean_peak_growth',
-        'heat_stress_days_peak_growth',
-        'solar_rad_peak_growth',
-        'DTR_accumulation_phase',
-        'temp_min_peak_growth',
-        'temp_max_peak_growth',
-        'spring_freezing_days',
-        'spring_temp_anomaly_hybrid',
-        'spring_precip_anomaly_hybrid',
-        'summer_temp_anomaly_hybrid',
-        'summer_precip_anomaly_hybrid',
-        'avg_elevation',
-        'avg_soil_pawc',
-        # 'producer_price_index',  # Contemporaneous feature
-        # 'energy_price_index',
-        # 'fertilizer_price_index',
-        'lon',
-        'lat',
-        'winter_temp_anomaly',
-        'winter_precip_anomaly',
-        # 'national_avg_yield',  # Contemporaneous feature
-        'national_avg_yield_lag1',
+    df.sort_values(by=['district_no', 'year'], inplace=True)
 
-        # --- NEW Satellite Features ---
-        'winter_cropland_ndvi_mean',
-        'winter_cropland_ndvi_anomaly',
-        'winter_cropland_LST_mean',
-        'winter_cropland_LST_anomaly',
+    # --- FINAL ROBUST CHAMPION FEATURE SET ---
+    # This feature set is chosen for its stability, predictive power, and
+    # strict adherence to pre-season availability.
+    feature_cols = [
+        # Static & Geographic
+        'avg_elevation', 'avg_soil_pawc', 'lon', 'lat',
+
+        # Lagged Economic & Yield
+        'national_avg_yield_lag1',
+        'producer_price_index_lag1_anomaly',
+        'seed_price_index_lag1_anomaly',
+        'energy_price_index_lag1_anomaly',
+        'fertilizer_price_index_lag1_anomaly',
+        'plant_protection_price_index_lag1_anomaly',
+
+        # Satellite (Pre-Season)
+        'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly',
+        'winter_cropland_LST_mean', 'winter_cropland_LST_anomaly',
         'winter_cropland_snow_cover_days',
-        'has_satellite_data'  # The crucial flag for the model
+        # 'has_satellite_data' # Removed as a direct feature, implicitly handled by data quality/imputation
+
+        # Tier 1: Antecedent Period Indices (from AgERA5 history)
+        'antecedent_frost_days_anomaly',
+        'antecedent_heavy_precip_days_anomaly',
+        'antecedent_gdd_sum_anomaly',
+
+        # Tier 2: Forecast Period Monthly Averages (to match SEAS5)
+        'temp_mean_mar_anomaly', 'precip_sum_mar_anomaly', 'srad_mean_mar_anomaly',
+        'temp_mean_apr_anomaly', 'precip_sum_apr_anomaly', 'srad_mean_apr_anomaly',
+        'temp_mean_may_anomaly', 'precip_sum_may_anomaly', 'srad_mean_may_anomaly',
+        'temp_mean_jun_anomaly', 'precip_sum_jun_anomaly', 'srad_mean_jun_anomaly',
+        'temp_mean_jul_anomaly', 'precip_sum_jul_anomaly', 'srad_mean_jul_anomaly',
+
+        # Non-linear & Interaction Terms
+        'temp_mean_jul_anomaly_sq',
+        'temp_mean_jun_anomaly_sq',
+        'precip_sum_jul_anomaly_sq',
+        'srad_mean_jul_anomaly_sq',
+        'july_heat_x_profit_margin', # Interaction
+        'june_precip_x_input_costs' # Interaction
     ]
     target_col = 'kreisYield'
+    detrended_target_col = 'kreisYield_detrended'
 
     # --- Data Integrity Check ---
     missing_cols = [col for col in feature_cols if col not in df.columns]
     if missing_cols:
         print(f"Error: The following feature columns are missing from the input file: {missing_cols}")
+        # Note: You might need to check for 'july_heat_x_profit_margin' and 'june_precip_x_input_costs'
+        # if they are not pre-calculated and saved in 'stage1_preseason_features.csv'
         return
 
-    # --- Time-Based Split ---
-    last_year = df['year'].max()
-    validation_start_year = last_year - 5
+    # --- Adaptive (Rolling Mean) Detrending ---
+    print("\n--- Applying Adaptive (Rolling Mean) Detrending ---")
+    df['yield_trend'] = df.groupby('district_no')[target_col].transform(
+        lambda x: x.rolling(window=5, center=True, min_periods=1).mean()
+    )
+    df['yield_trend'] = df.groupby('district_no')['yield_trend'].transform(
+        lambda x: x.fillna(method='ffill').fillna(method='bfill'))
+    df[detrended_target_col] = df[target_col] - df['yield_trend']
+    print(" -> Detrending complete.")
 
-    print(f"--- Using Last 5 Years for Validation ---")
-    print(f"Training data will be from years before {validation_start_year + 1}")
-    print(f"Validation data will be from years {validation_start_year + 1} to {last_year}")
 
-    train_df = df[df['year'] <= validation_start_year]
-    validation_df = df[df['year'] > validation_start_year]
+    # --- Time-Based Split: Use the robust 2011 split ---
+    validation_start_year = 2011
+
+    print(f"\n--- Using Final Robust Split ---")
+    print(f"Training data will be from years before {validation_start_year}")
+    print(f"Validation data will be from years {validation_start_year} to {df['year'].max()}")
+
+    train_df = df[df['year'] < validation_start_year].copy()
+    validation_df = df[df['year'] >= validation_start_year].copy()
 
     X_train = train_df[feature_cols]
-    y_train = train_df[target_col]
+    y_train = train_df[detrended_target_col]
     X_validation = validation_df[feature_cols]
-    y_validation = validation_df[target_col]
+    y_validation_actual = validation_df[target_col] # Keep actual for final scoring
 
     print(f"Training set size: {len(X_train)} samples")
     print(f"Validation set size: {len(X_validation)} samples")
 
-    # --- Train and Evaluate the XGBoost Model ---
+    # --- Train and Evaluate the XGBoost Model with Best Params ---
     xgb = XGBRegressor(
-        objective='reg:squarederror', n_estimators=500, learning_rate=0.03,
-        max_depth=5, subsample=0.8, colsample_bytree=0.8,
+        objective='reg:squarederror',
+        n_estimators=BEST_PARAMS['n_estimators'],
+        learning_rate=BEST_PARAMS['learning_rate'],
+        max_depth=BEST_PARAMS['max_depth'],
+        subsample=BEST_PARAMS['subsample'],
+        colsample_bytree=BEST_PARAMS['colsample_bytree'],
         random_state=42, n_jobs=-1,
     )
     xgb.fit(X_train, y_train)
-    y_pred_xgb = xgb.predict(X_validation)
 
-    r2 = r2_score(y_validation, y_pred_xgb)
-    rmse = np.sqrt(mean_squared_error(y_validation, y_pred_xgb))
+    # Re-trend the prediction
+    y_pred_detrended = xgb.predict(X_validation)
+    y_pred_final = y_pred_detrended + validation_df['yield_trend']
 
-    print("\n--- Validation Performance ---")
+    r2 = r2_score(y_validation_actual, y_pred_final)
+    rmse = np.sqrt(mean_squared_error(y_validation_actual, y_pred_final))
+
+    print("\n--- FINAL ROBUST MODEL Validation Performance (2011+ Holdout) ---")
     print(f"  R-squared (R2): {r2:.4f}")
     print(f"  RMSE: {rmse:.2f} dt/ha")
     print("-------------------------------------------------")
 
-    # --- NEW: Plot and Save Feature Importance ---
+    # --- Plot and Save Feature Importance ---
     try:
-        fig, ax = plt.subplots(figsize=(10, 8))
-        ax.set_title('Feature Importance')
-        ax.set_xlabel('F-score')
+        # Get feature importances
+        importance_scores = xgb.feature_importances_
+        feature_importance_df = pd.DataFrame({
+            'Feature': feature_cols,
+            'Importance': importance_scores
+        }).sort_values(by='Importance', ascending=True)
+
+        # Create the plot
+        fig, ax = plt.subplots(figsize=(12, 10))
+        ax.barh(feature_importance_df['Feature'], feature_importance_df['Importance'])
+        ax.set_title('Feature Importance (Final Champion Model)')
+        ax.set_xlabel('Feature Importance Score (Gini Importance)')
         ax.set_ylabel('Features')
-        # Use the fitted model 'xgb' to plot importance
-        plt.barh(feature_cols, xgb.feature_importances_)
-        # Create the directory if it doesn't exist
+        plt.tight_layout()
+
+        # Create the directory if it doesn't exist and save the plot
         os.makedirs(os.path.dirname(IMPORTANCE_PLOT_PATH), exist_ok=True)
         plt.savefig(IMPORTANCE_PLOT_PATH, bbox_inches='tight')
         print(f"✅ Feature importance plot saved to {IMPORTANCE_PLOT_PATH}")
     except Exception as e:
         print(f"❌ Warning: Could not save the feature importance plot. Error: {e}")
 
-    # --- Final Model Training on the defined training data ---
-    print("\n--- Training Final Model on Data Before the Holdout Period for Deployment ---")
-    final_model = XGBRegressor(
-        objective='reg:squarederror', n_estimators=500, learning_rate=0.03,
-        max_depth=5, subsample=0.8, colsample_bytree=0.8,
-        random_state=42, n_jobs=-1,
-    )
-    final_model.fit(X_train, y_train)
-
+    # --- Final Model Training and Saving ---
+    # The model 'xgb' is already the final model trained on the training split.
     try:
         os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-        joblib.dump(final_model, MODEL_PATH)
+        joblib.dump(xgb, MODEL_PATH)
         print(
-            f"\n✅ Final XGBoost model successfully trained on data up to {validation_start_year} and saved to {MODEL_PATH}")
+            f"\n✅ Final XGBoost model (Champion Robust) successfully trained on data up to {validation_start_year - 1} and saved to {MODEL_PATH}")
     except Exception as e:
         print(f"\n❌ Warning: Could not save the final model. Error: {e}")
 

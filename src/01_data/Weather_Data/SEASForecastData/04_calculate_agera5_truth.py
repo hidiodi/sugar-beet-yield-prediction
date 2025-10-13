@@ -53,8 +53,8 @@ def create_full_ground_truth():
             yearly_monthly_mean = yearly_ds.groupby('time.month').mean(dim='time')
             anomaly_monthly = yearly_monthly_mean - monthly_climatology
 
-            spring_anomaly = anomaly_monthly.sel(month=[4, 5, 6]).mean(dim='month')
-            summer_anomaly = anomaly_monthly.sel(month=[7, 8, 9]).mean(dim='month')
+            spring_anomaly = anomaly_monthly.sel(month=[3, 4, 5]).mean(dim='month')
+            summer_anomaly = anomaly_monthly.sel(month=[6, 7, 8]).mean(dim='month')
 
             def get_stats(data_array):
                 data_array.rio.set_spatial_dims(x_dim="lon", y_dim="lat").rio.write_crs("EPSG:4326", inplace=True)

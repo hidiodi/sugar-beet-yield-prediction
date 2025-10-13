@@ -32,35 +32,58 @@ def train_and_validate_with_holdout():
     # --- FINAL HYBRID Feature Set ---
     # Combines the explicit trend feature with the regime-switching flag
     # to give the model maximum flexibility and explanatory power.
-    feature_cols = [
-        # Static & Geographic Features
-        'avg_elevation',
-        'avg_soil_pawc',
-        'lon',
-        'lat',
+    static_and_lagged_features = [
+        # Static & Geographic
+        'avg_elevation', 'avg_soil_pawc', 'lon', 'lat',
 
-        # Antecedent (Winter) Weather Features
-        'winter_temp_anomaly',
-        'winter_precip_anomaly',
-
-        # Lagged Economic & Yield Features
+        # Lagged Economic & Yield
         'national_avg_yield_lag1',
-        'producer_price_index_lag1',
 
-        # Satellite Features
-        'winter_cropland_ndvi_mean',
-        'winter_cropland_ndvi_anomaly',
-        'winter_cropland_LST_mean',
-        'winter_cropland_LST_anomaly',
+        # === NEW: Using the STABLE ANOMALY versions of economic features ===
+        'producer_price_index_lag1_anomaly',
+        'seed_price_index_lag1_anomaly',
+        'energy_price_index_lag1_anomaly',
+        'fertilizer_price_index_lag1_anomaly',
+        'plant_protection_price_index_lag1_anomaly',
+
+        # Satellite (Pre-Season)
+        'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly',
+        'winter_cropland_LST_mean', 'winter_cropland_LST_anomaly',
         'winter_cropland_snow_cover_days',
 
-        # --- COMBINED Evolutionary Features ---
-        'year_trend',  # Models the continuous technological/genetic gain
-        'has_satellite_data',  # Models the structural break between eras
-        'post_quota_era'  # Models the 2017 economic shock
+        # Evolutionary Trend
+        # 'year_trend', 'has_satellite_data'
     ]
-    target_col = 'kreisYield'
 
+    # New, powerful weather features from the updated data pipeline
+    new_weather_features = [
+        # Tier 1: Antecedent Period Indices (from AgERA5 history)
+        'antecedent_frost_days_anomaly',
+        'antecedent_heavy_precip_days_anomaly',
+        'antecedent_gdd_sum_anomaly',
+
+        # Tier 2: Forecast Period Monthly Averages (to match SEAS5)
+        'temp_mean_mar_anomaly', 'precip_sum_mar_anomaly', 'srad_mean_mar_anomaly',
+        'temp_mean_apr_anomaly', 'precip_sum_apr_anomaly', 'srad_mean_apr_anomaly',
+        'temp_mean_may_anomaly', 'precip_sum_may_anomaly', 'srad_mean_may_anomaly',
+        'temp_mean_jun_anomaly', 'precip_sum_jun_anomaly', 'srad_mean_jun_anomaly',
+        'temp_mean_jul_anomaly', 'precip_sum_jul_anomaly', 'srad_mean_jul_anomaly'
+    ]
+    polynomial_features = [
+        'temp_mean_jul_anomaly_sq',
+        'temp_mean_jun_anomaly_sq',
+        'precip_sum_jul_anomaly_sq',
+        'srad_mean_jul_anomaly_sq'
+    ]
+
+    interaction_features = [
+        'july_heat_x_profit_margin',
+        'june_precip_x_input_costs'
+    ]
+
+    # Combine them into the final list of features for the model
+    feature_cols = static_and_lagged_features + new_weather_features + interaction_features + polynomial_features
+    target_col = 'kreisYield'
     # --- Data Integrity Check ---
     missing_cols = [col for col in feature_cols if col not in df.columns]
     if missing_cols:
@@ -102,7 +125,7 @@ def train_and_validate_with_holdout():
     # --- Train and Evaluate the XGBoost Model ---
     xgb = XGBRegressor(
         objective='reg:squarederror', n_estimators=500, learning_rate=0.03,
-        max_depth=5, subsample=0.8, colsample_bytree=0.8,
+        max_depth=3, subsample=0.8, colsample_bytree=0.8,
         random_state=42, n_jobs=-1,
     )
     xgb.fit(X_train, y_train)
@@ -141,7 +164,7 @@ def train_and_validate_with_holdout():
     print("\n--- Training Final Model on Data Before the Holdout Period for Deployment ---")
     final_model = XGBRegressor(
         objective='reg:squarederror', n_estimators=500, learning_rate=0.03,
-        max_depth=5, subsample=0.8, colsample_bytree=0.8,
+        max_depth=8, subsample=0.8, colsample_bytree=0.8,
         random_state=42, n_jobs=-1,
     )
     final_model.fit(df[df['year'] <= validation_start_year][feature_cols],
