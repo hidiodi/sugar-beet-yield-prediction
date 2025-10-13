@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 
 warnings.filterwarnings("ignore")
 
-# Updated path to reflect the 'champion' status of this final robust configuration
 MODEL_PATH = os.path.join('src/models', 'final_xgb_model_champion_final.joblib')
 IMPORTANCE_PLOT_PATH = os.path.join('reports/figures', 'feature_importance_champion_final.png')
 
@@ -44,15 +43,16 @@ def train_and_validate_with_holdout():
 
     df.sort_values(by=['district_no', 'year'], inplace=True)
 
-    # --- FINAL ROBUST CHAMPION FEATURE SET ---
-    # This feature set is chosen for its stability, predictive power, and
-    # strict adherence to pre-season availability.
+    # This list includes all the antecedent, SEAS5, satellite, economic,
+    # and engineered features created in the final data preparation script.
     feature_cols = [
         # Static & Geographic
-        'avg_elevation', 'avg_soil_pawc', 'lon', 'lat',
+        'avg_elevation', 'avg_soil_pawc', 'lon', 'lat', 'year_trend',
 
         # Lagged Economic & Yield
         'national_avg_yield_lag1',
+        'profit_margin_proxy_lag1',
+        'cost_of_inputs_lag1',
         'producer_price_index_lag1_anomaly',
         'seed_price_index_lag1_anomaly',
         'energy_price_index_lag1_anomaly',
@@ -62,29 +62,29 @@ def train_and_validate_with_holdout():
         # Satellite (Pre-Season)
         'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly',
         'winter_cropland_LST_mean', 'winter_cropland_LST_anomaly',
-        'winter_cropland_snow_cover_days',
-        # 'has_satellite_data' # Removed as a direct feature, implicitly handled by data quality/imputation
+        'winter_cropland_snow_cover_days', 'has_satellite_data',
 
-        # Tier 1: Antecedent Period Indices (from AgERA5 history)
+        # Antecedent Period Indices (from AgERA5 history)
         'antecedent_frost_days_anomaly',
         'antecedent_heavy_precip_days_anomaly',
         'antecedent_gdd_sum_anomaly',
 
-        # Tier 2: Forecast Period Monthly Averages (to match SEAS5)
-        'temp_mean_mar_anomaly', 'precip_sum_mar_anomaly', 'srad_mean_mar_anomaly',
-        'temp_mean_apr_anomaly', 'precip_sum_apr_anomaly', 'srad_mean_apr_anomaly',
-        'temp_mean_may_anomaly', 'precip_sum_may_anomaly', 'srad_mean_may_anomaly',
-        'temp_mean_jun_anomaly', 'precip_sum_jun_anomaly', 'srad_mean_jun_anomaly',
-        'temp_mean_jul_anomaly', 'precip_sum_jul_anomaly', 'srad_mean_jul_anomaly',
+        # SEAS5 Seasonal Forecasts (Magnitude & Confidence)
+        'spring_temp_anomaly_forecast', 'spring_precip_anomaly_forecast',
+        'summer_temp_anomaly_forecast', 'summer_precip_anomaly_forecast',
+        'spring_temp_prob_warm_forecast', 'spring_precip_prob_wet_forecast',
+        'summer_temp_prob_warm_forecast', 'summer_precip_prob_wet_forecast',
 
         # Non-linear & Interaction Terms
-        'temp_mean_jul_anomaly_sq',
-        'temp_mean_jun_anomaly_sq',
-        'precip_sum_jul_anomaly_sq',
-        'srad_mean_jul_anomaly_sq',
-        'july_heat_x_profit_margin', # Interaction
-        'june_precip_x_input_costs' # Interaction
+        'summer_heat_x_profit_margin',
+        'summer_precip_x_input_costs',
+        'spring_temp_anomaly_forecast_sq',
+        'summer_temp_anomaly_forecast_sq',
+        'spring_precip_anomaly_forecast_sq',
+        'summer_precip_anomaly_forecast_sq'
     ]
+    # ===============================================================
+
     target_col = 'kreisYield'
     detrended_target_col = 'kreisYield_detrended'
 
@@ -92,8 +92,6 @@ def train_and_validate_with_holdout():
     missing_cols = [col for col in feature_cols if col not in df.columns]
     if missing_cols:
         print(f"Error: The following feature columns are missing from the input file: {missing_cols}")
-        # Note: You might need to check for 'july_heat_x_profit_margin' and 'june_precip_x_input_costs'
-        # if they are not pre-calculated and saved in 'stage1_preseason_features.csv'
         return
 
     # --- Adaptive (Rolling Mean) Detrending ---
@@ -106,10 +104,8 @@ def train_and_validate_with_holdout():
     df[detrended_target_col] = df[target_col] - df['yield_trend']
     print(" -> Detrending complete.")
 
-
     # --- Time-Based Split: Use the robust 2011 split ---
-    validation_start_year = 2011
-
+    validation_start_year = 2014
     print(f"\n--- Using Final Robust Split ---")
     print(f"Training data will be from years before {validation_start_year}")
     print(f"Validation data will be from years {validation_start_year} to {df['year'].max()}")
@@ -120,7 +116,7 @@ def train_and_validate_with_holdout():
     X_train = train_df[feature_cols]
     y_train = train_df[detrended_target_col]
     X_validation = validation_df[feature_cols]
-    y_validation_actual = validation_df[target_col] # Keep actual for final scoring
+    y_validation_actual = validation_df[target_col]
 
     print(f"Training set size: {len(X_train)} samples")
     print(f"Validation set size: {len(X_validation)} samples")
@@ -137,7 +133,6 @@ def train_and_validate_with_holdout():
     )
     xgb.fit(X_train, y_train)
 
-    # Re-trend the prediction
     y_pred_detrended = xgb.predict(X_validation)
     y_pred_final = y_pred_detrended + validation_df['yield_trend']
 
@@ -151,14 +146,12 @@ def train_and_validate_with_holdout():
 
     # --- Plot and Save Feature Importance ---
     try:
-        # Get feature importances
         importance_scores = xgb.feature_importances_
         feature_importance_df = pd.DataFrame({
             'Feature': feature_cols,
             'Importance': importance_scores
         }).sort_values(by='Importance', ascending=True)
 
-        # Create the plot
         fig, ax = plt.subplots(figsize=(12, 10))
         ax.barh(feature_importance_df['Feature'], feature_importance_df['Importance'])
         ax.set_title('Feature Importance (Final Champion Model)')
@@ -166,7 +159,6 @@ def train_and_validate_with_holdout():
         ax.set_ylabel('Features')
         plt.tight_layout()
 
-        # Create the directory if it doesn't exist and save the plot
         os.makedirs(os.path.dirname(IMPORTANCE_PLOT_PATH), exist_ok=True)
         plt.savefig(IMPORTANCE_PLOT_PATH, bbox_inches='tight')
         print(f"✅ Feature importance plot saved to {IMPORTANCE_PLOT_PATH}")
@@ -174,7 +166,6 @@ def train_and_validate_with_holdout():
         print(f"❌ Warning: Could not save the feature importance plot. Error: {e}")
 
     # --- Final Model Training and Saving ---
-    # The model 'xgb' is already the final model trained on the training split.
     try:
         os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
         joblib.dump(xgb, MODEL_PATH)

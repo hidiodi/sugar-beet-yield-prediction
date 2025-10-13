@@ -1,13 +1,11 @@
 # File: build_stage1_features.py
-# Description: CORRECTED VERSION. Fixes duplicate column issue during merge and
-#              retains essential geographic features (lon, lat) for the model.
+# Description: CORRECTED VERSION. Fixes crashes by removing redundant merges and
+#              updating feature engineering to use the correct seasonal forecast column names.
 
 import pandas as pd
 import logging
 from pathlib import Path
-import numpy as np
 import sys
-import os
 
 # --- Setup basic logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -65,6 +63,7 @@ def load_and_process_economic_data(producer_price_file, input_price_file):
         logging.error(f"Failed to load or process economic data files. Details: {e}", exc_info=True)
         return None
 
+
 def main():
     """Main function to build features for a Stage 1 (pre-season) forecast model."""
     logging.info("--- Starting Stage 1 (Pre-Season Forecast) Data Pipeline ---")
@@ -74,7 +73,6 @@ def main():
     producer_price_file = Path('data/01_raw/61211-0002_de/61211-0001_de.csv')
     input_price_file = Path('data/01_raw/61211-0002_de/61221-0003_de.csv')
     satellite_features_file = Path('data/03_primary/satellite_features_districts_2001-2021.csv')
-    weather_features_file = Path('data/03_processed/final_dataset_with_advanced_features.csv')
     output_path = Path('data/05_model_input/')
     output_file = output_path / 'stage1_preseason_features.csv'
     output_path.mkdir(exist_ok=True, parents=True)
@@ -83,31 +81,34 @@ def main():
     logging.info("\n--- STAGE 1: Loading and Merging Base Data ---")
     master_df = pd.read_csv(master_file)
     master_df['district_no'] = master_df['district_no'].astype(str).str.zfill(5)
+
+    # ============================ FIX 1: REMOVE JUNK COLUMN ============================
+    # The master dataset contains the useless 'crs_anomaly' column, we remove it here.
+    if 'crs_anomaly' in master_df.columns:
+        logging.info("Removing junk 'crs_anomaly' column from master data.")
+        master_df = master_df.drop(columns=['crs_anomaly'])
+    # ===================================================================================
+
     df_economic = load_and_process_economic_data(producer_price_file, input_price_file)
     if df_economic is None: sys.exit(1)
+
+    # Check for duplicate economic columns before merging
+    overlapping_cols = [col for col in df_economic.columns if col in master_df.columns and col != 'year']
+    if overlapping_cols:
+        master_df = master_df.drop(columns=overlapping_cols)
+
     merged_df = pd.merge(master_df, df_economic, on='year', how='left')
     merged_df['kreisYield'] = pd.to_numeric(merged_df['yield'], errors='coerce') * 10
     merged_df.dropna(subset=['kreisYield'], inplace=True)
 
     # --- STAGE 2: Merging All Pre-Processed Feature Sets ---
-    logging.info("\n--- STAGE 2: Merging All Pre-Processed Feature Sets ---")
+    logging.info("\n--- STAGE 2: Merging Additional Feature Sets ---")
 
-    # --- Load Advanced Weather Features ---
-    df_weather = pd.read_csv(weather_features_file)
-    df_weather['district_no'] = df_weather['district_no'].astype(str).str.zfill(5)
-
-    # ============================ FIX 1: PREVENT DUPLICATE COLUMNS ============================
-    # Identify columns in df_weather (excluding merge keys) that already exist in merged_df
-    weather_cols_to_add = df_weather.columns.drop(['district_no', 'year'])
-    overlapping_cols = [col for col in weather_cols_to_add if col in merged_df.columns]
-    if overlapping_cols:
-        logging.warning(
-            f"Found overlapping columns in master data: {overlapping_cols}. Dropping them from master before merge.")
-        merged_df.drop(columns=overlapping_cols, inplace=True)
-    # ========================================================================================
-
-    merged_df = pd.merge(merged_df, df_weather, on=['district_no', 'year'], how='left')
-    logging.info(" -> Advanced weather features successfully merged.")
+    # ============================ FIX 2: REMOVE REDUNDANT MERGE ============================
+    # The weather data is ALREADY in the master_dataset. Merging it again is incorrect
+    # and was a source of errors. This entire block is now removed.
+    logging.info(" -> Advanced weather features already present in master dataset. Skipping redundant merge.")
+    # =======================================================================================
 
     # --- Merge Satellite Features ---
     df_satellite = pd.read_csv(satellite_features_file)
@@ -126,17 +127,12 @@ def main():
     # --- STAGE 3: Final Feature Engineering & Cleanup ---
     logging.info("\n--- STAGE 3: Engineering Final Features and Cleaning ---")
 
-    # --- Trend Features ---
     merged_df['year_trend'] = merged_df['year'] - merged_df['year'].min()
 
-    # --- Lagged Features ---
-    # --- Create Lagged Features (last year's data) ---
     logging.info("Creating lagged features for forecasting...")
     merged_df = merged_df.sort_values(by=['district_no', 'year'])
     merged_df['national_avg_yield'] = merged_df.groupby('year')['kreisYield'].transform('mean')
     merged_df['national_avg_yield_lag1'] = merged_df.groupby('district_no')['national_avg_yield'].shift(1)
-
-    # Lag ALL relevant economic features
     merged_df['producer_price_index_lag1'] = merged_df.groupby('district_no')['producer_price_index'].shift(1)
     merged_df['seed_price_index_lag1'] = merged_df.groupby('district_no')['seed_price_index'].shift(1)
     merged_df['energy_price_index_lag1'] = merged_df.groupby('district_no')['energy_price_index'].shift(1)
@@ -144,72 +140,54 @@ def main():
     merged_df['plant_protection_price_index_lag1'] = merged_df.groupby('district_no')[
         'plant_protection_price_index'].shift(1)
 
-    #Complex features
     epsilon = 1e-6
     merged_df['profit_margin_proxy_lag1'] = merged_df['producer_price_index_lag1'] / (
                 merged_df['fertilizer_price_index_lag1'] + epsilon)
     merged_df['cost_of_inputs_lag1'] = merged_df['fertilizer_price_index_lag1'] + merged_df[
         'plant_protection_price_index_lag1'] + merged_df['seed_price_index_lag1']
-
     logging.info(" -> Lagged features (lag1) created.")
+
     logging.info("Detrending economic features to create stable anomalies...")
-
-    # Define the economic features that are showing strong time trends
-    economic_features_to_detrend = [
-        'producer_price_index_lag1',
-        'seed_price_index_lag1',
-        'energy_price_index_lag1',
-        'fertilizer_price_index_lag1',
-        'plant_protection_price_index_lag1'
-    ]
-
+    economic_features_to_detrend = ['producer_price_index_lag1', 'seed_price_index_lag1', 'energy_price_index_lag1',
+                                    'fertilizer_price_index_lag1', 'plant_protection_price_index_lag1']
     for feature in economic_features_to_detrend:
-        # Calculate a 5-year rolling mean to represent the trend
-        trend = merged_df.groupby('district_no')[feature].transform(
-            lambda x: x.rolling(window=5, min_periods=1).mean()
-        )
-        # Create the anomaly feature by subtracting the trend
+        trend = merged_df.groupby('district_no')[feature].transform(lambda x: x.rolling(window=5, min_periods=1).mean())
         merged_df[f'{feature}_anomaly'] = merged_df[feature] - trend
-
     logging.info(" -> Economic feature anomalies created.")
 
-    logging.info("Creating high-impact interaction features...")
-    # Interaction: How does the impact of July heat change based on last year's profitability?
-    merged_df['july_heat_x_profit_margin'] = merged_df['temp_mean_jul_anomaly'] * merged_df['profit_margin_proxy_lag1']
-
-    # Interaction: How does the impact of June precipitation change based on last year's input costs?
-    merged_df['june_precip_x_input_costs'] = merged_df['precip_sum_jun_anomaly'] * merged_df['cost_of_inputs_lag1']
+    # ============================ FIX 3: UPDATE FEATURE NAMES FOR ENGINEERING ============================
+    logging.info("Creating high-impact interaction features using correct seasonal forecast names...")
+    # Interaction: How does summer heat impact change based on last year's profitability?
+    merged_df['summer_heat_x_profit_margin'] = merged_df['summer_temp_anomaly_forecast'] * merged_df[
+        'profit_margin_proxy_lag1']
+    # Interaction: How does summer precipitation impact change based on last year's input costs?
+    merged_df['summer_precip_x_input_costs'] = merged_df['summer_precip_anomaly_forecast'] * merged_df[
+        'cost_of_inputs_lag1']
     logging.info(" -> Interaction features created.")
 
     logging.info("Creating polynomial features to capture non-linear extreme effects...")
-    # Add squared terms for the most critical weather variables
+    # Update squared terms to use the most critical seasonal forecast variables
     critical_weather_features = [
-        'temp_mean_jul_anomaly',
-        'temp_mean_jun_anomaly',
-        'precip_sum_jul_anomaly',
-        'srad_mean_jul_anomaly'
+        'spring_temp_anomaly_forecast',
+        'summer_temp_anomaly_forecast',
+        'spring_precip_anomaly_forecast',
+        'summer_precip_anomaly_forecast'
     ]
     for feature in critical_weather_features:
         merged_df[f'{feature}_sq'] = merged_df[feature] ** 2
     logging.info(" -> Polynomial features created.")
-
-    # ============================ FIX 2: RETAIN & RENAME GEO FEATURES =========================
-    # Rename columns to the short format expected by the model
-    merged_df.rename(columns={'latitude': 'lat', 'longitude': 'lon'}, inplace=True)
-
-    # Update the list of columns to remove, keeping 'lat' and 'lon'
-    cols_to_remove = ['yield', 'state_name', 'national_avg_yield']
     # ========================================================================================
 
+    merged_df.rename(columns={'latitude': 'lat', 'longitude': 'lon'}, inplace=True)
+    cols_to_remove = ['yield', 'state_name', 'national_avg_yield']
     merged_df.drop(columns=cols_to_remove, inplace=True, errors='ignore')
 
     initial_rows = len(merged_df)
-    #merged_df.dropna(inplace=True)
+    merged_df.dropna(inplace=True)  # Drop rows with NaN from lagged features
     rows_dropped = initial_rows - len(merged_df)
     if rows_dropped > 0:
-        logging.info(f"Dropped {rows_dropped} rows with missing values.")
+        logging.info(f"Dropped {rows_dropped} rows with missing values (expected for first year of data).")
 
-    # --- Save Final Dataset ---
     logging.info(f"Saving Stage 1 model-ready dataset to '{output_file}'...")
     merged_df.to_csv(output_file, index=False, float_format='%.6f')
 
