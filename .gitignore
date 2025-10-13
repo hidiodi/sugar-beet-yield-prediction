@@ -72,7 +72,6 @@ venv.bak/
 .vscode/
 
 # Model and Report Artifacts
-reports/
 src/models/*.joblib
 src/models/*.pkl
 
