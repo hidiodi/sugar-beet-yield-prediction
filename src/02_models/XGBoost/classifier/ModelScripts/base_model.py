@@ -44,8 +44,10 @@ def train_validate_and_test():
 
     # --- FINAL FEATURE SET (UNCHANGED) ---
     feature_cols = [
-        'avg_elevation', 'avg_soil_pawc', 'lon', 'lat', 'year_trend',
-        'national_avg_yield_lag1', 'profit_margin_proxy_lag1', 'cost_of_inputs_lag1',
+        'avg_elevation', 'avg_soil_pawc', 'lon', 'lat',
+        #'year_trend',
+        #'national_avg_yield_lag1',
+        'profit_margin_proxy_lag1', 'cost_of_inputs_lag1',
         'producer_price_index_lag1_anomaly',
         'seed_price_index_lag1_anomaly',
         'energy_price_index_lag1_anomaly', 'fertilizer_price_index_lag1_anomaly',
@@ -80,8 +82,8 @@ def train_validate_and_test():
     print(" -> Detrending complete.")
 
     # ============================ THE FIX: 3-WAY SPLIT ============================
-    validation_start_year = 2007
-    test_start_year = 2017
+    validation_start_year = 2000
+    test_start_year = 2007
 
     print(f"\n--- Using Train / Validation / Test Split ---")
     print(f"Training data:   Years < {validation_start_year}")
