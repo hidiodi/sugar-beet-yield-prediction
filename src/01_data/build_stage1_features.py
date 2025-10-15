@@ -1,7 +1,7 @@
 # File: build_stage1_features.py
 # Description: CORRECTED VERSION. Fixes crashes by removing redundant merges and
 #              updating feature engineering to use the correct seasonal forecast column names.
-
+import numpy as np
 import pandas as pd
 import logging
 from pathlib import Path
@@ -154,6 +154,50 @@ def main():
         trend = merged_df.groupby('district_no')[feature].transform(lambda x: x.rolling(window=5, min_periods=1).mean())
         merged_df[f'{feature}_anomaly'] = merged_df[feature] - trend
     logging.info(" -> Economic feature anomalies created.")
+
+    # <--- NEW ADVANCED FEATURE ENGINEERING BLOCK STARTS HERE --->
+    # Based on insights from the model analysis script (explain_stage1_model.py)
+
+    logging.info("Engineering advanced features based on model analysis...")
+
+    # --- Goal 1: Reduce brittleness of the fertilizer price feature ---
+    logging.info(" -> Capping extreme values for fertilizer price anomaly...")
+    # Calculate the 5th and 95th percentiles to define the 'normal' range
+    lower_bound = merged_df['fertilizer_price_index_lag1_anomaly'].quantile(0.05)
+    upper_bound = merged_df['fertilizer_price_index_lag1_anomaly'].quantile(0.95)
+
+    # Create a new, capped feature to prevent outlier values from having excessive influence
+    merged_df['fertilizer_price_index_lag1_anomaly_capped'] = merged_df['fertilizer_price_index_lag1_anomaly'].clip(
+        lower=lower_bound, upper=upper_bound
+    )
+
+    # Create a binary feature to flag when the price is in an extreme range
+    merged_df['is_fertilizer_price_extreme'] = np.where(
+        (merged_df['fertilizer_price_index_lag1_anomaly'] < lower_bound) |
+        (merged_df['fertilizer_price_index_lag1_anomaly'] > upper_bound), 1, 0
+    )
+
+    # --- Goal 2: Clarify ambiguous weather signals ---
+    logging.info(" -> Creating threshold-based weather features...")
+    # The analysis showed the model reacts differently when summer precip prob is low.
+    merged_df['is_summer_forecast_dry'] = np.where(merged_df['summer_precip_prob_wet_forecast'] < 0.3, 1, 0)
+
+    # --- Goal 3: Lean into successful interactions and non-linearities ---
+    logging.info(" -> Engineering explicit interactions and polynomials...")
+    # Create an explicit feature for the powerful 'Good Weather + Cheap Inputs' interaction
+    # Note: We use the *capped* fertilizer feature to make the interaction more stable
+    merged_df['gdd_x_fertilizer_price'] = merged_df['antecedent_gdd_sum_anomaly'] * merged_df[
+        'fertilizer_price_index_lag1_anomaly_capped']
+
+    # Create an explicit feature for the 'Warm & Wet Spring' interaction
+    merged_df['spring_temp_x_spring_precip'] = merged_df['spring_temp_anomaly_forecast'] * merged_df[
+        'spring_precip_anomaly_forecast']
+
+    # Add a squared term for GDD to help the model capture its non-linear effect
+    merged_df['antecedent_gdd_sum_anomaly_sq'] = merged_df['antecedent_gdd_sum_anomaly'] ** 2
+
+    logging.info(" -> Advanced features created successfully.")
+    # <--- NEW ADVANCED FEATURE ENGINEERING BLOCK ENDS HERE --->
 
     # ============================ FIX 3: UPDATE FEATURE NAMES FOR ENGINEERING ============================
     logging.info("Creating high-impact interaction features using correct seasonal forecast names...")
