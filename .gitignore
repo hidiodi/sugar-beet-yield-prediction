@@ -80,7 +80,6 @@ data/05_model_input/*.csv
 data/04_feature/
 data/03_processed/
 data/02_intermediate/
-data/01_raw/
 
 # OS-specific files
 .DS_Store
