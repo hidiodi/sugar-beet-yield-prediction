@@ -79,12 +79,28 @@ def train_validate_and_test_quantile():
         return
 
     # --- Adaptive (Rolling Mean) Detrending (UNCHANGED) ---
-    print("\n--- Applying Adaptive (Rolling Mean) Detrending ---")
+    # --- CORRECTED: Causal (Trailing) Rolling Mean Detrending ---
+    print("\n--- Applying Causal (Trailing Mean) Detrending ---")
+
+    # Sort values to ensure the rolling window uses the correct past data
+    df.sort_values(by=['district_no', 'year'], inplace=True)
+
+    # Use a trailing (causal) window. It only uses the current year and the 4 previous years.
     df['yield_trend'] = df.groupby('district_no')[target_col].transform(
-        lambda x: x.rolling(window=5, center=True, min_periods=1).mean()
+        lambda x: x.rolling(window=5, min_periods=1).mean().shift(1)  # shift(1) makes it a pure lookback
     )
+
+    # Handle NaNs created by the shift and rolling window using ONLY past data (forward fill)
     df['yield_trend'] = df.groupby('district_no')['yield_trend'].transform(
-        lambda x: x.fillna(method='ffill').fillna(method='bfill'))
+        lambda x: x.fillna(method='ffill'))
+
+    # For any districts with very few data points at the start, we might still have NaNs.
+    # A simple solution is to fill the remaining NaNs with the first valid trend value for that district.
+    df['yield_trend'] = df.groupby('district_no')['yield_trend'].transform(
+        lambda x: x.fillna(x.iloc[0]) if not x.isnull().all() else x
+    )
+    df.dropna(subset=['yield_trend'], inplace=True)  # Drop any rows where a trend couldn't be computed
+
     df[detrended_target_col] = df[target_col] - df['yield_trend']
     print(" -> Detrending complete.")
 

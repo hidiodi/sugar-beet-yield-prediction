@@ -44,16 +44,25 @@ def train_validate_and_test():
 
     # --- FINAL FEATURE SET (UNCHANGED) ---
     feature_cols = [
-        'avg_elevation', 'avg_soil_pawc', 'lon', 'lat',
+        'avg_elevation',
+        'avg_soil_pawc',
+        #'lon',
+        #'lat',
         #'year_trend',
         #'national_avg_yield_lag1',
         'profit_margin_proxy_lag1', 'cost_of_inputs_lag1',
-        'producer_price_index_lag1_anomaly',
-        'seed_price_index_lag1_anomaly',
-        'energy_price_index_lag1_anomaly', 'fertilizer_price_index_lag1_anomaly',
-        'plant_protection_price_index_lag1_anomaly', 'winter_cropland_ndvi_mean',
-        'winter_cropland_ndvi_anomaly', 'winter_cropland_LST_mean', 'winter_cropland_LST_anomaly',
-        'winter_cropland_snow_cover_days', 'has_satellite_data', 'antecedent_frost_days_anomaly',
+        #'producer_price_index_lag1_anomaly',
+        #'seed_price_index_lag1_anomaly',
+        #'energy_price_index_lag1_anomaly',
+        'fertilizer_price_index_lag1_anomaly',
+        'plant_protection_price_index_lag1_anomaly',
+        #'winter_cropland_ndvi_mean',
+        #'winter_cropland_ndvi_anomaly',
+        #'winter_cropland_LST_mean',
+        #'winter_cropland_LST_anomaly',
+        #'winter_cropland_snow_cover_days',
+        #'has_satellite_data',
+        'antecedent_frost_days_anomaly',
         'antecedent_heavy_precip_days_anomaly', 'antecedent_gdd_sum_anomaly',
         'spring_temp_anomaly_forecast', 'spring_precip_anomaly_forecast',
         'summer_temp_anomaly_forecast', 'summer_precip_anomaly_forecast',
@@ -71,19 +80,34 @@ def train_validate_and_test():
         print(f"Error: The following feature columns are missing from the input file: {missing_cols}")
         return
 
-    # --- Adaptive (Rolling Mean) Detrending (UNCHANGED) ---
-    print("\n--- Applying Adaptive (Rolling Mean) Detrending ---")
+    # --- Causal (Trailing) Rolling Mean Detrending ---
+    print("\n--- Applying Causal (Trailing Mean) Detrending ---")
+
+    # Sort values to ensure the rolling window uses the correct past data
+    df.sort_values(by=['district_no', 'year'], inplace=True)
+
+    # Use a trailing (causal) window. It only uses the current year and the 4 previous years.
     df['yield_trend'] = df.groupby('district_no')[target_col].transform(
-        lambda x: x.rolling(window=5, center=True, min_periods=1).mean()
+        lambda x: x.rolling(window=5, min_periods=1).mean().shift(1)  # shift(1) makes it a pure lookback
     )
+
+    # Handle NaNs created by the shift and rolling window using ONLY past data (forward fill)
     df['yield_trend'] = df.groupby('district_no')['yield_trend'].transform(
-        lambda x: x.fillna(method='ffill').fillna(method='bfill'))
+        lambda x: x.fillna(method='ffill'))
+
+    # For any districts with very few data points at the start, we might still have NaNs.
+    # A simple solution is to fill the remaining NaNs with the first valid trend value for that district.
+    df['yield_trend'] = df.groupby('district_no')['yield_trend'].transform(
+        lambda x: x.fillna(x.iloc[0]) if not x.isnull().all() else x
+    )
+    df.dropna(subset=['yield_trend'], inplace=True)  # Drop any rows where a trend couldn't be computed
+
     df[detrended_target_col] = df[target_col] - df['yield_trend']
     print(" -> Detrending complete.")
 
     # ============================ THE FIX: 3-WAY SPLIT ============================
-    validation_start_year = 2000
-    test_start_year = 2007
+    validation_start_year = 2007
+    test_start_year = 2015
 
     print(f"\n--- Using Train / Validation / Test Split ---")
     print(f"Training data:   Years < {validation_start_year}")
