@@ -1,6 +1,3 @@
-# File: build_stage1_features.py
-# Description: CORRECTED VERSION. Fixes crashes by removing redundant merges and
-#              updating feature engineering to use the correct seasonal forecast column names.
 import numpy as np
 import pandas as pd
 import logging
@@ -82,17 +79,13 @@ def main():
     master_df = pd.read_csv(master_file)
     master_df['district_no'] = master_df['district_no'].astype(str).str.zfill(5)
 
-    # ============================ FIX 1: REMOVE JUNK COLUMN ============================
-    # The master dataset contains the useless 'crs_anomaly' column, we remove it here.
     if 'crs_anomaly' in master_df.columns:
         logging.info("Removing junk 'crs_anomaly' column from master data.")
         master_df = master_df.drop(columns=['crs_anomaly'])
-    # ===================================================================================
 
     df_economic = load_and_process_economic_data(producer_price_file, input_price_file)
     if df_economic is None: sys.exit(1)
 
-    # Check for duplicate economic columns before merging
     overlapping_cols = [col for col in df_economic.columns if col in master_df.columns and col != 'year']
     if overlapping_cols:
         master_df = master_df.drop(columns=overlapping_cols)
@@ -103,14 +96,8 @@ def main():
 
     # --- STAGE 2: Merging All Pre-Processed Feature Sets ---
     logging.info("\n--- STAGE 2: Merging Additional Feature Sets ---")
-
-    # ============================ FIX 2: REMOVE REDUNDANT MERGE ============================
-    # The weather data is ALREADY in the master_dataset. Merging it again is incorrect
-    # and was a source of errors. This entire block is now removed.
     logging.info(" -> Advanced weather features already present in master dataset. Skipping redundant merge.")
-    # =======================================================================================
 
-    # --- Merge Satellite Features ---
     df_satellite = pd.read_csv(satellite_features_file)
     df_satellite['district_no'] = df_satellite['district_no'].astype(str).str.zfill(5)
     merged_df = pd.merge(merged_df, df_satellite, on=['district_no', 'year'], how='left')
@@ -147,90 +134,102 @@ def main():
         'plant_protection_price_index_lag1'] + merged_df['seed_price_index_lag1']
     logging.info(" -> Lagged features (lag1) created.")
 
-    logging.info("Detrending economic features to create stable anomalies...")
+    logging.info("Detrending economic features to create stable anomalies (using causal mean)...")
     economic_features_to_detrend = ['producer_price_index_lag1', 'seed_price_index_lag1', 'energy_price_index_lag1',
                                     'fertilizer_price_index_lag1', 'plant_protection_price_index_lag1']
     for feature in economic_features_to_detrend:
-        trend = merged_df.groupby('district_no')[feature].transform(lambda x: x.rolling(window=5, min_periods=1).mean())
+        trend = merged_df.groupby('district_no')[feature].transform(
+            lambda x: x.rolling(window=5, min_periods=1).mean().shift(1)
+        )
+        trend = trend.fillna(method='ffill').fillna(method='bfill')
         merged_df[f'{feature}_anomaly'] = merged_df[feature] - trend
-    logging.info(" -> Economic feature anomalies created.")
+    logging.info(" -> Economic feature anomalies created correctly.")
+
 
     # <--- NEW ADVANCED FEATURE ENGINEERING BLOCK STARTS HERE --->
-    # Based on insights from the model analysis script (explain_stage1_model.py)
-
     logging.info("Engineering advanced features based on model analysis...")
 
-    # --- Goal 1: Reduce brittleness of the fertilizer price feature ---
-    logging.info(" -> Capping extreme values for fertilizer price anomaly...")
-    # Calculate the 5th and 95th percentiles to define the 'normal' range
-    lower_bound = merged_df['fertilizer_price_index_lag1_anomaly'].quantile(0.05)
-    upper_bound = merged_df['fertilizer_price_index_lag1_anomaly'].quantile(0.95)
+    logging.info(" -> Capping extreme values for fertilizer price using a leak-proof expanding window...")
 
-    # Create a new, capped feature to prevent outlier values from having excessive influence
+    def expanding_quantile(s, q):
+        return s.expanding(min_periods=20).quantile(q)
+
+    lower_bound_series = merged_df.groupby('district_no')['fertilizer_price_index_lag1_anomaly'].transform(
+        lambda s: expanding_quantile(s, q=0.05)
+    )
+    upper_bound_series = merged_df.groupby('district_no')['fertilizer_price_index_lag1_anomaly'].transform(
+        lambda s: expanding_quantile(s, q=0.95)
+    )
+
+    lower_bound_series = lower_bound_series.fillna(method='ffill').fillna(method='bfill')
+    upper_bound_series = upper_bound_series.fillna(method='ffill').fillna(method='bfill')
+
     merged_df['fertilizer_price_index_lag1_anomaly_capped'] = merged_df['fertilizer_price_index_lag1_anomaly'].clip(
-        lower=lower_bound, upper=upper_bound
+        lower=lower_bound_series, upper=upper_bound_series
     )
 
-    # Create a binary feature to flag when the price is in an extreme range
     merged_df['is_fertilizer_price_extreme'] = np.where(
-        (merged_df['fertilizer_price_index_lag1_anomaly'] < lower_bound) |
-        (merged_df['fertilizer_price_index_lag1_anomaly'] > upper_bound), 1, 0
+        (merged_df['fertilizer_price_index_lag1_anomaly'] < lower_bound_series) |
+        (merged_df['fertilizer_price_index_lag1_anomaly'] > upper_bound_series), 1, 0
     )
 
-    # --- Goal 2: Clarify ambiguous weather signals ---
     logging.info(" -> Creating threshold-based weather features...")
-    # The analysis showed the model reacts differently when summer precip prob is low.
     merged_df['is_summer_forecast_dry'] = np.where(merged_df['summer_precip_prob_wet_forecast'] < 0.3, 1, 0)
 
-    # --- Goal 3: Lean into successful interactions and non-linearities ---
     logging.info(" -> Engineering explicit interactions and polynomials...")
-    # Create an explicit feature for the powerful 'Good Weather + Cheap Inputs' interaction
-    # Note: We use the *capped* fertilizer feature to make the interaction more stable
     merged_df['gdd_x_fertilizer_price'] = merged_df['antecedent_gdd_sum_anomaly'] * merged_df[
         'fertilizer_price_index_lag1_anomaly_capped']
-
-    # Create an explicit feature for the 'Warm & Wet Spring' interaction
     merged_df['spring_temp_x_spring_precip'] = merged_df['spring_temp_anomaly_forecast'] * merged_df[
         'spring_precip_anomaly_forecast']
-
-    # Add a squared term for GDD to help the model capture its non-linear effect
     merged_df['antecedent_gdd_sum_anomaly_sq'] = merged_df['antecedent_gdd_sum_anomaly'] ** 2
 
     logging.info(" -> Advanced features created successfully.")
     # <--- NEW ADVANCED FEATURE ENGINEERING BLOCK ENDS HERE --->
 
-    # ============================ FIX 3: UPDATE FEATURE NAMES FOR ENGINEERING ============================
     logging.info("Creating high-impact interaction features using correct seasonal forecast names...")
-    # Interaction: How does summer heat impact change based on last year's profitability?
-    merged_df['summer_heat_x_profit_margin'] = merged_df['summer_temp_anomaly_forecast'] * merged_df[
+    merged_df['summer_heat_x_profit_margin'] = merged_df['summer_temp_prob_warm_forecast'] * merged_df[
         'profit_margin_proxy_lag1']
-    # Interaction: How does summer precipitation impact change based on last year's input costs?
-    merged_df['summer_precip_x_input_costs'] = merged_df['summer_precip_anomaly_forecast'] * merged_df[
+    merged_df['summer_precip_x_input_costs'] = merged_df['summer_precip_prob_wet_forecast'] * merged_df[
         'cost_of_inputs_lag1']
     logging.info(" -> Interaction features created.")
 
     logging.info("Creating polynomial features to capture non-linear extreme effects...")
-    # Update squared terms to use the most critical seasonal forecast variables
     critical_weather_features = [
-        'spring_temp_anomaly_forecast',
-        'summer_temp_anomaly_forecast',
-        'spring_precip_anomaly_forecast',
-        'summer_precip_anomaly_forecast'
+        'spring_temp_prob_warm_forecast',
+        'summer_temp_prob_warm_forecast',
+        'spring_precip_prob_wet_forecast',
+        'summer_precip_prob_wet_forecast'
     ]
     for feature in critical_weather_features:
         merged_df[f'{feature}_sq'] = merged_df[feature] ** 2
     logging.info(" -> Polynomial features created.")
-    # ========================================================================================
 
     merged_df.rename(columns={'latitude': 'lat', 'longitude': 'lon'}, inplace=True)
-    cols_to_remove = ['yield', 'state_name', 'national_avg_yield']
+
+    # ============================ IMPROVEMENT: FINAL COLUMN CLEANUP ============================
+    # Explicitly remove intermediate columns and any raw current-year data that would
+    # constitute a data leak if used accidentally as a feature. We only want to keep
+    # the lagged (_lag1) and anomaly versions, which are safe for forecasting.
+    cols_to_remove = [
+        'yield',
+        #'state_name',
+        'national_avg_yield',
+        'producer_price_index',
+        'seed_price_index',
+        'energy_price_index',
+        'fertilizer_price_index',
+        'plant_protection_price_index'
+    ]
     merged_df.drop(columns=cols_to_remove, inplace=True, errors='ignore')
+    logging.info(f" -> Dropped intermediate and data-leaking columns to finalize dataset.")
+    # ===========================================================================================
+
 
     initial_rows = len(merged_df)
-    merged_df.dropna(inplace=True)  # Drop rows with NaN from lagged features
+    merged_df.dropna(inplace=True)
     rows_dropped = initial_rows - len(merged_df)
     if rows_dropped > 0:
-        logging.info(f"Dropped {rows_dropped} rows with missing values (expected for first year of data).")
+        logging.info(f"Dropped {rows_dropped} rows with missing values (expected for early years with NaNs).")
 
     logging.info(f"Saving Stage 1 model-ready dataset to '{output_file}'...")
     merged_df.to_csv(output_file, index=False, float_format='%.6f')
@@ -242,3 +241,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

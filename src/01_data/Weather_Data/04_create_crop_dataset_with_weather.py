@@ -11,12 +11,9 @@ import shapely.geometry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-
-# ... (all functions before `create_hybrid_forecast_features` are correct and omitted for brevity) ...
 def load_and_prepare_data(path_yield_data, path_districts_geo, path_weather_data):
     """
     Loads and prepares all necessary input files for processing.
-    (This function is unchanged)
     """
     logging.info("Loading and preparing input files...")
     df_yield = pd.read_csv(path_yield_data)
@@ -46,7 +43,6 @@ def load_and_prepare_data(path_yield_data, path_districts_geo, path_weather_data
 def rasterize_districts(gdf_districts, ds_weather):
     """
     Creates a raster layer aligned to the weather dataset's grid.
-    (This function is unchanged)
     """
     logging.info("Rasterizing district geometries onto weather grid...")
     transform = ds_weather.rio.transform()
@@ -71,27 +67,19 @@ def rasterize_districts(gdf_districts, ds_weather):
 def calculate_agera5_antecedent_features_raw(ds_weather):
     """
     Calculates district-level ANTECEDENT weather features (Oct-Feb) from AGERA5.
-    This is data that is KNOWN at the time of a forecast in March.
     """
     logging.info("--- Starting calculation of ANTECEDENT (Oct-Feb) AgERA5 Features ---")
+    grouped_by_district = ds_weather.groupby('district_id_raster').mean()
+    if 0 in grouped_by_district.district_id_raster.values:
+        grouped_by_district = grouped_by_district.sel(
+            district_id_raster=grouped_by_district.district_id_raster != 0)
 
-    logging.info("Calculating daily spatial mean weather for each district...")
-    grouped_by_district = ds_weather.groupby('district_id_raster')
-    spatial_dims = [d for d in grouped_by_district.dims if d not in ['time', 'district_id_raster']]
-    if not spatial_dims: raise ValueError("Could not determine the stacked spatial dimension.")
-    daily_mean_weather = grouped_by_district.mean(dim=spatial_dims[0])
-
-    if 0 in daily_mean_weather.district_id_raster.values:
-        daily_mean_weather = daily_mean_weather.sel(
-            district_id_raster=daily_mean_weather.district_id_raster != 0)
-
-    logging.info("Ensuring daily weather data is sorted chronologically...")
+    daily_mean_weather = grouped_by_district
     daily_mean_weather = daily_mean_weather.sortby('time')
 
     results = []
     for year in tqdm(range(1980, 2025), desc="Processing Antecedent Features by Year"):
         antecedent_data = daily_mean_weather.sel(time=slice(f'{year - 1}-10-01', f'{year}-02-28'))
-
         frost_days = (antecedent_data['Temperature_Air_2m_Min_24h'] < 0).sum(dim='time')
         heavy_precip_days = (antecedent_data['Precipitation_Flux'] > 10).sum(dim='time')
         gdd_base = 5.0
@@ -111,129 +99,86 @@ def calculate_agera5_antecedent_features_raw(ds_weather):
     final_df.rename(columns={'district_id_raster': 'district_no_int'}, inplace=True)
     final_df['district_no'] = final_df['district_no_int'].astype(str).str.zfill(5)
     final_df.drop(columns=['district_no_int'], inplace=True)
-
-    logging.info("--- Finished Antecedent Feature Calculation ---")
     return final_df
 
 
 def calculate_anomalies(df, base_period=(1991, 2020)):
     """
     Calculates feature anomalies relative to a base period.
-    (This function is unchanged)
     """
     logging.info(f"Calculating anomalies relative to {base_period[0]}-{base_period[1]} climatology...")
     feature_cols = [col for col in df.columns if col not in ['district_no', 'year']]
     climatology_df = df[df['year'].between(base_period[0], base_period[1])]
     district_climatology = climatology_df.groupby('district_no')[feature_cols].mean().reset_index()
     df_with_climatology = pd.merge(df, district_climatology, on='district_no', suffixes=('', '_clim'))
-
     for col in feature_cols:
         df_with_climatology[f'{col}_anomaly'] = df_with_climatology[col] - df_with_climatology[f'{col}_clim']
-
     anomaly_cols = ['year', 'district_no'] + [f'{col}_anomaly' for col in feature_cols]
     final_anomaly_df = df_with_climatology[anomaly_cols]
-    logging.info("Anomaly calculation complete.")
     return final_anomaly_df
 
 
-def create_hybrid_forecast_features(path_seas5_forecast, path_agera5_truth):
+def load_forecast_features(path_forecast):
     """
-    Creates a hybrid forecast dataset, now ensuring consistent data types for 'district_no'.
+    Loads the pure forecast data and ensures 'district_no' is correctly formatted.
     """
-    logging.info("Creating hybrid forecast feature set (anomaly + probability)...")
-    df_forecast = pd.read_csv(path_seas5_forecast)
-    df_truth = pd.read_csv(path_agera5_truth)
-
-    # ============================ THE FIX ============================
-    # ### CRITICAL FIX: Enforce string type on 'district_no' for merging ###
-    # This prevents the ValueError caused by merging string and integer columns.
+    logging.info("Loading PURE forecast features (no backfilling)...")
+    df_forecast = pd.read_csv(path_forecast)
+    # Enforce string type on 'district_no' for a robust merge
     df_forecast['district_no'] = df_forecast['district_no'].astype(str).str.zfill(5)
-    df_truth['district_no'] = df_truth['district_no'].astype(str).str.zfill(5)
-    # =================================================================
-
-    # Part 1: Real forecasts from SEAS5 (1981 onwards)
-    df_forecast_real = df_forecast[df_forecast['year'] > 1980].copy()
-
-    # Part 2: Ground truth from AGERA5 to fill missing years (1979, 1980)
-    df_truth_fill = df_truth[df_truth['year'] <= 1980].copy()
-
-    rename_dict = {
-        'spring_temp_anomaly_actual': 'spring_temp_anomaly_forecast',
-        'spring_precip_anomaly_actual': 'spring_precip_anomaly_forecast',
-        'summer_temp_anomaly_actual': 'summer_temp_anomaly_forecast',
-        'summer_precip_anomaly_actual': 'summer_precip_anomaly_forecast',
-    }
-    df_truth_fill.rename(columns=rename_dict, inplace=True)
-
-    neutral_prob = 0.5
-    df_truth_fill['spring_temp_prob_warm_forecast'] = neutral_prob
-    df_truth_fill['spring_precip_prob_wet_forecast'] = neutral_prob
-    df_truth_fill['summer_temp_prob_warm_forecast'] = neutral_prob
-    df_truth_fill['summer_precip_prob_wet_forecast'] = neutral_prob
-
-    final_columns = df_forecast_real.columns
-    df_truth_fill = df_truth_fill[final_columns]
-
-    df_hybrid_forecast = pd.concat([df_truth_fill, df_forecast_real], ignore_index=True)
-    df_hybrid_forecast.sort_values(by=['year', 'district_no'], inplace=True)
-    logging.info("Hybrid forecast feature set created successfully.")
-    return df_hybrid_forecast
-
+    logging.info("Forecast features loaded successfully.")
+    return df_forecast
 
 def main():
-    """Main orchestrator for creating the crop dataset with valid weather features."""
-    logging.info("--- Starting Final Dataset Creation with CORRECTED Weather Features ---")
+    """Main orchestrator for creating the final master dataset."""
+    logging.info("--- Starting Final Dataset Creation with PURE Forecast Features ---")
 
     # --- 1. Define Paths ---
     path_yield_data = Path("data/02_intermediate/sugarbeet_yield.csv")
     path_districts_geo = Path("data/01_raw/districts_official.geojson")
     path_weather_data = Path("data/02_intermediate/agera5_germany_merged.nc")
-    path_seas5_forecast = Path("data/02_intermediate/seas5_forecast_features_1979_2021.csv")
-    path_agera5_truth = Path("data/02_intermediate/agera5_ground_truth_1979_2021.csv")
+    path_forecast = Path("data/02_intermediate/ecmwf51_forecast_features_FINAL.csv")
     output_dir = Path("data/03_processed")
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_filepath = output_dir / "final_dataset_with_advanced_features.csv"
+    output_filepath = "data/03_processed/final_dataset_with_advanced_features.csv"
 
     # --- 2. Load Base Data ---
     df_yield, gdf_districts, ds_weather = load_and_prepare_data(
         path_yield_data, path_districts_geo, path_weather_data
     )
 
-    # ============================ THE FIX ============================
-    # ### CRITICAL FIX: Remove the non-feature 'crs' column if it exists ###
-    # This prevents the `calculate_anomalies` function from creating a junk 'crs_anomaly' column.
     if 'crs' in df_yield.columns:
-        logging.info("Removing non-feature 'crs' column from yield data.")
         df_yield = df_yield.drop(columns=['crs'])
-    # =================================================================
 
-    # --- (Rest of the script is unchanged) ---
-    if output_filepath.exists():
-        logging.info(f"Dataset at '{output_filepath}' already exists. Skipping process.")
-        # If the file exists, we still need to run the rest of the script for subsequent steps.
-        # This line is removed so that the script can proceed if the file exists but needs to be regenerated.
-
+    # --- 3. Build Feature Sets ---
     ds_weather_rasterized = rasterize_districts(gdf_districts, ds_weather)
     df_antecedent_raw = calculate_agera5_antecedent_features_raw(ds_weather_rasterized)
     df_antecedent_anomalies = calculate_anomalies(df_antecedent_raw)
-    df_hybrid_forecast = create_hybrid_forecast_features(path_seas5_forecast, path_agera5_truth)
 
-    logging.info("Assembling final dataset by merging antecedent and forecast features...")
-    df_weather_features = pd.merge(df_antecedent_anomalies, df_hybrid_forecast, on=['year', 'district_no'], how='inner')
-    final_df = pd.merge(df_yield, df_weather_features, on=['district_no', 'year'], how='left')
+    # ============================ THE MINIMAL FIX (PART 2) ============================
+    # ### Use the new, simpler function ###
+    df_forecast = load_forecast_features(path_forecast)
+
+    # --- 4. Assemble Final Dataset ---
+    logging.info("Assembling final dataset by merging antecedent and PURE forecast features...")
+    df_weather_features = pd.merge(df_antecedent_anomalies, df_forecast, on=['year', 'district_no'], how='inner')
+
+    # ### Use an 'inner' merge to only keep years with yield AND all weather features ###
+    final_df = pd.merge(df_yield, df_weather_features, on=['district_no', 'year'], how='inner')
+    # =====================================================================================
 
     missing_count = final_df.isnull().sum().sum()
     if missing_count > 0:
-        logging.warning(f"Found {missing_count} missing values after final merge. Dropping affected rows.")
+        logging.warning(f"Found {missing_count} unexpected missing values after final merge. Check input data.")
         final_df.dropna(inplace=True)
 
-    logging.info(f"Saving final dataset with {len(final_df)} rows to '{output_filepath}'")
-    final_df.to_csv(output_filepath, index=False)
+    logging.info(f"Saving final master dataset with {len(final_df)} rows to '{output_filepath}'")
+    final_df.to_csv(output_filepath, index=False, float_format='%.6f')
 
-    logging.info("--- SUCCESS: Corrected feature dataset created! ---")
+    logging.info("--- SUCCESS: Final master dataset created! ---")
     print("\n--- Final Dataset Preview ---")
     print(final_df.head())
-    print("\n--- Final Dataset Columns ---")
+    print(f"\n--- Final Dataset has {len(final_df.columns)} columns ---")
     print(final_df.columns.tolist())
 
 

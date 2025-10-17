@@ -7,23 +7,21 @@ from pathlib import Path
 # --- Setup basic logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- CONFIGURATION: SELECT THE ECONOMIC FEATURES TO INCLUDE ---
-# This list now controls which economic indicators are processed and included.
+# Refined the list to be highly specific to sugar beets, removing the
+# broad 'Pflanzliche Erzeugung' (LWPR-1) to reduce noise.
 ECONOMIC_FEATURES_TO_INCLUDE = [
-    # --- Producer Price ---
-    'LWPR-1',    # Pflanzliche Erzeugung
+    # --- Producer Price (Specific to Sugar Beets) ---
     'LWPR-132',  # Zuckerrüben (Sugar Beets)
 
-    #'LWBM',  # Landwirtschaftliche Betriebsmittel (Total Agricultural Inputs)
-
-    # --- Current Consumption ---
-    #'LWBM-1',
-    # Waren und Dienstleist. des lfd. landw. Verbrauchs (Goods and services for current agricultural consumption)
+    # --- Key Input Costs (The "Four Pillars") ---
     'LWBM-11',  # Saat- und Pflanzgut (Seeds and Planting Material)
     'LWBM-12',  # Energie und Schmierstoffe (Energy and Lubricants)
     'LWBM-13',  # Düngemittel (Fertilizer)
     'LWBM-14',  # Pflanzenschutzmittel (Plant Protection Products)
 ]
+
+
+# =======================================================================
 
 
 def process_economic_features(producer_price_file, input_price_file, feature_ids_to_include):
@@ -73,9 +71,12 @@ def process_economic_features(producer_price_file, input_price_file, feature_ids
             )
             df_melted['feature_name'] = df_melted['Description'].str.lower().str.replace(' ', '_').str.replace(
                 '[^a-zA-Z0-9_]', '', regex=True)
+
+            df_melted['price_index'] = pd.to_numeric(df_melted['price_index'], errors='coerce')
+
             # Extract year from 'MM/YYYY' format
             df_melted['year'] = pd.to_numeric(df_melted['period'].str.split('/').str[1], errors='coerce')
-            df_melted.dropna(subset=['year'], inplace=True)
+            df_melted.dropna(subset=['year', 'price_index'], inplace=True)
             df_melted['year'] = df_melted['year'].astype(int)
             # Calculate the annual average from quarterly data
             df_annual_avg = df_melted.groupby(['year', 'feature_name'])['price_index'].mean().reset_index()
@@ -128,7 +129,7 @@ def main():
 
     # --- Define File Paths ---
     base_data_file = Path('data/03_processed/final_dataset_with_advanced_features.csv')
-    static_features_file = Path('data/03_processed/static_features_districts_advanced.csv')
+    static_features_file = Path('data/03_processed/static_features_districts.csv')
     producer_price_file = Path('data/01_raw/61211-0002_de/61211-0001_de.csv')
     input_price_file = Path('data/01_raw/61211-0002_de/61221-0003_de.csv')
     geojson_path = Path('data/01_raw/districts_official.geojson')
@@ -183,4 +184,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

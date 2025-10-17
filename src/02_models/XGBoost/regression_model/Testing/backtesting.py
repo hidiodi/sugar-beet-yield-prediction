@@ -29,6 +29,7 @@ REPORT_DIR = os.path.join('reports', 'figures', 'district_level_diagnostics')
 BACKTEST_START_YEAR = 2000
 BACKTEST_END_YEAR = 2021
 LOW_DATA_THRESHOLD = 10  # Districts with fewer years of data than this will be flagged
+MIN_DATAPOINTS_FOR_WORST_DISTRICTS_PLOT = 5  # New threshold for worst districts plot
 
 
 def run_backtest(df: pd.DataFrame, model_to_clone: XGBRegressor):
@@ -181,6 +182,57 @@ def plot_r2_vs_data_count(district_performance: pd.DataFrame):
     print("✅ R² vs. Count plot saved.")
 
 
+def plot_best_worst_district_timelines(district_performance: pd.DataFrame, backtest_results: pd.DataFrame):
+    """Diagnostic: Plot prediction timelines for the 3 best and 3 worst districts."""
+    print("Generating timeline plots for best and worst performing districts...")
+
+    # Filter out districts with insufficient data points for a meaningful R^2
+    filtered_perf = district_performance[
+        (district_performance['data_point_count'] > 1) &
+        (district_performance['r2'] != -99)
+        ].sort_values('r2', ascending=False)
+
+    best_districts = filtered_perf.head(3)
+
+    # For worst districts, specifically filter by MIN_DATAPOINTS_FOR_WORST_DISTRICTS_PLOT
+    worst_districts_filtered = district_performance[
+        (district_performance['data_point_count'] >= MIN_DATAPOINTS_FOR_WORST_DISTRICTS_PLOT) &
+        (district_performance['r2'] != -99)
+        ].sort_values('r2', ascending=True)  # Sort ascending for worst
+
+    worst_districts = worst_districts_filtered.head(3)
+
+    districts_to_plot = pd.concat([best_districts, worst_districts])
+
+    fig, axes = plt.subplots(2, 3, figsize=(20, 10), sharey=True)
+    axes = axes.flatten()
+
+    for i, (_, district_info) in enumerate(districts_to_plot.iterrows()):
+        district_no = district_info['district_no']
+        district_name = district_info['name']
+        district_r2 = district_info['r2']
+        district_data = backtest_results[backtest_results['district_no'] == district_no].sort_values('year')
+
+        ax = axes[i]
+        ax.plot(district_data['year'], district_data['kreisYield'], label='Actual Yield', color='navy', marker='o',
+                markersize=4)
+        ax.plot(district_data['year'], district_data['predicted_yield'], label='Predicted Yield', color='red',
+                linestyle='--')
+
+        title_prefix = "Best" if i < 3 else "Worst"
+        ax.set_title(f"{title_prefix}: {district_name}\n(R² = {district_r2:.2f})", fontsize=12)
+        ax.legend()
+        ax.grid(True, which='both', linestyle=':')
+
+    plt.suptitle("Prediction Timelines for 3 Best and 3 Worst Performing Districts", fontsize=18, y=1.02)
+    plt.tight_layout(rect=[0, 0, 1, 0.98])
+
+    save_path = os.path.join(REPORT_DIR, '04_best_worst_district_timelines.png')
+    plt.savefig(save_path, bbox_inches='tight')
+    plt.close()
+    print(f"✅ Best/Worst district timelines saved to {save_path}")
+
+
 def main():
     """Main function to orchestrate the district-level evaluation pipeline."""
     os.makedirs(REPORT_DIR, exist_ok=True)
@@ -241,8 +293,19 @@ def main():
     # --- Generate Visualizations ---
     plot_performance_map_with_hatching(district_performance, gdf_districts)
     plot_r2_vs_data_count(district_performance)
+    plot_best_worst_district_timelines(district_performance, backtest_results)
 
-    # --- Final Summary Metrics on Reliable Data ---
+    # --- Final Summary Metrics ---
+    # Overall performance
+    mae_total = backtest_results['abs_error'].mean()
+    r2_total = r2_score(backtest_results['kreisYield'], backtest_results['predicted_yield'])
+
+    print("\n--- Overall Performance Summary (All Districts) ---")
+    print(f"  Mean Absolute Error (MAE):    {mae_total:.2f} dt/ha")
+    print(f"  R-squared (R²):               {r2_total:.4f}")
+    print("-----------------------------------------------------")
+
+    # On Reliable Data
     reliable_districts = district_performance[~district_performance['is_low_data']]
     reliable_results = backtest_results[backtest_results['district_no'].isin(reliable_districts['district_no'])]
 

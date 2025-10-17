@@ -20,13 +20,14 @@ IMPORTANCE_PLOT_PATH = os.path.join('reports/figures', 'feature_importance_champ
 # --- BEST HYPERPARAMETERS (UNCHANGED) ---
 # Note: Re-tuning might yield further gains with the new feature set.
 BEST_PARAMS = {
-    'colsample_bytree': 0.8223306320976561,
-    'learning_rate': 0.020282652208788696,
+    'n_estimators': 914,
+    'learning_rate': 0.026114,
     'max_depth': 4,
-    'n_estimators': 448,
-    'subsample': 0.8049549320516778
+    'subsample': 0.922850,
+    'colsample_bytree': 0.811573,
+    'gamma': 1.830853,
+    'min_child_weight': 2,
 }
-
 
 def train_validate_and_test():
     """
@@ -45,52 +46,99 @@ def train_validate_and_test():
     # ============================ V2 FEATURE SET ============================
     # Updated based on insights from the advanced analysis script.
     feature_cols = [
-        # --- Core Geographic & Soil Features ---
-        'avg_elevation',
-        'avg_soil_pawc',
-
-        # --- Core Economic Drivers ---
-        'profit_margin_proxy_lag1',
-        'cost_of_inputs_lag1',
-        'plant_protection_price_index_lag1_anomaly',
-
-        # --- Core Weather & Climate Features ---
+        # --- Antecedent Weather ---
         'antecedent_frost_days_anomaly',
         'antecedent_heavy_precip_days_anomaly',
         'antecedent_gdd_sum_anomaly',
+
+        # --- Seasonal Anomaly Forecasts ---
         'spring_temp_anomaly_forecast',
         'spring_precip_anomaly_forecast',
+        'spring_solar_rad_anomaly_forecast',
+        'spring_evaporation_anomaly_forecast',
+        'spring_runoff_anomaly_forecast',
+        'spring_soil_temp_l1_anomaly_forecast',
+        'spring_snowfall_anomaly_forecast',
         'summer_temp_anomaly_forecast',
         'summer_precip_anomaly_forecast',
+        'summer_solar_rad_anomaly_forecast',
+        'summer_evaporation_anomaly_forecast',
+        'summer_runoff_anomaly_forecast',
+        'summer_soil_temp_l1_anomaly_forecast',
+        'summer_snowfall_anomaly_forecast',
+
+        # --- Seasonal Probability Forecasts ---
         'spring_temp_prob_warm_forecast',
         'spring_precip_prob_wet_forecast',
+        'spring_solar_rad_prob_wet_forecast',
+        'spring_evaporation_prob_wet_forecast',
+        'spring_runoff_prob_wet_forecast',
+        'spring_soil_temp_l1_prob_warm_forecast',
+        'spring_snowfall_prob_wet_forecast',
         'summer_temp_prob_warm_forecast',
         'summer_precip_prob_wet_forecast',
+        'summer_solar_rad_prob_wet_forecast',
+        'summer_evaporation_prob_wet_forecast',
+        'summer_runoff_prob_wet_forecast',
+        'summer_soil_temp_l1_prob_warm_forecast',
+        'summer_snowfall_prob_wet_forecast',
 
-        # --- Original Interaction & Polynomial Features ---
+        # --- Geographic & Static Soil Features ---
+        'state_name',
+        'lat',
+        'lon',
+        'avg_elevation',
+        'avg_slope',
+        'avg_bdod_0_30cm',
+        'avg_clay_0_30cm',
+        'avg_sand_0_30cm',
+        'avg_som_0_30cm',
+        'avg_phh2o_0_30cm',
+        'avg_bdod_0_100cm',
+        'avg_clay_0_100cm',
+        'avg_sand_0_100cm',
+        'avg_som_0_100cm',
+        'avg_phh2o_0_100cm',
+
+        # --- Satellite Features ---
+        'winter_cropland_ndvi_mean',
+        'winter_cropland_ndvi_anomaly',
+        'winter_cropland_LST_mean',
+        'winter_cropland_LST_anomaly',
+        'winter_cropland_snow_cover_days',
+        # 'has_satellite_data',                 # Disabled: This is a helper/metadata column, not a predictive feature.
+
+        # --- Trend & Lagged Features ---
+        #'year_trend',
+        'national_avg_yield_lag1',
+        'producer_price_index_lag1',
+        'seed_price_index_lag1',
+        'energy_price_index_lag1',
+        'fertilizer_price_index_lag1',
+        'plant_protection_price_index_lag1',
+        'profit_margin_proxy_lag1',
+        'cost_of_inputs_lag1',
+
+        # --- Engineered Economic Anomalies ---
+        'producer_price_index_lag1_anomaly',
+        'seed_price_index_lag1_anomaly',
+        'energy_price_index_lag1_anomaly',
+        'fertilizer_price_index_lag1_anomaly',
+        'plant_protection_price_index_lag1_anomaly',
+
+        # --- Advanced Engineered Features ---
+        'fertilizer_price_index_lag1_anomaly_capped',
+        'is_fertilizer_price_extreme',
+        'is_summer_forecast_dry',
+        'gdd_x_fertilizer_price',
+        'spring_temp_x_spring_precip',
+        'antecedent_gdd_sum_anomaly_sq',
         'summer_heat_x_profit_margin',
         'summer_precip_x_input_costs',
-        'spring_temp_anomaly_forecast_sq',
-        'summer_temp_anomaly_forecast_sq',
-        'spring_precip_anomaly_forecast_sq',
-        'summer_precip_anomaly_forecast_sq',
-
-        # --- REMOVED ---
-        # 'fertilizer_price_index_lag1_anomaly', # Removed due to high sensitivity and causing model brittleness.
-
-        # +++ NEW FEATURES FROM ANALYSIS (V2) +++
-        # Capped version to reduce impact of extreme outliers.
-        'fertilizer_price_index_lag1_anomaly_capped',
-        # Binary flag to help model handle extreme price shocks specifically.
-        'is_fertilizer_price_extreme',
-        # Binary flag to clarify ambiguous summer precipitation signal.
-        'is_summer_forecast_dry',
-        # Explicit interaction for the powerful 'Good Weather + Cheap Inputs' effect.
-        'gdd_x_fertilizer_price',
-        # Explicit interaction for the 'Warm & Wet Spring' effect.
-        'spring_temp_x_spring_precip',
-        # Added to help model better capture the non-linear GDD response.
-        'antecedent_gdd_sum_anomaly_sq',
+        'spring_temp_prob_warm_forecast_sq',
+        'summer_temp_prob_warm_forecast_sq',
+        'spring_precip_prob_wet_forecast_sq',
+        'summer_precip_prob_wet_forecast_sq',
     ]
     # ======================================================================
 
