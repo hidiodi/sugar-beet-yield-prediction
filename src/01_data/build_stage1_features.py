@@ -212,7 +212,7 @@ def main():
     # the lagged (_lag1) and anomaly versions, which are safe for forecasting.
     cols_to_remove = [
         'yield',
-        #'state_name',
+        'state_name',
         'national_avg_yield',
         'producer_price_index',
         'seed_price_index',

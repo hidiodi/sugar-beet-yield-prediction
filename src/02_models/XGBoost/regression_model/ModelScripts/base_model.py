@@ -84,7 +84,6 @@ def train_validate_and_test():
         'summer_snowfall_prob_wet_forecast',
 
         # --- Geographic & Static Soil Features ---
-        'state_name',
         'lat',
         'lon',
         'avg_elevation',
