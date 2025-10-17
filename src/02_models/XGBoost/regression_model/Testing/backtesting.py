@@ -21,7 +21,7 @@ sns.set_theme(style="whitegrid")
 
 # --- Configuration ---
 # Ensure these paths are correct relative to where you run the script from
-MODEL_PATH = os.path.join('src/models', 'final_xgb_model_champion_final.joblib')
+MODEL_PATH = os.path.join('src/models', 'final_xgb_model_champion.joblib')
 DATA_PATH = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
 GEOJSON_PATH = os.path.join('data', '01_raw', 'districts_official.geojson')
 REPORT_DIR = os.path.join('reports', 'figures', 'district_level_diagnostics')

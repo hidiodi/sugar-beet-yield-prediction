@@ -12,13 +12,14 @@ import warnings
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.base import clone
 from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 sns.set_theme(style="whitegrid")
 
 # --- Define Paths and Backtesting Configuration ---
-MODEL_PATH = os.path.join('src/models', 'final_xgb_model_champion_final.joblib')
+MODEL_PATH = os.path.join('src/models', 'final_xgb_model_champion.joblib')
 DATA_PATH = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
 GEOJSON_PATH = os.path.join('data', '01_raw', 'districts_official.geojson')
 REPORT_DIR = os.path.join('reports', 'figures', 'final_model_evaluation')
@@ -39,14 +40,14 @@ def run_backtest(df: pd.DataFrame, model_template: XGBRegressor):
         train_df = df[df['year'] < year_to_predict].copy()
         test_df = df[df['year'] == year_to_predict].copy()
 
-        if test_df.empty:
+        if test_df.empty or train_df.empty:
             continue
 
         X_train = train_df[feature_cols]
         y_train = train_df['kreisYield_detrended']
         X_test = test_df[feature_cols]
 
-        model = model_template
+        model = clone(model_template)
         model.fit(X_train, y_train)
 
         detrended_predictions = model.predict(X_test)
@@ -148,9 +149,19 @@ def main():
         return
 
     df.sort_values(by=['district_no', 'year'], inplace=True)
+
+    # --- FIX: Apply Causal (Trailing Mean) Detrending to Prevent Data Leakage ---
     df['yield_trend'] = df.groupby('district_no')['kreisYield'].transform(
-        lambda x: x.rolling(window=5, center=True, min_periods=1).mean()
-    ).fillna(method='ffill').fillna(method='bfill')
+        lambda x: x.rolling(window=5, min_periods=1).mean().shift(1)
+    )
+    df['yield_trend'] = df.groupby('district_no')['yield_trend'].transform(
+        lambda x: x.fillna(method='ffill'))
+    df['yield_trend'] = df.groupby('district_no')['yield_trend'].transform(
+        lambda x: x.fillna(x.iloc[0]) if not x.isnull().all() else x
+    )
+    df.dropna(subset=['yield_trend'], inplace=True)
+    # ----------------------------------------------------------------------------
+
     df['kreisYield_detrended'] = df['kreisYield'] - df['yield_trend']
 
     backtest_results = run_backtest(df, model_template)

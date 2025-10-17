@@ -14,8 +14,8 @@ warnings.filterwarnings("ignore")
 
 # --- V2 MODEL PATHS ---
 # Updated to prevent overwriting the previous champion model.
-MODEL_PATH = os.path.join('src/models', 'final_xgb_model_champion_v2.joblib')
-IMPORTANCE_PLOT_PATH = os.path.join('reports/figures', 'feature_importance_champion_v2.png')
+MODEL_PATH = os.path.join('src/models', 'final_xgb_model_champion.joblib')
+IMPORTANCE_PLOT_PATH = os.path.join('reports/figures', 'feature_importance_champion.png')
 
 # --- BEST HYPERPARAMETERS (UNCHANGED) ---
 # Note: Re-tuning might yield further gains with the new feature set.

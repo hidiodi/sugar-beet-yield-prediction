@@ -14,9 +14,9 @@ from sklearn.inspection import PartialDependenceDisplay
 warnings.filterwarnings("ignore")
 
 # --- Configuration ---
-MODEL_PATH = os.path.join('src/models', 'final_xgb_model_champion_v2.joblib')  # Make sure to use the V2 model
+MODEL_PATH = os.path.join('src/models', 'final_xgb_model_champion.joblib')  # Make sure to use the V2 model
 DATA_PATH = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
-REPORT_DIR = os.path.join('reports', 'final_model_explanation_advanced_v2')
+REPORT_DIR = os.path.join('reports', 'final_model_explanation_advanced')
 
 # Align data splits with the definitive training script
 VALIDATION_START_YEAR = 2007
