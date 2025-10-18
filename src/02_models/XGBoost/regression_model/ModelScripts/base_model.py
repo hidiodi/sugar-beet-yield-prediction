@@ -17,12 +17,13 @@ warnings.filterwarnings("ignore")
 MODEL_PATH = os.path.join('src/models', 'final_xgb_model_champion.joblib')
 IMPORTANCE_PLOT_PATH = os.path.join('reports/figures', 'feature_importance_champion.png')
 
-# --- BEST HYPERPARAMETERS (UNCHANGED) ---
-# Note: Re-tuning might yield further gains with the new feature set.
+# --- Time-Series Split---
+VALIDATION_START_YEAR = 2011
+TEST_START_YEAR = 2019
 BEST_PARAMS = {
     'n_estimators': 914,
     'learning_rate': 0.026114,
-    'max_depth': 4,
+    'max_depth': 5,
     'subsample': 0.922850,
     'colsample_bytree': 0.811573,
     'gamma': 1.830853,
@@ -109,21 +110,21 @@ def train_validate_and_test():
 
         # --- Trend & Lagged Features ---
         #'year_trend',
-        'national_avg_yield_lag1',
-        'producer_price_index_lag1',
-        'seed_price_index_lag1',
-        'energy_price_index_lag1',
-        'fertilizer_price_index_lag1',
-        'plant_protection_price_index_lag1',
-        'profit_margin_proxy_lag1',
-        'cost_of_inputs_lag1',
+        #'national_avg_yield_lag1',
+        #'producer_price_index_lag1',
+        #'seed_price_index_lag1',
+        #'energy_price_index_lag1',
+        #'fertilizer_price_index_lag1',
+        #'plant_protection_price_index_lag1',
+        #'profit_margin_proxy_lag1',
+        #'cost_of_inputs_lag1',
 
         # --- Engineered Economic Anomalies ---
-        'producer_price_index_lag1_anomaly',
-        'seed_price_index_lag1_anomaly',
-        'energy_price_index_lag1_anomaly',
-        'fertilizer_price_index_lag1_anomaly',
-        'plant_protection_price_index_lag1_anomaly',
+        #'producer_price_index_lag1_anomaly',
+        #'seed_price_index_lag1_anomaly',
+        #'energy_price_index_lag1_anomaly',
+        #'fertilizer_price_index_lag1_anomaly',
+        #'plant_protection_price_index_lag1_anomaly',
 
         # --- Advanced Engineered Features ---
         'fertilizer_price_index_lag1_anomaly_capped',
@@ -166,8 +167,8 @@ def train_validate_and_test():
     print(" -> Detrending complete.")
 
     # --- Time-Series Split (Consistent with Analysis Script) ---
-    validation_start_year = 2007
-    test_start_year = 2015
+    validation_start_year = VALIDATION_START_YEAR
+    test_start_year = TEST_START_YEAR
 
     print(f"\n--- Using Train / Validation / Test Split ---")
     print(f"Training data:   Years < {validation_start_year}")

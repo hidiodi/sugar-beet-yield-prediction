@@ -67,9 +67,9 @@ def main():
 
     # --- Configuration ---
     master_file = Path('data/04_master/master_dataset.csv')
-    producer_price_file = Path('data/01_raw/61211-0002_de/61211-0001_de.csv')
-    input_price_file = Path('data/01_raw/61211-0002_de/61221-0003_de.csv')
-    satellite_features_file = Path('data/03_primary/satellite_features_districts_2001-2021.csv')
+    producer_price_file = Path('data/01_raw/Bundesdatenbank/61211-0001_de.csv')
+    input_price_file = Path('data/01_raw/Bundesdatenbank/61221-0003_de.csv')
+    satellite_features_file = Path('data/03_primary/satellite_features_districts_2001-2024.csv')
     output_path = Path('data/05_model_input/')
     output_file = output_path / 'stage1_preseason_features.csv'
     output_path.mkdir(exist_ok=True, parents=True)
@@ -91,7 +91,7 @@ def main():
         master_df = master_df.drop(columns=overlapping_cols)
 
     merged_df = pd.merge(master_df, df_economic, on='year', how='left')
-    merged_df['kreisYield'] = pd.to_numeric(merged_df['yield'], errors='coerce') * 10
+    merged_df['kreisYield'] = pd.to_numeric(merged_df['yield'], errors='coerce')
     merged_df.dropna(subset=['kreisYield'], inplace=True)
 
     # --- STAGE 2: Merging All Pre-Processed Feature Sets ---

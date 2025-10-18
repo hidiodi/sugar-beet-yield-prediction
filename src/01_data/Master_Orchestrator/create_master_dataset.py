@@ -130,8 +130,8 @@ def main():
     # --- Define File Paths ---
     base_data_file = Path('data/03_processed/final_dataset_with_advanced_features.csv')
     static_features_file = Path('data/03_processed/static_features_districts.csv')
-    producer_price_file = Path('data/01_raw/61211-0002_de/61211-0001_de.csv')
-    input_price_file = Path('data/01_raw/61211-0002_de/61221-0003_de.csv')
+    producer_price_file = Path('data/01_raw/Bundesdatenbank/61211-0001_de.csv')
+    input_price_file = Path('data/01_raw/Bundesdatenbank/61221-0003_de.csv')
     geojson_path = Path('data/01_raw/districts_official.geojson')
 
     output_path = Path('data/04_master/')

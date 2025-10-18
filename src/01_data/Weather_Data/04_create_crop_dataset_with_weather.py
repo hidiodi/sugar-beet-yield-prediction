@@ -102,7 +102,7 @@ def calculate_agera5_antecedent_features_raw(ds_weather):
     return final_df
 
 
-def calculate_anomalies(df, base_period=(1991, 2020)):
+def calculate_anomalies(df, base_period=(1991, 2023)):
     """
     Calculates feature anomalies relative to a base period.
     """

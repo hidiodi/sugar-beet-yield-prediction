@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # To ensure a full winter period, we start with the winter of 2000-2001 (Nov 2000 - Feb 2001),
 # which corresponds to the 2001 harvest year.
 START_YEAR = 2001
-END_YEAR = 2021  # Or your last year of yield data
+END_YEAR = 2024  # Or your last year of yield data
 GEE_PROJECT_ID = 'augmented-audio-471809-h3'  # Your Project ID
 
 PATH_DISTRICTS_GEO = Path("data/01_raw/districts_official.geojson")
