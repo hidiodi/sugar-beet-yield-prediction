@@ -189,7 +189,7 @@ def run_backtest(df: pd.DataFrame, feature_cols: list, time_steps: int):
     results_df = pd.concat(all_predictions, ignore_index=True)
     results_df['error'] = results_df['predicted_yield'] - results_df['kreisYield']
     results_df['abs_error'] = results_df['error'].abs()
-    print("\n✅ Deep RNN Backtest complete.")
+    print("\nDeep RNN Backtest complete.")
     return results_df
 
 
@@ -211,7 +211,7 @@ def calculate_district_metrics(results_df: pd.DataFrame):
     performance['is_low_data'] = performance['data_point_count'] < LOW_DATA_THRESHOLD
     save_path = os.path.join(REPORT_DIR, 'district_level_performance_metrics.csv')
     performance.to_csv(save_path, index=False)
-    print(f"✅ Detailed district metrics saved to {save_path}")
+    print(f"Detailed district metrics saved to {save_path}")
     return performance
 
 
@@ -239,7 +239,7 @@ def analyze_yearly_performance(results_df: pd.DataFrame):
     save_path = os.path.join(REPORT_DIR, '03_performance_over_time.png')
     plt.savefig(save_path, bbox_inches='tight')
     plt.close()
-    print(f"✅ Yearly performance plot saved to {save_path}")
+    print(f"Yearly performance plot saved to {save_path}")
     return yearly_perf
 
 
@@ -262,7 +262,7 @@ def plot_performance_map_with_hatching(district_performance: pd.DataFrame, gdf_d
     save_path = os.path.join(REPORT_DIR, '01_r_squared_map_with_hatching.png')
     plt.savefig(save_path, bbox_inches='tight')
     plt.close()
-    print("✅ Performance map saved.")
+    print("Performance map saved.")
 
 
 def plot_r2_vs_data_count(district_performance: pd.DataFrame):
@@ -280,7 +280,7 @@ def plot_r2_vs_data_count(district_performance: pd.DataFrame):
     save_path = os.path.join(REPORT_DIR, '02_r2_vs_data_count.png')
     plt.savefig(save_path, bbox_inches='tight')
     plt.close()
-    print("✅ R² vs. Count plot saved.")
+    print("R² vs. Count plot saved.")
 
 
 def plot_best_worst_district_timelines(district_performance: pd.DataFrame, backtest_results: pd.DataFrame):
@@ -316,7 +316,7 @@ def plot_best_worst_district_timelines(district_performance: pd.DataFrame, backt
     save_path = os.path.join(REPORT_DIR, '04_best_worst_district_timelines.png')
     plt.savefig(save_path, bbox_inches='tight')
     plt.close()
-    print(f"✅ Best/Worst district timelines saved to {save_path}")
+    print(f"Best/Worst district timelines saved to {save_path}")
 
 
 def main():
@@ -330,7 +330,7 @@ def main():
         gdf_districts.rename(columns={'id': 'district_no', 'name': 'name'}, inplace=True)
         gdf_districts['district_no'] = gdf_districts['district_no'].astype(str).str.zfill(5)
         df = pd.merge(df, gdf_districts[['district_no', 'name']], on='district_no', how='left')
-        print("✅ Data and geo-data loaded successfully.")
+        print("Data and geo-data loaded successfully.")
     except Exception as e:
         print(f"❌ CRITICAL ERROR during loading. Details: {e}")
         return

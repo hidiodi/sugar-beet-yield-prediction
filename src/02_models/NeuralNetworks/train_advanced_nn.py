@@ -197,8 +197,8 @@ def train_evaluate_rnn(time_steps=5):
         os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
         model.save(MODEL_PATH)
         joblib.dump(scaler, SCALER_PATH)
-        print(f"✅ Deep Attention RNN model successfully saved to {MODEL_PATH}")
-        print(f"✅ Scaler for Deep Attention RNN model saved to {SCALER_PATH}")
+        print(f"Deep Attention RNN model successfully saved to {MODEL_PATH}")
+        print(f"Scaler for Deep Attention RNN model saved to {SCALER_PATH}")
     except Exception as e:
         print(f"❌ Warning: Could not save the new model. Error: {e}")
 

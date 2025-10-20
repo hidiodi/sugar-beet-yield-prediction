@@ -63,7 +63,7 @@ def plot_performance_metrics(results_df: pd.DataFrame, split_name: str):
     save_path = os.path.join(REPORT_DIR, f'predicted_vs_actual_scatter_{split_name.lower()}.png')
     plt.savefig(save_path)
     plt.close()
-    print(f"✅ Scatter plot saved to {save_path}")
+    print(f"Scatter plot saved to {save_path}")
 
     # --- Plot 2: Error Distribution Histogram ---
     plt.figure(figsize=(10, 6))
@@ -79,7 +79,7 @@ def plot_performance_metrics(results_df: pd.DataFrame, split_name: str):
     save_path = os.path.join(REPORT_DIR, f'error_distribution_histogram_{split_name.lower()}.png')
     plt.savefig(save_path)
     plt.close()
-    print(f"✅ Error histogram saved to {save_path}")
+    print(f"Error histogram saved to {save_path}")
 
 
 def plot_geographic_error_map(results_df: pd.DataFrame, gdf_districts: gpd.GeoDataFrame, split_name: str):
@@ -101,7 +101,7 @@ def plot_geographic_error_map(results_df: pd.DataFrame, gdf_districts: gpd.GeoDa
     save_path = os.path.join(REPORT_DIR, f'geographic_error_map_{split_name.lower()}.png')
     plt.savefig(save_path)
     plt.close()
-    print(f"✅ Geographic map saved to {save_path}")
+    print(f"Geographic map saved to {save_path}")
 
 
 def plot_national_average_timeseries(all_results: pd.DataFrame):
@@ -134,7 +134,7 @@ def plot_national_average_timeseries(all_results: pd.DataFrame):
     save_path = os.path.join(REPORT_DIR, 'national_average_timeseries_combined.png')
     plt.savefig(save_path)
     plt.close()
-    print(f"✅ Combined Time Series saved to {save_path}")
+    print(f"Combined Time Series saved to {save_path}")
 
 
 def main():
@@ -149,7 +149,7 @@ def main():
         gdf_districts = gpd.read_file(GEOJSON_PATH)
         gdf_districts.rename(columns={'id': 'district_no'}, inplace=True)
         gdf_districts['district_no'] = gdf_districts['district_no'].astype(str).str.zfill(5)
-        print("✅ Model, data, and geojson loaded successfully.")
+        print("Model, data, and geojson loaded successfully.")
     except FileNotFoundError as e:
         print(f"❌ CRITICAL ERROR: A required file was not found. Details: {e}")
         return

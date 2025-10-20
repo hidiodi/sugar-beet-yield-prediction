@@ -124,7 +124,7 @@ def run_optimization_simulation():
 
     output_path = os.path.join(OUTPUT_DIR, 'simulation.png')
     plt.savefig(output_path, dpi=300)
-    print(f"✅ 'Ultimate Proof' chart saved to {output_path}")
+    print(f"'Ultimate Proof' chart saved to {output_path}")
 
 
 if __name__ == "__main__":

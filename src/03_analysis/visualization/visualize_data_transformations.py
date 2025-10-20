@@ -61,7 +61,7 @@ def run_backtest(df: pd.DataFrame, model_template: XGBRegressor):
     results_df['error'] = results_df['predicted_yield'] - results_df['kreisYield']
     results_df['abs_error'] = results_df['error'].abs()
 
-    print("\n✅ Backtest complete.")
+    print("\nBacktest complete.")
     return results_df
 
 
@@ -88,7 +88,7 @@ def plot_state_level_performance(results_df: pd.DataFrame):
     save_path = os.path.join(REPORT_DIR, '01_state_level_performance.png')
     plt.savefig(save_path)
     plt.close()
-    print(f"✅ Plot saved to {save_path}")
+    print(f"Plot saved to {save_path}")
 
 
 def plot_error_over_time(results_df: pd.DataFrame):
@@ -119,7 +119,7 @@ def plot_error_over_time(results_df: pd.DataFrame):
     save_path = os.path.join(REPORT_DIR, '02_error_over_time.png')
     plt.savefig(save_path)
     plt.close()
-    print(f"✅ Plot saved to {save_path}")
+    print(f"Plot saved to {save_path}")
 
 
 def main():
@@ -143,7 +143,7 @@ def main():
         df = pd.merge(df, state_lookup, on='district_no', how='left')
         # ===============================================================
 
-        print("✅ Model template, data, and state names loaded successfully.")
+        print("Model template, data, and state names loaded successfully.")
     except FileNotFoundError as e:
         print(f"❌ CRITICAL ERROR: A required file was not found. Details: {e}")
         return

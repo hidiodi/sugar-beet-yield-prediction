@@ -60,7 +60,7 @@ def plot_predicted_vs_actual(y_actual, y_predicted, r2, rmse, path, dataset_name
     os.makedirs(os.path.dirname(path), exist_ok=True)
     plt.savefig(path, bbox_inches='tight')
     plt.close()
-    print(f"✅ Final performance plot saved to {path}")
+    print(f"Final performance plot saved to {path}")
 
 
 def train_validate_and_test_stacked_model():
@@ -181,7 +181,7 @@ def train_validate_and_test_stacked_model():
     if rmse_stack_val < rmse_base_val:
         champion_model = stacked_regressor
         model_name = "Stacking Regressor"
-        print(f"✅ Stacking improved performance. Selecting it as the champion model.")
+        print(f"Stacking improved performance. Selecting it as the champion model.")
     else:
         champion_model = xgb_base
         model_name = "Base XGBoost"
@@ -203,7 +203,7 @@ def train_validate_and_test_stacked_model():
     try:
         os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
         joblib.dump(champion_model, MODEL_PATH)
-        print(f"\n✅ Champion Model ({model_name}) saved to {MODEL_PATH}")
+        print(f"\nChampion Model ({model_name}) saved to {MODEL_PATH}")
     except Exception as e:
         print(f"\n❌ Error: Could not save the final model. Error: {e}")
         sys.exit(1)
@@ -221,7 +221,7 @@ def train_validate_and_test_stacked_model():
         plt.tight_layout()
         os.makedirs(os.path.dirname(IMPORTANCE_PLOT_PATH), exist_ok=True)
         plt.savefig(IMPORTANCE_PLOT_PATH)
-        print(f"✅ Feature importance plot saved to {IMPORTANCE_PLOT_PATH}")
+        print(f"Feature importance plot saved to {IMPORTANCE_PLOT_PATH}")
     except Exception as e:
         print(f"❌ Warning: Could not save the feature importance plot. Error: {e}")
 

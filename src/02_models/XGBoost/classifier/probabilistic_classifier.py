@@ -76,7 +76,7 @@ def plot_predicted_vs_actual(df_results, num_classes, title="Predicted Yield vs.
     os.makedirs(os.path.dirname(PREDICTION_PLOT_PATH), exist_ok=True)
     plt.savefig(PREDICTION_PLOT_PATH, bbox_inches='tight')
     plt.close()
-    logging.info(f"✅ Predicted vs. Actual yield plot saved to {PREDICTION_PLOT_PATH}")
+    logging.info(f"Predicted vs. Actual yield plot saved to {PREDICTION_PLOT_PATH}")
 
 
 def train_and_validate_tuned_probabilistic_classifier():
@@ -235,13 +235,13 @@ def train_and_validate_tuned_probabilistic_classifier():
                                           f'reliability_curve_tuned_{num_classes}class_calibrated.png')
     os.makedirs(os.path.dirname(RELIABILITY_CURVE_PATH), exist_ok=True)
     plt.savefig(RELIABILITY_CURVE_PATH, bbox_inches='tight')
-    logging.info(f"✅ Reliability curve (CALIBRATED) saved to {RELIABILITY_CURVE_PATH}")
+    logging.info(f"Reliability curve (CALIBRATED) saved to {RELIABILITY_CURVE_PATH}")
 
     # --- Save the Calibrated Model ---
     MODEL_PATH = os.path.join('models', f'final_tuned_probabilistic_classifier_{num_classes}class_calibrated.joblib')
     os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
     joblib.dump(calibrated_model, MODEL_PATH)
-    logging.info(f"✅ Final **calibrated** probabilistic classifier saved to {MODEL_PATH}")
+    logging.info(f"Final **calibrated** probabilistic classifier saved to {MODEL_PATH}")
 
 
 if __name__ == "__main__":

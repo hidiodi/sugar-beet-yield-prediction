@@ -146,7 +146,7 @@ def create_value_story():
     output_path = os.path.join(OUTPUT_DIR, f'value_story_{CASE_STUDY_YEAR}.html')
     m.save(output_path)
 
-    print(f"\n✅ Interactive Value Story saved to {output_path}")
+    print(f"\nInteractive Value Story saved to {output_path}")
     print("--- Open this file in a web browser to explore the model's advantage. ---")
 
 

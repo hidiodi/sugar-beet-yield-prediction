@@ -82,7 +82,7 @@ def main():
 
     os.makedirs(os.path.dirname(MODEL_MEDIAN_PATH), exist_ok=True)
     joblib.dump(model_median, MODEL_MEDIAN_PATH)
-    print(f"✅ Stage 1 Median Model saved to {MODEL_MEDIAN_PATH}")
+    print(f"Stage 1 Median Model saved to {MODEL_MEDIAN_PATH}")
 
     # --- 4. Generate Targets for Stage 2 Model ---
     print("\n--- Generating Targets for Stage 2: Error Model ---")
@@ -99,7 +99,7 @@ def main():
 
     os.makedirs(os.path.dirname(MODEL_ERROR_PATH), exist_ok=True)
     joblib.dump(model_error, MODEL_ERROR_PATH)
-    print(f"✅ Stage 2 Error Model saved to {MODEL_ERROR_PATH}")
+    print(f"Stage 2 Error Model saved to {MODEL_ERROR_PATH}")
     print("\n--- Hybrid Model Training Complete ---")
 
 

@@ -18,7 +18,7 @@ try:
 except FileNotFoundError:
     raise SystemExit(f"❌ File not found: {file_path}")
 
-print(f"✅ Loaded dataset: {df.shape[0]} rows × {df.shape[1]} columns\n")
+print(f"Loaded dataset: {df.shape[0]} rows × {df.shape[1]} columns\n")
 
 # --- Inspect Target ---
 if target not in df.columns:
@@ -115,5 +115,5 @@ os.makedirs(summary_dir, exist_ok=True)
 vif_df.to_csv(os.path.join(summary_dir, 'vif_report.csv'), index=False)
 corr_target.to_csv(os.path.join(summary_dir, f'{target}_correlations.csv'))
 
-print("\n✅ Analysis Complete. Outputs saved to:")
+print("\nAnalysis Complete. Outputs saved to:")
 print(output_dir)

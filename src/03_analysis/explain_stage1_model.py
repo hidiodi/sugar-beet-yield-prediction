@@ -31,14 +31,14 @@ def load_model_and_data(feature_list):
         missing_cols = [col for col in feature_list if col not in df.columns]
         if missing_cols:
             raise ValueError(f"Data file is missing required feature columns: {missing_cols}")
-        print(f"✅ Successfully loaded {len(df)} samples from {DATA_PATH}.")
+        print(f"Successfully loaded {len(df)} samples from {DATA_PATH}.")
     except FileNotFoundError:
         print(f"❌ Error: Data file not found at {DATA_PATH}.")
         return [None] * 6
 
     try:
         xgb_model = joblib.load(MODEL_PATH)
-        print(f"✅ Successfully loaded model from {MODEL_PATH}")
+        print(f"Successfully loaded model from {MODEL_PATH}")
     except FileNotFoundError:
         print(f"❌ Error: Model file not found at {MODEL_PATH}.")
         return [None] * 6
@@ -77,7 +77,7 @@ def analyze_shap_globally(explainer, shap_values, data, data_split_name):
     plt.tight_layout()
     save_path = os.path.join(REPORT_DIR, f'shap_global_beeswarm_{data_split_name}.png')
     plt.savefig(save_path, bbox_inches='tight')
-    print(f"✅ SHAP Beeswarm Plot saved to {save_path}")
+    print(f"SHAP Beeswarm Plot saved to {save_path}")
     plt.close()
 
     print(f"\n--- 3. Top Feature Interactions (SHAP) on {data_split_name} data ---")
@@ -88,7 +88,7 @@ def analyze_shap_globally(explainer, shap_values, data, data_split_name):
     plt.tight_layout()
     save_path = os.path.join(REPORT_DIR, f'shap_global_interactions_{data_split_name}.png')
     plt.savefig(save_path, bbox_inches='tight')
-    print(f"✅ SHAP Interaction Plot saved to {save_path}")
+    print(f"SHAP Interaction Plot saved to {save_path}")
     plt.close()
 
 
@@ -104,7 +104,7 @@ def analyze_shap_feature_dependence(shap_values, data, features, data_split_name
         save_path = os.path.join(REPORT_DIR, f'shap_dependence_{feature}_{data_split_name}.png')
         plt.savefig(save_path)
         plt.close()
-    print(f"✅ SHAP Dependence Plots saved for top features.")
+    print(f"SHAP Dependence Plots saved for top features.")
 
 
 # <<< NEW FUNCTION REPLACES THE OLD ONE >>>
@@ -154,12 +154,12 @@ def analyze_top_n_failures(xgb_model, explainer, X_test, y_test, test_df, n=10):
         plt.savefig(save_path, bbox_inches='tight')
         plt.close()
 
-    print(f"✅ Individual waterfall plots saved.")
+    print(f"Individual waterfall plots saved.")
 
     failures_df = pd.DataFrame(failure_analysis_results)
     csv_path = os.path.join(REPORT_DIR, 'top_failures_detailed_analysis.csv')
     failures_df.to_csv(csv_path, index=False)
-    print(f"✅ Detailed failure analysis saved to {csv_path}")
+    print(f"Detailed failure analysis saved to {csv_path}")
 
     shap_cols = [col for col in failures_df.columns if col.startswith('shap_')]
     avg_shap_failures = failures_df[shap_cols].mean()
@@ -174,7 +174,7 @@ def analyze_top_n_failures(xgb_model, explainer, X_test, y_test, test_df, n=10):
     plt.tight_layout()
     summary_plot_path = os.path.join(REPORT_DIR, 'top_failures_summary_plot.png')
     plt.savefig(summary_plot_path)
-    print(f"✅ Summary plot of failure drivers saved to {summary_plot_path}")
+    print(f"Summary plot of failure drivers saved to {summary_plot_path}")
     plt.close()
 
 
@@ -201,7 +201,7 @@ def plot_pdp_with_ice(xgb_model, X_data, features):
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         save_path = os.path.join(REPORT_DIR, 'pdp_with_ice_plots.png')
         plt.savefig(save_path)
-        print(f"✅ PDP & ICE Plots saved to {save_path}")
+        print(f"PDP & ICE Plots saved to {save_path}")
         plt.close()
     except Exception as e:
         print(f"❌ Error generating PDP/ICE plots: {e}")
@@ -212,7 +212,7 @@ if __name__ == "__main__":
     try:
         temp_model = joblib.load(MODEL_PATH)
         FEATURE_COLS = temp_model.feature_names_in_
-        print("✅ Automatically loaded feature list from the trained model.")
+        print("Automatically loaded feature list from the trained model.")
     except Exception as e:
         print(f"❌ CRITICAL ERROR: Could not load model to get feature list. Error: {e}")
         exit()
@@ -240,6 +240,6 @@ if __name__ == "__main__":
 
         plot_pdp_with_ice(xgb_model, X_validation, top_6_features)
 
-        print("\n✅ Advanced Analysis Complete. Outputs saved to directory: " + REPORT_DIR)
+        print("\nAdvanced Analysis Complete. Outputs saved to directory: " + REPORT_DIR)
     else:
         print("\n❌ Analysis failed due to missing model or data.")

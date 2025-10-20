@@ -240,7 +240,7 @@ def train_validate_and_test():
 
         os.makedirs(os.path.dirname(IMPORTANCE_PLOT_PATH), exist_ok=True)
         plt.savefig(IMPORTANCE_PLOT_PATH, bbox_inches='tight')
-        print(f"\n✅ V2 Feature importance plot saved to {IMPORTANCE_PLOT_PATH}")
+        print(f"\nV2 Feature importance plot saved to {IMPORTANCE_PLOT_PATH}")
     except Exception as e:
         print(f"❌ Warning: Could not save the V2 feature importance plot. Error: {e}")
 
@@ -248,7 +248,7 @@ def train_validate_and_test():
     try:
         os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
         joblib.dump(xgb, MODEL_PATH)
-        print(f"✅ Final XGBoost V2 model successfully trained and saved to {MODEL_PATH}")
+        print(f"Final XGBoost V2 model successfully trained and saved to {MODEL_PATH}")
     except Exception as e:
         print(f"❌ Warning: Could not save the final V2 model. Error: {e}")
 

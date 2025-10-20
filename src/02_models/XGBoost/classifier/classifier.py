@@ -153,11 +153,11 @@ def train_and_validate_robust_classifier():
 
     os.makedirs(os.path.dirname(CONFUSION_MATRIX_PATH), exist_ok=True)
     plt.savefig(CONFUSION_MATRIX_PATH, bbox_inches='tight')
-    print(f"\n✅ Confusion matrix saved to {CONFUSION_MATRIX_PATH}")
+    print(f"\nConfusion matrix saved to {CONFUSION_MATRIX_PATH}")
 
     # --- Save Final Model ---
     joblib.dump(classifier_model, MODEL_PATH)
-    logging.info(f"✅ Final robust classifier saved to {MODEL_PATH}")
+    logging.info(f"Final robust classifier saved to {MODEL_PATH}")
 
 
 if __name__ == "__main__":

@@ -85,7 +85,7 @@ def load_and_prepare_data():
         'summer_temp_prob_warm_forecast_sq', 'spring_precip_prob_wet_forecast_sq', 'summer_precip_prob_wet_forecast_sq'
     ]
 
-    print("✅ Data loaded and prepared successfully.")
+    print("Data loaded and prepared successfully.")
     return df, feature_cols
 
 

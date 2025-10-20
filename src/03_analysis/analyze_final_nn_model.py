@@ -44,7 +44,7 @@ def load_model_scaler_and_data():
         df = pd.read_csv(DATA_PATH)
         # Ensure 'district_no' is encoded consistently as during training
         df['district_no_encoded'] = df['district_no'].astype('category').cat.codes
-        print(f"✅ Successfully loaded {len(df)} samples from {DATA_PATH}.")
+        print(f"Successfully loaded {len(df)} samples from {DATA_PATH}.")
     except FileNotFoundError:
         print(f"Error: Data file not found at {DATA_PATH}. Cannot proceed.")
         return None, None, None
@@ -52,7 +52,7 @@ def load_model_scaler_and_data():
     # --- 2. Load Model ---
     try:
         nn_model = keras.models.load_model(MODEL_PATH)
-        print(f"✅ Successfully loaded NN model from {MODEL_PATH}")
+        print(f"Successfully loaded NN model from {MODEL_PATH}")
     except Exception as e:
         print(f"Error: NN model file not found or failed to load from {MODEL_PATH}. Error: {e}")
         return None, None, None
@@ -60,7 +60,7 @@ def load_model_scaler_and_data():
     # --- 3. Load Scaler ---
     try:
         scaler = joblib.load(SCALER_PATH)
-        print(f"✅ Successfully loaded StandardScaler from {SCALER_PATH}")
+        print(f"Successfully loaded StandardScaler from {SCALER_PATH}")
     except FileNotFoundError:
         print(f"Error: StandardScaler file not found at {SCALER_PATH}. Ensure it was saved during training.")
         return None, None, None
@@ -177,7 +177,7 @@ def plot_feature_dependence(nn_model: keras.Model, scaler: StandardScaler, df_fu
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         save_path = os.path.join(REPORT_DIR, 'pdp_feature_relationships_nn.png')
         plt.savefig(save_path)
-        print(f"✅ PDP Plots saved to {save_path}")
+        print(f"PDP Plots saved to {save_path}")
         plt.close()
     except Exception as e:
         print(f"Error generating PDPs for NN: {e}")
@@ -203,6 +203,6 @@ if __name__ == "__main__":
         ]
         plot_feature_dependence(nn_model, scaler, df_full, top_features_for_pdp)
 
-        print("\n✅ Analysis Complete. Outputs saved to directory: " + REPORT_DIR)
+        print("\nAnalysis Complete. Outputs saved to directory: " + REPORT_DIR)
     else:
         print("\nAnalysis failed due to missing model, scaler, or data.")
