@@ -272,11 +272,13 @@ def main():
     merged_df.drop(columns=cols_to_remove, inplace=True, errors='ignore')
     logging.info(f"Dropped intermediate and data-leaking columns to finalize dataset.")
 
+    '''
     initial_rows = len(merged_df)
     merged_df.dropna(inplace=True)
     rows_dropped = initial_rows - len(merged_df)
     if rows_dropped > 0:
         logging.info(f"Dropped {rows_dropped} rows with missing values (expected for early years with NaNs).")
+    '''
 
     logging.info(f"Saving Stage 1 model-ready dataset to '{output_file}'...")
     merged_df.to_csv(output_file, index=False, float_format='%.6f')

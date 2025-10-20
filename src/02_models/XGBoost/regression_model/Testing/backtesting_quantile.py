@@ -30,7 +30,7 @@ REPORT_DIR = os.path.join('reports', 'figures', 'district_level_diagnostics', 'q
 BACKTEST_START_YEAR = 2000
 BACKTEST_END_YEAR = 2024
 LOW_DATA_THRESHOLD = 10
-MIN_DATAPOINTS_FOR_WORST_DISTRICTS_PLOT = 1
+MIN_DATAPOINTS_FOR_WORST_DISTRICTS_PLOT = 5
 
 
 def run_quantile_backtest(df: pd.DataFrame, feature_cols: list, model_lower_clone: XGBRegressor, model_median_clone: XGBRegressor, model_upper_clone: XGBRegressor):

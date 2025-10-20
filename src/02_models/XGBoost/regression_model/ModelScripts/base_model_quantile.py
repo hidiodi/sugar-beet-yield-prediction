@@ -55,10 +55,12 @@ BEST_PARAMS_0P975 = {
 
 
 ### <-- MODIFIED STEP 1: Create a map to link quantiles to their specific params -->
+quantiles = [0.025, 0.5, 0.975]
+
 PARAMS_MAP = {
-    0.025: BEST_PARAMS_0P025,
-    0.5: BEST_PARAMS_0P5,
-    0.975: BEST_PARAMS_0P975
+    quantiles[0]: BEST_PARAMS_0P025,
+    quantiles[1]: BEST_PARAMS_0P5,
+    quantiles[2]: BEST_PARAMS_0P975
 }
 
 
@@ -201,7 +203,6 @@ def train_validate_and_test_with_intervals():
     # --- Train the XGBoost Models for Quantile Regression ---
 
     ### <-- MODIFIED STEP 2: Update the quantiles to match the new 95% interval -->
-    quantiles = [0.025, 0.5, 0.975]
     models = {}
 
     for q in quantiles:
@@ -222,9 +223,9 @@ def train_validate_and_test_with_intervals():
 
     # --- Evaluate on VALIDATION Set ---
     ### <-- MODIFIED STEP 4: Use the new quantile keys (0.025 and 0.975) -->
-    y_pred_detrended_val_lower = models[0.025].predict(X_validation)
-    y_pred_detrended_val_median = models[0.5].predict(X_validation)
-    y_pred_detrended_val_upper = models[0.975].predict(X_validation)
+    y_pred_detrended_val_lower = models[quantiles[0]].predict(X_validation)
+    y_pred_detrended_val_median = models[quantiles[1]].predict(X_validation)
+    y_pred_detrended_val_upper = models[quantiles[2]].predict(X_validation)
 
     y_pred_final_val_lower = y_pred_detrended_val_lower + validation_df['yield_trend']
     y_pred_final_val_median = y_pred_detrended_val_median + validation_df['yield_trend']
@@ -240,9 +241,9 @@ def train_validate_and_test_with_intervals():
 
     # --- Evaluate on TEST Set ---
     ### <-- MODIFIED STEP 4 (cont.): Use the new quantile keys -->
-    y_pred_detrended_test_lower = models[0.025].predict(X_test)
-    y_pred_detrended_test_median = models[0.5].predict(X_test)
-    y_pred_detrended_test_upper = models[0.975].predict(X_test)
+    y_pred_detrended_test_lower = models[quantiles[0]].predict(X_test)
+    y_pred_detrended_test_median = models[quantiles[1]].predict(X_test)
+    y_pred_detrended_test_upper = models[quantiles[2]].predict(X_test)
 
     y_pred_final_test_lower = y_pred_detrended_test_lower + test_df['yield_trend']
     y_pred_final_test_median = y_pred_detrended_test_median + test_df['yield_trend']
@@ -267,7 +268,7 @@ def train_validate_and_test_with_intervals():
 
     # --- Plot and Save Feature Importance (Based on the median model) ---
     try:
-        median_model = models[0.5]
+        median_model = models[quantiles[1]]
         importance_scores = median_model.feature_importances_
         feature_importance_df = pd.DataFrame({'Feature': feature_cols, 'Importance': importance_scores}).sort_values(
             by='Importance', ascending=True)
@@ -287,9 +288,9 @@ def train_validate_and_test_with_intervals():
     try:
         os.makedirs(os.path.dirname(LOWER_BOUND_MODEL_PATH), exist_ok=True)
         ### <-- MODIFIED STEP 4 (cont.): Use the new quantile keys for saving -->
-        joblib.dump(models[0.025], LOWER_BOUND_MODEL_PATH)
-        joblib.dump(models[0.5], MEDIAN_MODEL_PATH)
-        joblib.dump(models[0.975], UPPER_BOUND_MODEL_PATH)
+        joblib.dump(models[quantiles[0]], LOWER_BOUND_MODEL_PATH)
+        joblib.dump(models[quantiles[1]], MEDIAN_MODEL_PATH)
+        joblib.dump(models[quantiles[2]], UPPER_BOUND_MODEL_PATH)
         print(f" Final XGBoost  models for prediction intervals successfully trained and saved.")
     except Exception as e:
         print(f" Warning: Could not save the final models. Error: {e}")
