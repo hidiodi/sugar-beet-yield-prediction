@@ -119,29 +119,61 @@ def plot_national_average_timeline(backtest_results: pd.DataFrame, report_dir: s
     print(f"National average plot saved to {save_path}")
 
 # (Other plotting functions are updated with correct labels)
-def plot_best_worst_district_timelines_with_intervals(district_performance: pd.DataFrame, backtest_results: pd.DataFrame):
+def plot_best_worst_district_timelines_with_intervals(district_performance: pd.DataFrame,
+                                                      backtest_results: pd.DataFrame):
+    """
+    Generates and saves timeline plots for the 3 best and 3 worst performing reliable districts,
+    including the 95% prediction interval.
+    """
     print("\n--- Generating timeline plots for best and worst districts with prediction intervals ---")
-    # ... (filtering logic remains the same)
-    filtered_perf = district_performance[(district_performance['data_point_count'] > 1) & (district_performance['r2'] != -99)].sort_values('r2', ascending=False)
-    best_districts = filtered_perf.head(3)
-    worst_districts_filtered = district_performance[(district_performance['data_point_count'] >= MIN_DATAPOINTS_FOR_WORST_DISTRICTS_PLOT) & (district_performance['r2'] != -99)].sort_values('r2', ascending=True)
-    worst_districts = worst_districts_filtered.head(3)
+
+    # First, create a pool of reliable districts that meet the minimum data requirement
+    reliable_perf = district_performance[
+        (district_performance['data_point_count'] >= MIN_DATAPOINTS_FOR_WORST_DISTRICTS_PLOT) &
+        (district_performance['r2'] != -99)
+        ]
+
+    # Now select the best and worst from this reliable pool
+    best_districts = reliable_perf.sort_values('r2', ascending=False).head(3)
+    worst_districts = reliable_perf.sort_values('r2', ascending=True).head(3)
+
+    # Check if there are enough districts to plot
+    if len(best_districts) < 3 or len(worst_districts) < 3:
+        print(
+            f"  Warning: Could not generate best/worst plot. Not enough reliable districts found with at least {MIN_DATAPOINTS_FOR_WORST_DISTRICTS_PLOT} data points.")
+        return
+
     districts_to_plot = pd.concat([best_districts, worst_districts])
+
     fig, axes = plt.subplots(2, 3, figsize=(20, 10), sharey=True)
     axes = axes.flatten()
+
     for i, (_, district_info) in enumerate(districts_to_plot.iterrows()):
-        district_data = backtest_results[backtest_results['district_no'] == district_info['district_no']].sort_values('year')
+        district_data = backtest_results[backtest_results['district_no'] == district_info['district_no']].sort_values(
+            'year')
         ax = axes[i]
-        ax.plot(district_data['year'], district_data['kreisYield'], label='Actual Yield', color='navy', marker='o', markersize=4, zorder=3)
-        ax.plot(district_data['year'], district_data['predicted_yield_median'], label='Median Prediction', color='red', linestyle='--', zorder=4)
+        ax.plot(district_data['year'], district_data['kreisYield'], label='Actual Yield', color='navy', marker='o',
+                markersize=4, zorder=3)
+        ax.plot(district_data['year'], district_data['predicted_yield_median'], label='Median Prediction', color='red',
+                linestyle='--', zorder=4)
         ax.fill_between(district_data['year'], district_data['predicted_yield_lower'],
-                        district_data['predicted_yield_upper'], color='red', alpha=0.2, label='95% Prediction Interval', zorder=2) # <-- MODIFIED Label
+                        district_data['predicted_yield_upper'], color='red', alpha=0.2, label='95% Prediction Interval',
+                        zorder=2)
         ax.set_title(f"{'Best' if i < 3 else 'Worst'}: {district_info['name']}\n(R² = {district_info['r2']:.2f})")
-        ax.legend(); ax.grid(True, which='both', linestyle=':')
-    plt.suptitle("Prediction Timelines for 3 Best and 3 Worst Districts (V3 Quantile Model)", fontsize=18, y=1.02)
+        ax.legend()
+        ax.grid(True, which='both', linestyle=':')
+
+    # <-- MODIFIED LINE: Added the minimum data points value to the main title -->
+    plt.suptitle(
+        f"Prediction Timelines for 3 Best and 3 Worst Reliable Districts (Min. {MIN_DATAPOINTS_FOR_WORST_DISTRICTS_PLOT} Years)\n(V3 Quantile Model)",
+        fontsize=18,
+        y=1.03  # Slightly increased y to give the two-line title space
+    )
+
     plt.tight_layout(rect=[0, 0, 1, 0.98])
     save_path = os.path.join(REPORT_DIR, '04_best_worst_district_timelines.png')
-    plt.savefig(save_path, bbox_inches='tight'); plt.close()
+    plt.savefig(save_path, bbox_inches='tight')
+    plt.close(fig)
     print(f"Best/Worst district timelines saved to {save_path}")
 
 # (The core metric/utility functions below require no changes in logic)
