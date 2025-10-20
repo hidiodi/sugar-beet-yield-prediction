@@ -76,7 +76,6 @@ src/models/*.joblib
 src/models/*.pkl
 
 # Data files (optional, but recommended for large files)
-data/05_model_input/*.csv
 data/04_feature/
 data/03_processed/
 data/02_intermediate/
