@@ -106,7 +106,7 @@ class SimpleWeatherDataProvider(WeatherDataProvider):
                 # Basic weather data
                 tmin = float(row['tmin'])
                 tmax = float(row['tmax'])
-                irrad = float(row['srad']) / 10.0  # Convert to kJ/m²/day
+                irrad = float(row['srad']) / 100  # Convert to kJ/m²/day
                 precip = float(row['precip']) / 10000.0  # Convert to mm
                 # Use default/placeholder values if needed, or get them from your CSV
                 vap = 10.0  # Placeholder kPa
@@ -252,9 +252,8 @@ class WeatherGenerator:
             if tmax < tmin:
                 tmax = tmin + abs(np.random.normal(0, 1.0))
 
-            # Solar radiation
             srad = np.random.normal(month_stats['srad_mean'], month_stats['srad_std'])
-            srad = max(0.1, srad)
+            srad = max(100.0, srad)  # Ensure at least 100 kJ/m2/day (very low light)
 
             generated_data.append({
                 'date': date,
