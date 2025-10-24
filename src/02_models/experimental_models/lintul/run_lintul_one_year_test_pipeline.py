@@ -113,7 +113,8 @@ class SimpleWeatherDataProvider(WeatherDataProvider):
                 wind = 2.0  # Placeholder m/s
 
                 # --- FIX: Calculate ET0, E0, ES0 ---
-                e0, es0, et0 = penman_monteith(
+                # --- FIX: Calculate ET0 (assuming function returns only ET0 in mm/day) ---
+                et0_mm = penman_monteith(
                     day,
                     self.latitude,
                     self.elevation,
@@ -121,12 +122,15 @@ class SimpleWeatherDataProvider(WeatherDataProvider):
                     tmax,
                     irrad,
                     vap,
-                    wind,
+                    wind
                 )
-                # PCSE expects ET values in cm/day, convert from mm/day
-                e0 /= 10.0
-                es0 /= 10.0
-                et0 /= 10.0
+
+                # --- FIX: Convert ET0 to cm/day and assign reasonable values to E0, ES0 ---
+                et0 = et0_mm / 10.0  # Convert ET0 to cm/day
+                # Simple approximation: Assume E0 and ES0 are similar to ET0 initially
+                # More complex calculations exist, but this is often sufficient.
+                e0 = et0
+                es0 = et0
 
                 data_dict = ParameterDict({
                     'DAY': day,
@@ -138,7 +142,7 @@ class SimpleWeatherDataProvider(WeatherDataProvider):
                     'VAP': vap,
                     'WIND': wind,
                     'SNOWDEPTH': 0.0,
-                    # --- FIX: Add ET variables ---
+                    # --- FIX: Add ET variables in cm/day ---
                     'E0': e0,
                     'ES0': es0,
                     'ET0': et0
