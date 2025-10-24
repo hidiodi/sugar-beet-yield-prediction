@@ -1,15 +1,13 @@
 # src/data/03_process_agera5_data.py
-
+# important this will run for 5-6h+ so take your time
+# 15:27:25,658 -> 20:21:20,424
 import xarray as xr
 import logging
 from pathlib import Path
 import zipfile
 import tempfile
-import shutil
-# --- NEW IMPORTS for Progress Bar ---
-import dask
 from dask.diagnostics import progress
-from dask.distributed import Client
+from dask.distributed import Client, LocalCluster
 
 # --- Setup basic logging ---
 # Set logging level to DEBUG to capture detailed information if needed
@@ -171,4 +169,10 @@ def process_and_merge_agera5_data():
 
 
 if __name__ == "__main__":
+    cluster = LocalCluster(n_workers=8, threads_per_worker=1, memory_limit='3.5GB')  # Adjust params as needed
+    client = Client(cluster)
+
+    # This provides a link to a dashboard where you can SEE the work happening!
+    logging.info(f"Dask Dashboard is available at: {client.dashboard_link}")
+
     process_and_merge_agera5_data()
