@@ -19,9 +19,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%
 # --- Core Paths and Settings ---
 BASE_DIR = Path.cwd()
 RAW_DATA_DIR = BASE_DIR / "data/01_raw/ECMWF51_monthly_germany"
-# ============================ FIX 1: Corrected Typo ============================
 INTERMEDIATE_DATA_DIR = BASE_DIR / "data/02_intermediate"
-# ===============================================================================
 GEOJSON_PATH = BASE_DIR / "data/01_raw/districts_official.geojson"
 OUTPUT_CSV_PATH = INTERMEDIATE_DATA_DIR / "ecmwf51_forecast_features_FINAL.csv"
 
@@ -34,7 +32,8 @@ AVAILABLE_YEARS = HINDCAST_YEARS + FORECAST_YEARS
 # --- Variable and Conversion Configuration ---
 TARGET_DOWNLOAD_VARIABLES = [
     "2m_temperature", "evaporation", "runoff", "snowfall",
-    "soil_temperature_level_1", "surface_solar_radiation_downwards", "total_precipitation"
+    "soil_temperature_level_1", "surface_solar_radiation_downwards", "total_precipitation",
+    "10m_u_component_of_wind", "10m_v_component_of_wind", "2m_dewpoint_temperature"
 ]
 
 # This factor converts a rate in meters/second to a total in mm/day
@@ -48,6 +47,9 @@ DOWNLOAD_TO_SHORT_NAME_MAP = {
     'runoff': 'mrort',
     'soil_temperature_level_1': 'stl1',
     'snowfall': 'mtsfr',
+    '10m_u_component_of_wind': 'u10',
+    '10m_v_component_of_wind': 'v10',
+    '2m_dewpoint_temperature': 'd2m',
 }
 
 VAR_MAP = {
@@ -58,7 +60,10 @@ VAR_MAP = {
     'erate':  {'name': 'evaporation', 'unit_factor': MM_PER_DAY_FACTOR},
     'mrort':  {'name': 'runoff',      'unit_factor': MM_PER_DAY_FACTOR},
     'stl1':   {'name': 'soil_temp_l1','unit_factor': 1.0},
-    'mtsfr':  {'name': 'snowfall',    'unit_factor': MM_PER_DAY_FACTOR}
+    'mtsfr':  {'name': 'snowfall',    'unit_factor': MM_PER_DAY_FACTOR},
+    'u10': {'name': 'u10_wind', 'unit_factor': 1.0},
+    'v10': {'name': 'v10_wind', 'unit_factor': 1.0},
+    'd2m': {'name': 'dewpoint', 'unit_factor': 1.0},
 }
 
 
@@ -208,6 +213,25 @@ def process_forecasts_to_csv():
 
     logging.info("Finalizing and saving dataset...")
     final_df = pd.concat(processed_features, ignore_index=True)
+
+    logging.info("Calculating wind speed from u/v components...")
+    for season in ['spring', 'summer']:
+        u_col = f'{season}_u10_wind_anomaly_forecast'
+        v_col = f'{season}_v10_wind_anomaly_forecast'
+
+        # Calculate the magnitude of the wind vector anomaly
+        # Note: This is an approximation of the true wind speed anomaly
+        final_df[f'{season}_wind_anomaly_forecast'] = np.sqrt(final_df[u_col] ** 2 + final_df[v_col] ** 2)
+
+        # Drop the original u and v component columns
+        final_df.drop(columns=[u_col, v_col], inplace=True)
+
+    # Rename dewpoint columns for clarity
+    final_df.rename(columns={
+        'spring_dewpoint_anomaly_forecast': 'spring_dewpoint_anomaly_forecast',
+        'summer_dewpoint_anomaly_forecast': 'summer_dewpoint_anomaly_forecast'
+    }, inplace=True)
+
     final_df.sort_values(by=['year', 'district_no'], inplace=True)
     final_df.to_csv(OUTPUT_CSV_PATH, index=False, float_format='%.6f')
 

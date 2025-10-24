@@ -27,6 +27,8 @@ def download_agera5_data_final(start_year=1979, end_year=2024):
         {'variable': '2m_temperature', 'statistic': '24_hour_minimum', 'filename_part': 'temp_minimum'},
         {'variable': 'precipitation_flux', 'statistic': None, 'filename_part': 'precipitation_flux'},
         {'variable': 'solar_radiation_flux', 'statistic': None, 'filename_part': 'solar_radiation_flux'},
+        {'variable': '10m_wind_speed', 'statistic': '24_hour_mean', 'filename_part': 'wind_speed_mean'},
+        {'variable': '2m_dewpoint_temperature', 'statistic': '24_hour_mean', 'filename_part': 'dewpoint_temp_mean'},
     ]
 
     # Initialize the CDS API client
