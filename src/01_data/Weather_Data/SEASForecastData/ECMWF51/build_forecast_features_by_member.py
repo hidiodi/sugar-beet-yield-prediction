@@ -1,6 +1,7 @@
 # File: src/features/build_forecast_features_by_member.py
 # Description: Processes SEAS5 data, preserving the ensemble member dimension
-#              to create a feature set representing multiple possible futures.
+#              and creating monthly anomaly features for each variable.
+# VERSION: Monthly Granularity
 
 import cdsapi
 import pandas as pd
@@ -16,12 +17,12 @@ BASE_DIR = Path.cwd()
 RAW_DATA_DIR = BASE_DIR / "data/01_raw/ECMWF51_monthly_germany"
 INTERMEDIATE_DATA_DIR = BASE_DIR / "data/02_intermediate"
 GEOJSON_PATH = BASE_DIR / "data/01_raw/districts_official.geojson"
-OUTPUT_CSV_PATH = INTERMEDIATE_DATA_DIR / "ecmwf51_forecast_features_BY_MEMBER.csv"  # New output file
+OUTPUT_CSV_PATH = INTERMEDIATE_DATA_DIR / "ecmwf51_forecast_features_BY_MEMBER.csv"
 
-# ... (All other configuration from the original script remains the same) ...
-HINDCAST_YEARS = list(range(1981, 2017));
+# Timeframe and Variable Configuration
+HINDCAST_YEARS = list(range(1981, 2017))
 FORECAST_YEARS = list(range(2017, 2025))
-CLIMATOLOGY_YEARS = HINDCAST_YEARS;
+CLIMATOLOGY_YEARS = HINDCAST_YEARS
 AVAILABLE_YEARS = HINDCAST_YEARS + FORECAST_YEARS
 TARGET_DOWNLOAD_VARIABLES = ["2m_temperature", "evaporation", "runoff", "snowfall", "soil_temperature_level_1",
                              "surface_solar_radiation_downwards", "total_precipitation"]
@@ -44,10 +45,11 @@ def preprocess_ecmwf_dataset(ds):
 
 
 def calculate_climatology(ecmwf_dir, climatology_years):
-    # Climatology is still the long-term average across all members
     logging.info(f"Calculating Climatology ({climatology_years[0]}-{climatology_years[-1]})")
     files_to_load = [f for f in ecmwf_dir.glob("*.nc") if int(f.stem.split('_')[-3]) in climatology_years]
-    if not files_to_load: return None
+    if not files_to_load:
+        logging.error("CRITICAL: No NetCDF files found for climatology period.")
+        return None
     with xr.open_mfdataset(files_to_load, combine='nested', concat_dim='forecast_reference_time',
                            preprocess=preprocess_ecmwf_dataset, join='override', engine='netcdf4') as ds:
         climatology = ds.mean(dim=['forecast_reference_time', 'number'])
@@ -56,10 +58,10 @@ def calculate_climatology(ecmwf_dir, climatology_years):
 
 def process_forecasts_by_member():
     """
-    Processes all raw NetCDF files into a feature CSV where each SEAS5
-    ensemble member becomes a separate data point.
+    Processes raw NetCDF files into a feature CSV with monthly granularity
+    for each SEAS5 ensemble member.
     """
-    logging.info("\n--- STAGE: Processing Raw Data into Member-Specific Features ---")
+    logging.info("\n--- STAGE: Processing Raw Data into Monthly Member-Specific Features ---")
     INTERMEDIATE_DATA_DIR.mkdir(exist_ok=True)
     climatology = calculate_climatology(RAW_DATA_DIR, CLIMATOLOGY_YEARS)
     if climatology is None: return
@@ -77,50 +79,50 @@ def process_forecasts_by_member():
 
         with xr.open_dataset(file_path) as ds_raw:
             ds = preprocess_ecmwf_dataset(ds_raw)
+            anomaly = ds - climatology
 
-            # THE KEY CHANGE: Calculate anomaly PER MEMBER, not on the mean
-            anomaly = ds - climatology  # xarray broadcasts this correctly
+            anomaly_nearest = anomaly.sel(longitude=target_lons, latitude=target_lats, method='nearest')
+            year_df_long = anomaly_nearest.to_dataframe()
 
-            spring_anomaly = anomaly.sel(leadtime_month=slice(2, 4)).mean(dim='leadtime_month')
-            summer_anomaly = anomaly.sel(leadtime_month=slice(5, 7)).mean(dim='leadtime_month')
+            variable_codes = list(VAR_MAP.keys())
+            year_df_wide = year_df_long.pivot_table(
+                index=['district', 'number'],
+                columns='leadtime_month',
+                values=variable_codes
+            )
 
-            # Extract data at nearest points. This preserves the 'number' dimension.
-            spring_nearest = spring_anomaly.sel(longitude=target_lons, latitude=target_lats, method='nearest')
-            summer_nearest = summer_anomaly.sel(longitude=target_lons, latitude=target_lats, method='nearest')
+            year_df_wide.columns = [f"{var}_{int(month)}" for var, month in year_df_wide.columns]
+            year_df_wide.reset_index(inplace=True)
+            year_df_wide['year'] = year
 
-            # Convert the multi-dimensional xarray object to a flat DataFrame
-            spring_df = spring_nearest.to_dataframe().reset_index()
-            summer_df = summer_nearest.to_dataframe().reset_index()
-
-            # Merge the seasonal dataframes
-            year_df = pd.merge(spring_df, summer_df, on=['district', 'number'], suffixes=('_spring', '_summer'))
-            year_df['year'] = year
-
-            all_member_features.append(year_df)
+            all_member_features.append(year_df_wide)
 
     logging.info("Concatenating all years and members...")
     final_df_raw = pd.concat(all_member_features, ignore_index=True)
 
-    # --- Final Feature Renaming and Formatting ---
-    logging.info("Pivoting and renaming features for final output...")
-    final_df = final_df_raw[['year', 'district', 'number']].copy()
-    final_df.rename(columns={'district': 'district_no', 'number': 'seas5_member'}, inplace=True)
+    # --- CORRECTED BLOCK: Renaming and Formatting ---
+    logging.info("Renaming features for final monthly output...")
+    output_df = final_df_raw[['year', 'district', 'number']].copy()
+    output_df.rename(columns={'district': 'district_no', 'number': 'member'}, inplace=True)
 
     for var_code, var_info in VAR_MAP.items():
-        var_name = var_info['name']
+        final_name = var_info['name']
         unit_factor = var_info['unit_factor']
 
-        # Spring
-        if f'{var_code}_spring' in final_df_raw.columns:
-            final_df[f'spring_{var_name}_anomaly_forecast'] = final_df_raw[f'{var_code}_spring'] * unit_factor
-        # Summer
-        if f'{var_code}_summer' in final_df_raw.columns:
-            final_df[f'summer_{var_name}_anomaly_forecast'] = final_df_raw[f'{var_code}_summer'] * unit_factor
+        for lead_month in range(1, 8):  # leadtime_month runs from 1 to 7
+            pivoted_col_name = f"{var_code}_{lead_month}"
 
-    # Note: Probability features are dropped for simplicity in this design,
-    # as the variation in anomalies across members is a much stronger signal of uncertainty.
+            if pivoted_col_name in final_df_raw.columns:
+                # The forecast starts in March. lead_month=1 is March (month 3).
+                actual_month = lead_month + 2
+                new_col_name = f"{final_name}_anomaly_forecast_{actual_month}"
 
-    final_df.sort_values(by=['year', 'district_no', 'seas5_member'], inplace=True)
+                output_df[new_col_name] = final_df_raw[pivoted_col_name] * unit_factor
+
+    final_df = output_df
+    # --- END OF CORRECTED BLOCK ---
+
+    final_df.sort_values(by=['year', 'district_no', 'member'], inplace=True)
     final_df.to_csv(OUTPUT_CSV_PATH, index=False, float_format='%.6f')
 
     logging.info(f"--- Processing complete. Final member-specific dataset saved to {OUTPUT_CSV_PATH} ---")
@@ -131,5 +133,5 @@ def process_forecasts_by_member():
 
 
 if __name__ == "__main__":
-    # Assuming download_ecmwf_data() has been run successfully before
+    # Note: This script assumes the download script has already been run.
     process_forecasts_by_member()

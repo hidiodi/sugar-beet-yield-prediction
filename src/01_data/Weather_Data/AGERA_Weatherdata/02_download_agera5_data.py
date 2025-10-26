@@ -1,5 +1,3 @@
-# src/data/02_download_agera5_data.py
-
 import cdsapi
 import logging
 from pathlib import Path
@@ -16,8 +14,8 @@ def download_agera5_data_final(start_year=1979, end_year=2024):
     """
     logging.info(f"--- Starting FINAL AgERA5 Data Download for {start_year}-{end_year} ---")
 
-    # Define the output directory
-    output_directory = Path("data/01_raw")
+    # Define the output directory to include the 'agera5' subdirectory
+    output_directory = Path("data/01_raw/agera5") # MODIFIED LINE
     output_directory.mkdir(parents=True, exist_ok=True)
 
     # Define a list of download tasks based on the corrected API requirements
@@ -44,9 +42,11 @@ def download_agera5_data_final(start_year=1979, end_year=2024):
             year_str = str(year)
 
             output_filename_base = f"agera5_germany_{year_str}_{task['filename_part']}"
+            # The output filename will now be inside the 'agera5' directory
             output_filename = output_directory / f"{output_filename_base}.nc"
             download_zip_filename = str(output_filename) + ".zip"
 
+            # This check will now look in the correct subdirectory
             if Path(download_zip_filename).exists() or output_filename.exists():
                 logging.info(f"SKIP: Data for {output_filename_base} already exists.")
                 continue
@@ -87,7 +87,7 @@ def download_agera5_data_final(start_year=1979, end_year=2024):
                 return
 
     logging.info("\n--- All download requests have been processed successfully! ---")
-    logging.info("Next step: Unzip all the individual '.zip' files in the 'data/01_raw' directory.")
+    logging.info("Next step: Unzip all the individual '.zip' files in the 'data/01_raw/agera5' directory.")
 
 
 if __name__ == "__main__":

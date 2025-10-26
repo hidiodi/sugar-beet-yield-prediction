@@ -61,6 +61,22 @@ def main():
     input_price_file = Path('data/01_raw/Bundesdatenbank/61221-0003_de.csv')
     satellite_features_file = Path('data/03_primary/satellite_features_districts_2001-2024.csv')
     output_path = Path('data/05_model_input/')
+
+    # --- CHANGE 1: DEFINE WOFOST PATH & DYNAMICALLY FIND THE LATEST FILE ---
+    # Explanation: Instead of hardcoding a filename that changes, this logic
+    # automatically finds the most recent simulation output file. This makes
+    # the pipeline robust and removes the need for manual code edits.
+    wofost_output_dir = Path('data/06_model_output/multi_year_final/')
+    try:
+        wofost_files = list(wofost_output_dir.glob('final_comparison_*.csv'))
+        if not wofost_files: raise FileNotFoundError
+        wofost_output_file = max(wofost_files, key=lambda p: p.stat().st_mtime)
+        logging.info(f"Dynamically found WOFOST output file: {wofost_output_file}")
+    except FileNotFoundError:
+        logging.error(f"FATAL: No 'final_comparison_*.csv' file found in {wofost_output_dir}. Cannot proceed.")
+        sys.exit(1)
+    # --- END OF CHANGE 1 ---
+
     output_file = output_path / 'stage1_preseason_features.csv'
     output_path.mkdir(exist_ok=True, parents=True)
 
@@ -99,9 +115,31 @@ def main():
     merged_df[satellite_cols] = merged_df[satellite_cols].fillna(0)
     logging.info("Satellite features successfully integrated.")
 
-    # --- MOVED AND CORRECTED: Rename columns early so they are available for all feature engineering ---
-    merged_df.rename(columns={'latitude': 'lat', 'longitude': 'lon'}, inplace=True)
+    # --- CHANGE 2: MERGE WOFOST SIMULATION OUTPUTS ---
+    # Explanation: This new block loads the WOFOST simulation results and merges
+    # them into the main dataframe. We carefully select only the pre-season
+    # forecast features to avoid any data leakage.
+    logging.info(f"Merging WOFOST biophysical simulation outputs from {wofost_output_file.name}...")
+    try:
+        df_wofost = pd.read_csv(wofost_output_file)
+        df_wofost['district_no'] = df_wofost['district_no'].astype(str).str.zfill(5)
 
+        wofost_features_to_add = [
+            'year', 'district_no',
+            'forecast_yield_dry_kgha',
+            'forecast_uncertainty_std'
+        ]
+
+        merged_df = pd.merge(merged_df, df_wofost[wofost_features_to_add], on=['year', 'district_no'], how='left')
+        logging.info("✓ WOFOST simulation features successfully merged.")
+
+    except Exception as e:
+        logging.error(f"Failed to load or merge WOFOST data. Error: {e}", exc_info=True)
+        merged_df['forecast_yield_dry_kgha'] = np.nan
+        merged_df['forecast_uncertainty_std'] = np.nan
+    # --- END OF CHANGE 2 ---
+
+    merged_df.rename(columns={'latitude': 'lat', 'longitude': 'lon'}, inplace=True)
 
     logging.info("STAGE 3: Engineering Final Features and Cleaning")
 
@@ -120,10 +158,41 @@ def main():
 
     epsilon = 1e-6
     merged_df['profit_margin_proxy_lag1'] = merged_df['producer_price_index_lag1'] / (
-                merged_df['fertilizer_price_index_lag1'] + epsilon)
+            merged_df['fertilizer_price_index_lag1'] + epsilon)
     merged_df['cost_of_inputs_lag1'] = merged_df['fertilizer_price_index_lag1'] + merged_df[
         'plant_protection_price_index_lag1'] + merged_df['seed_price_index_lag1']
     logging.info("Lagged features (lag1) created.")
+
+    # --- CHANGE 3: PROCESS MERGED WOFOST DATA INTO MODEL-READY FEATURES ---
+    # Explanation: This new block converts the raw WOFOST outputs into valuable
+    # features. It creates the main forecast feature in the correct units (fresh
+    # dt/ha) and engineers new interaction features based on our analysis to help
+    # the model perform better in extreme years. NaN handling makes it robust.
+    logging.info("Processing merged WOFOST features...")
+    DMC_SUGARBEET = 0.25
+    KG_PER_DT = 100
+
+    # 1. Create the primary feature: WOFOST forecast in fresh weight dt/ha
+    merged_df['wofost_forecast_yield_fresh_dt'] = merged_df['forecast_yield_dry_kgha'] / (DMC_SUGARBEET * KG_PER_DT)
+
+    # 2. Engineer interaction features to cover XGBoost's blind spots
+    merged_df['wofost_forecast_x_profit_margin'] = merged_df['wofost_forecast_yield_fresh_dt'] * merged_df[
+        'profit_margin_proxy_lag1']
+    merged_df['wofost_uncertainty_x_sandy_soil'] = merged_df['forecast_uncertainty_std'] * merged_df['avg_sand_0_30cm']
+
+    # 3. Handle missing values and create an indicator
+    wofost_cols_to_fill = [
+        'wofost_forecast_yield_fresh_dt',
+        'wofost_forecast_x_profit_margin',
+        'wofost_uncertainty_x_sandy_soil',
+        'forecast_uncertainty_std'
+    ]
+    merged_df['has_wofost_data'] = merged_df['wofost_forecast_yield_fresh_dt'].notna().astype(int)
+    for col in wofost_cols_to_fill:
+        merged_df[col] = merged_df[col].fillna(0)
+
+    logging.info("✓ Engineered new features from WOFOST outputs.")
+    # --- END OF CHANGE 3 ---
 
     logging.info("Detrending economic features to create stable anomalies (using causal mean)...")
     economic_features_to_detrend = ['producer_price_index_lag1', 'seed_price_index_lag1', 'energy_price_index_lag1',
@@ -132,11 +201,9 @@ def main():
         trend = merged_df.groupby('district_no')[feature].transform(
             lambda x: x.rolling(window=5, min_periods=1).mean().shift(1)
         )
-        # --- CORRECTED: Use modern .ffill()/.bfill() to avoid FutureWarnings ---
         trend = trend.ffill().bfill()
         merged_df[f'{feature}_anomaly'] = merged_df[feature] - trend
     logging.info("Economic feature anomalies created correctly.")
-
 
     logging.info("Engineering advanced features based on model analysis...")
     logging.info("Capping extreme values for fertilizer price using a leak-proof expanding window...")
@@ -151,7 +218,6 @@ def main():
         lambda s: expanding_quantile(s, q=0.95)
     )
 
-    # --- CORRECTED: Use modern .ffill()/.bfill() to avoid FutureWarnings ---
     lower_bound_series = lower_bound_series.ffill().bfill()
     upper_bound_series = upper_bound_series.ffill().bfill()
 
@@ -181,7 +247,12 @@ def main():
         'profit_margin_proxy_lag1']
     merged_df['summer_precip_x_input_costs'] = merged_df['summer_precip_prob_wet_forecast'] * merged_df[
         'cost_of_inputs_lag1']
+
+    merged_df['summer_precip_anomaly_forecast_sq'] = merged_df['summer_precip_anomaly_forecast'] ** 2
+
     logging.info("Interaction features created.")
+
+
 
     logging.info("Engineering features to explicitly capture extreme weather forecast signals...")
 
@@ -195,12 +266,12 @@ def main():
         lambda s: s.expanding(min_periods=20).quantile(EXTREME_DRY_Q)
     )
 
-    # --- CORRECTED: Use modern .ffill()/.bfill() to avoid FutureWarnings ---
     hot_threshold = hot_threshold.ffill().bfill()
     dry_threshold = dry_threshold.ffill().bfill()
 
     merged_df['is_extreme_heat_forecast'] = np.where(merged_df['summer_temp_anomaly_forecast'] > hot_threshold, 1, 0)
-    merged_df['is_extreme_drought_forecast'] = np.where(merged_df['summer_precip_anomaly_forecast'] < dry_threshold, 1, 0)
+    merged_df['is_extreme_drought_forecast'] = np.where(merged_df['summer_precip_anomaly_forecast'] < dry_threshold, 1,
+                                                        0)
 
     merged_df['drought_x_heat'] = merged_df['is_extreme_heat_forecast'] * merged_df['is_extreme_drought_forecast']
 
@@ -213,7 +284,8 @@ def main():
     # This is a direct improvement on the ineffective 'drought_x_heat' binary feature.
     # It preserves the magnitude of both anomalies. A hot and dry forecast will result in a large positive value.
     # We multiply by -1 on precip because a large negative anomaly (drought) should increase the interaction term.
-    merged_df['hot_dry_interaction'] = merged_df['summer_temp_anomaly_forecast'] * (merged_df['summer_precip_anomaly_forecast'] * -1)
+    merged_df['hot_dry_interaction'] = merged_df['summer_temp_anomaly_forecast'] * (
+                merged_df['summer_precip_anomaly_forecast'] * -1)
 
     # --- 2. Geographic & Soil-Weather Interactions ---
     # Allows the model to learn that weather impacts differ by region.
@@ -257,7 +329,6 @@ def main():
         merged_df[f'{feature}_sq'] = merged_df[feature] ** 2
         merged_df[f'{feature}_cubed'] = merged_df[feature] ** 3
     logging.info("Created squared & cubed anomaly features for extreme event modeling.")
-
 
     cols_to_remove = [
         'yield',

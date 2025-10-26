@@ -1,10 +1,9 @@
 # File: run_lintul_one_year_test_pipeline.py
 # Description: A consolidated script to run the full one-year test pipeline.
 #
-# REFACTORED & PARALLELIZED VERSION v11: Final correction. Reverts the weather
-# data unit conversions in SimpleWeatherDataProvider to the original script's
-# values, which were correct for the input data format. This solves the
-# runaway yield problem.
+# REFACTORED & PARALLELIZED VERSION v12: Now fully integrates daily wind speed
+# and vapor pressure from the input weather CSV, replacing the last major
+# placeholder values with real data.
 
 import datetime
 import yaml
@@ -15,6 +14,7 @@ import logging
 import sys
 
 import geopandas as gpd
+from scipy.stats import gamma
 
 from pcse.util import penman_monteith
 from pcse.models import Wofost72_WLP_FD
@@ -32,7 +32,7 @@ from joblib import Parallel, delayed
 # ==============================================================================
 CONFIG = {
     'TEST_YEAR': 2018,
-    'DISTRICT_LIMIT': 2,
+    'DISTRICT_LIMIT': 402,
     'FILE_PATHS': {
         'HISTORICAL_DAILY_WEATHER': 'data/02_intermediate/historical_daily_weather_era5_2018_TEST.csv',
         'STATIC_FEATURES': 'data/05_model_input/stage1_preseason_features.csv',
@@ -41,9 +41,12 @@ CONFIG = {
         'OUTPUT_DIR': 'data/06_model_output/one_year_test',
         'DISTRICTS_GEOJSON': 'data/01_raw/districts_official.geojson',
     },
+    # --- Weather Provider Fallbacks ---
+    # STATUS: These are now FALLBACKS for cases where 'wind' or 'vap' columns
+    # might be missing from the input CSV. The script will use real data by default.
     'WEATHER_DEFAULTS': {
-        'WIND_SPEED': 2.0,
-        'VAPOR_PRESSURE': 1.0,
+        'WIND_SPEED': 2.0,      # Fallback wind speed in m/s.
+        'VAPOR_PRESSURE': 1.0,  # Fallback vapor pressure in kPa.
     },
     'WEATHER_GENERATOR': {
         'PRECIP_THRESHOLD_MM': 0.3,
@@ -104,23 +107,30 @@ class SimpleWeatherDataProvider(WeatherDataProvider):
         self.angstA = 0.25; self.angstB = 0.5
         weather_df = weather_df.copy(); weather_df['date'] = pd.to_datetime(weather_df['date'])
         self.store = {}
-        placeholder_wind = CONFIG['WEATHER_DEFAULTS']['WIND_SPEED']
-        placeholder_vap_kpa = CONFIG['WEATHER_DEFAULTS']['VAPOR_PRESSURE']
+        fallback_wind = CONFIG['WEATHER_DEFAULTS']['WIND_SPEED']
+        fallback_vap_kpa = CONFIG['WEATHER_DEFAULTS']['VAPOR_PRESSURE']
+
         for _, row in weather_df.iterrows():
             try:
                 day = row['date'].date(); tmin = float(row['tmin']); tmax = float(row['tmax'])
-                wind = float(row.get('wind', placeholder_wind)); vap_kpa = float(row.get('vap', placeholder_vap_kpa))
 
-                # --- FIX: Reverted to original, correct unit conversions ---
+                # --- NOW USING REAL DATA ---
+                # The .get() method seamlessly uses the 'wind' and 'vap' columns from the CSV.
+                # If they are missing for any reason, it will use the fallback from CONFIG.
+                wind = float(row.get('wind', fallback_wind))
+                vap_kpa = float(row.get('vap', fallback_vap_kpa))
+
+                # Original unit conversions, confirmed to be correct for the input data format
                 irrad_j_m2_day = float(row['srad']) * 10.0
                 irrad_kj_m2_day = irrad_j_m2_day / 1000.0
                 precip_mm = float(row['precip']) / 100000.0
                 precip_cm = precip_mm / 10.0
-                # --- End of fix ---
 
+                # Convert vapor pressure from kPa to hPa for Penman-Monteith function
                 vap_hpa = vap_kpa * 10.0
                 et0_mm = penman_monteith(day, self.latitude, self.elevation, tmin, tmax, irrad_kj_m2_day, vap_hpa, wind)
                 et0_cm = et0_mm / 10.0
+
                 self.store[(day, 0)] = ParameterDict({'DAY': day, 'LAT': self.latitude, 'TMIN': tmin, 'TMAX': tmax, 'RAIN': precip_cm,
                                                       'IRRAD': irrad_j_m2_day, 'VAP': vap_hpa, 'WIND': wind, 'E0': et0_cm,
                                                       'ES0': et0_cm, 'ET0': et0_cm, 'SNOWDEPTH': 0.0})
@@ -133,24 +143,44 @@ class WeatherGenerator:
         self.stats = defaultdict(dict)
         self.PRECIP_THRESHOLD_MM = CONFIG['WEATHER_GENERATOR']['PRECIP_THRESHOLD_MM']
         self.MIN_SRAD = CONFIG['WEATHER_GENERATOR']['MIN_SRAD']
+
     def fit(self, daily_df: pd.DataFrame):
         logging.info("[WEATHER_GEN] Fitting Weather Generator...")
-        daily_df = daily_df.copy(); daily_df['month'] = daily_df['date'].dt.month
+        daily_df = daily_df.copy()
+        daily_df['district_no'] = daily_df['district_no'].astype(str).str.zfill(5)
+        daily_df['month'] = daily_df['date'].dt.month
         daily_df['is_wet'] = (daily_df['precip'] > self.PRECIP_THRESHOLD_MM).astype(int)
-        for (district_no, month), group in tqdm(daily_df.groupby(['district_no', 'month']), desc="Learning Weather Patterns"):
-            p01 = ((group['is_wet'].shift(1) == 0) & (group['is_wet'] == 1)).sum(); p00 = ((group['is_wet'].shift(1) == 0) & (group['is_wet'] == 0)).sum()
-            p11 = ((group['is_wet'].shift(1) == 1) & (group['is_wet'] == 1)).sum(); p10 = ((group['is_wet'].shift(1) == 1) & (group['is_wet'] == 0)).sum()
+        for (district_no, month), group in tqdm(daily_df.groupby(['district_no', 'month']),
+                                                desc="Learning Weather Patterns"):
+            p01 = ((group['is_wet'].shift(1) == 0) & (group['is_wet'] == 1)).sum();
+            p00 = ((group['is_wet'].shift(1) == 0) & (group['is_wet'] == 0)).sum()
+            p11 = ((group['is_wet'].shift(1) == 1) & (group['is_wet'] == 1)).sum();
+            p10 = ((group['is_wet'].shift(1) == 1) & (group['is_wet'] == 0)).sum()
             prob_wet_given_dry = p01 / (p01 + p00) if (p01 + p00) > 0 else 0.1
             prob_wet_given_wet = p11 / (p11 + p10) if (p11 + p10) > 0 else 0.5
             wet_day_precip = group[group['is_wet'] == 1]['precip']
-            self.stats[(district_no, month)] = {'p_wet_given_dry': prob_wet_given_dry, 'p_wet_given_wet': prob_wet_given_wet,
-                                                'precip_wet_day_mean': wet_day_precip.mean() if len(wet_day_precip) > 0 else 1.0,
-                                                'precip_wet_day_std': wet_day_precip.std() if len(wet_day_precip) > 1 else 0.5,
-                                                'tmin_mean': group['tmin'].mean(), 'tmin_std': max(group['tmin'].std(), 0.5),
-                                                'tmax_mean': group['tmax'].mean(), 'tmax_std': max(group['tmax'].std(), 0.5),
-                                                'srad_mean': group['srad'].mean(), 'srad_std': max(group['srad'].std(), 0.5)}
+
+            # --- UPGRADE: Fit a Gamma distribution for precipitation ---
+            if len(wet_day_precip) > 2:
+                # Fit for shape (a), location (loc), and scale (beta)
+                # floc=0 forces the distribution to start at 0 (rainfall cannot be negative)
+                a, loc, b = gamma.fit(wet_day_precip, floc=0)
+                gamma_shape, gamma_scale = a, b
+            else:  # Fallback for months with too few rain days
+                gamma_shape, gamma_scale = (1.0, wet_day_precip.mean() or 1.0)
+
+            self.stats[(district_no, month)] = {
+                'p_wet_given_dry': prob_wet_given_dry, 'p_wet_given_wet': prob_wet_given_wet,
+                'precip_gamma_shape': gamma_shape, 'precip_gamma_scale': gamma_scale,
+                'precip_mean': group['precip'].mean(),  # Still need this for anomaly correction
+                'tmin_mean': group['tmin'].mean(), 'tmin_std': max(group['tmin'].std(), 0.5),
+                'tmax_mean': group['tmax'].mean(), 'tmax_std': max(group['tmax'].std(), 0.5),
+                'srad_mean': group['srad'].mean(), 'srad_std': max(group['srad'].std(), 0.5)
+            }
+
     def generate(self, district_no: str, start_date_str: str, end_date_str: str, monthly_anomalies: dict):
-        dates = pd.date_range(start=start_date_str, end=end_date_str, freq='D'); generated_data = []
+        dates = pd.date_range(start=start_date_str, end=end_date_str, freq='D');
+        generated_data = []
         yesterday_was_wet = np.random.rand() < 0.5
         for date in dates:
             month, key = date.month, (str(district_no).zfill(5), date.month)
@@ -158,20 +188,32 @@ class WeatherGenerator:
             month_stats = self.stats[key]
             transition_prob = month_stats['p_wet_given_wet'] if yesterday_was_wet else month_stats['p_wet_given_dry']
             today_is_wet = np.random.rand() < transition_prob
-            precip = max(0, np.random.normal(month_stats['precip_wet_day_mean'], month_stats['precip_wet_day_std'])) if today_is_wet else 0.0
-            tmin = np.random.normal(month_stats['tmin_mean'], month_stats['tmin_std']); tmax = np.random.normal(month_stats['tmax_mean'], month_stats['tmax_std'])
+            precip = 0.0
+            if today_is_wet:
+                # --- UPGRADE: Draw from the fitted Gamma distribution ---
+                alpha = month_stats['precip_gamma_shape']
+                beta = month_stats['precip_gamma_scale']
+                # Draw a single random variate from the gamma distribution
+                precip = max(0, gamma.rvs(a=alpha, scale=beta, size=1)[0])
+
+            tmin = np.random.normal(month_stats['tmin_mean'], month_stats['tmin_std']);
+            tmax = np.random.normal(month_stats['tmax_mean'], month_stats['tmax_std'])
             if tmax < tmin: tmax = tmin + abs(np.random.normal(0, 1.0))
             srad = max(self.MIN_SRAD, np.random.normal(month_stats['srad_mean'], month_stats['srad_std']))
             generated_data.append({'date': date, 'tmin': tmin, 'tmax': tmax, 'precip': precip, 'srad': srad})
             yesterday_was_wet = today_is_wet
+
         if not generated_data: return pd.DataFrame()
-        synthetic_df = pd.DataFrame(generated_data); synthetic_df['month'] = synthetic_df['date'].dt.month
+        synthetic_df = pd.DataFrame(generated_data);
+        synthetic_df['month'] = synthetic_df['date'].dt.month
         for month in synthetic_df['month'].unique():
-            month_mask = synthetic_df['month'] == month; key = (str(district_no).zfill(5), month)
+            month_mask = synthetic_df['month'] == month;
+            key = (str(district_no).zfill(5), month)
             if key not in self.stats: continue
             temp_anomaly = monthly_anomalies.get(f'temp_anomaly_{month}', 0)
             hist_tmean = (self.stats[key]['tmin_mean'] + self.stats[key]['tmax_mean']) / 2
-            synth_tmean = (synthetic_df.loc[month_mask, 'tmin'].mean() + synthetic_df.loc[month_mask, 'tmax'].mean()) / 2
+            synth_tmean = (synthetic_df.loc[month_mask, 'tmin'].mean() + synthetic_df.loc[
+                month_mask, 'tmax'].mean()) / 2
             temp_correction = (hist_tmean + temp_anomaly) - synth_tmean
             synthetic_df.loc[month_mask, ['tmin', 'tmax']] += temp_correction
             precip_anomaly_factor = 1.0 + monthly_anomalies.get(f'precip_anomaly_{month}', 0)
@@ -218,7 +260,9 @@ def _create_district_specific_parameters(static_row, cropdata):
     for key, value in CONFIG['SOIL_DEFAULTS_AND_CONSTANTS'].items():
         soildata.add_variable(key, value)
     smfc = soildata['SMFCF']; smw = soildata['SMW']; rdi = CONFIG['CONSTANTS']['INITIAL_ROOTING_DEPTH_CM']
-    rdmsol = soildata['RDMSOL']; smlim = smfc * rdi; wav = (smfc - smw) * rdmsol
+    rdmsol = soildata['RDMSOL']
+    smlim = smfc
+    wav = (smfc - smw) * rdmsol
     sitedata.add_variable('SMLIM', smlim); sitedata.add_variable('WAV', wav)
     sitedata.add_variable('IFUNRN', 0.0); sitedata.add_variable('NOTINF', 0.0); sitedata.add_variable('SSI', 0.0); sitedata.add_variable('SSMAX', 0.0)
     return ParameterProvider(cropdata=cropdata, soildata=soildata, sitedata=sitedata), sitedata
@@ -278,9 +322,7 @@ def run_historical_simulation(df_static, df_daily_hist, cropdata, year, cfg):
             weather_provider = SimpleWeatherDataProvider(weather_df, site_data)
             crop_start = cfg['AGROMANAGEMENT']['CROP_START_DATE'].replace(year=year); crop_end = cfg['AGROMANAGEMENT']['CROP_END_DATE'].replace(year=year)
             agromanagement = [{crop_start: ParameterDict({'CropCalendar': ParameterDict(
-                {                    'crop_name': 'sugarbeet',
-                    'variety_name': 'EcoTypes',
-                    'crop_start_date': crop_start, 'crop_start_type': 'emergence', 'crop_end_date': crop_end,
+                {'crop_start_date': crop_start, 'crop_start_type': 'emergence', 'crop_end_date': crop_end,
                  'crop_end_type': 'harvest', 'max_duration': cfg['AGROMANAGEMENT']['MAX_DURATION']}),
                                                           'TimedEvents': None, 'StateEvents': None})}]
             model = Wofost72_WLP_FD(parameters, weather_provider, agromanagement); model.run_till_terminate()
@@ -294,7 +336,16 @@ def run_historical_simulation(df_static, df_daily_hist, cropdata, year, cfg):
 
 def _run_single_forecast_member(member_row, district_no, year, wg, parameters, site_data, cfg):
     try:
-        monthly_anomalies = {f'temp_anomaly_{m}': member_row.get(f'{"spring" if m <= 6 else "summer"}_temp_anomaly_forecast', 0) for m in range(3, 11)}
+        monthly_anomalies = {}
+        # Loop through the growing season months
+        for month in range(3, 11):  # March to October
+            # Dynamically build the column name from the new CSV format
+            temp_col = f'temp_anomaly_forecast_{month}'
+            precip_col = f'precip_anomaly_forecast_{month}'
+
+            # Get the specific anomaly for this month, defaulting to 0 if not found
+            monthly_anomalies[f'temp_anomaly_{month}'] = member_row.get(temp_col, 0)
+            monthly_anomalies[f'precip_anomaly_{month}'] = member_row.get(precip_col, 0)
         monthly_anomalies.update({f'precip_anomaly_{m}': member_row.get(f'{"spring" if m <= 6 else "summer"}_precip_anomaly_forecast', 0) for m in range(3, 11)})
         start_date, end_date = f'{year}-03-01', f'{year}-10-31'
         synth_weather = wg.generate(district_no, start_date, end_date, monthly_anomalies)

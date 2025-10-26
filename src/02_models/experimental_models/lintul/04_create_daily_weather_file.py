@@ -1,7 +1,8 @@
-# File: src/data/04_create_daily_weather_file.py
-# Description: HIGH-PERFORMANCE, PARALLELIZED script to create the daily weather CSV.
-#              Uses all available CPU cores to drastically reduce processing time from days to hours.
+# File: build_weather_data.py
+# Description: A reusable module to generate the daily historical weather file for a given year.
+#              Refactored from the original standalone script to be callable from a master pipeline.
 
+import numpy as np
 import pandas as pd
 import xarray as xr
 import geopandas as gpd
@@ -13,140 +14,137 @@ import rioxarray
 import multiprocessing
 import os
 
-# --- Setup Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- Configuration ---
 BASE_DIR = Path.cwd()
-AGERA5_INPUT_PATH = BASE_DIR / "data/02_intermediate/agera5_germany_merged.nc"
+AGERA5_CONSOLIDATED_DIR = BASE_DIR / "data/02_intermediate/consolidated_agera5"
 GEOJSON_PATH = BASE_DIR / "data/01_raw/districts_official.geojson"
-OUTPUT_CSV_PATH = BASE_DIR / "data/02_intermediate/historical_daily_weather_era5.csv"
+OUTPUT_DIR = BASE_DIR / "data/02_intermediate/daily_weather"
 TEMP_RASTER_DIR = BASE_DIR / "data/02_intermediate/temp_rasters"
 
 VARIABLE_MAP = {
-    'Temperature_Air_2m_Min_24h': 'tmin',
-    'Temperature_Air_2m_Max_24h': 'tmax',
-    'Precipitation_Flux': 'precip',
-    'Solar_Radiation_Flux': 'srad',
+    'tmin': ('temp_minimum', 'Temperature_Air_2m_Min_24h'),
+    'tmax': ('temp_maximum', 'Temperature_Air_2m_Max_24h'),
+    'precip': ('precipitation_flux', 'Precipitation_Flux'),
+    'srad': ('solar_radiation_flux', 'Solar_Radiation_Flux'),
+    'wind': ('wind_speed_mean', 'Wind_Speed_10m_Mean_24h'),
+    'vap': ('dewpoint_temp_mean', 'Dew_Point_Temperature_2m_Mean_24h'),
 }
 
-# --- Global objects for workers ---
-# These will be loaded once and inherited by the child processes, saving memory and time.
-ds = None
 gdf = None
 
 
-def init_worker(dataset_path, geojson_path):
-    """Initializer for each worker process. Loads large objects into the process's memory."""
-    global ds, gdf
-    ds = xr.open_dataset(dataset_path)
+def init_worker(geojson_path):
+    global gdf
     gdf = gpd.read_file(geojson_path).to_crs("EPSG:4326")
 
 
-def process_day(day):
-    """
-    The core logic for processing a single day. This function is executed by each worker process.
-    """
-    # Each worker needs its own unique temp file to avoid race conditions
+def process_day(day_str):
+    day = pd.to_datetime(day_str)
+    year = day.year
     pid = os.getpid()
     temp_raster_path = TEMP_RASTER_DIR / f"temp_raster_{pid}.tif"
 
     try:
-        daily_slice = ds.sel(time=day)
-
-        district_daily_stats = {
-            'date': pd.to_datetime(day),
-            'district_no': gdf['id'].tolist()
-        }
-
-        for nc_var, csv_col in VARIABLE_MAP.items():
-            if nc_var not in daily_slice:
+        district_daily_stats = {'date': day, 'district_no': gdf['id'].tolist()}
+        for csv_col, (filename_suffix, nc_var) in VARIABLE_MAP.items():
+            nc_filepath = AGERA5_CONSOLIDATED_DIR / f"agera5_germany_{year}_{filename_suffix}.nc.nc"
+            if not nc_filepath.exists():
+                district_daily_stats[csv_col] = [None] * len(gdf)
                 continue
 
-            data_array = daily_slice[nc_var]
-            data_array.rio.set_spatial_dims(x_dim="lon", y_dim="lat", inplace=True)
-            data_array.rio.write_crs("EPSG:4326", inplace=True)
-            data_array.rio.to_raster(temp_raster_path, compress='LZW')
+            with xr.open_dataset(nc_filepath) as ds:
+                daily_slice = ds.sel(time=day, method='nearest')
+                data_array = daily_slice[nc_var]
+                data_array.rio.set_spatial_dims(x_dim="lon", y_dim="lat", inplace=True).rio.write_crs("EPSG:4326",
+                                                                                                      inplace=True)
+                data_array.rio.to_raster(temp_raster_path, compress='LZW')
+                stats = zonal_stats(gdf, str(temp_raster_path), stats="mean")
+                mean_values = [s['mean'] for s in stats]
 
-            stats = zonal_stats(gdf, str(temp_raster_path), stats="mean")
-            mean_values = [s['mean'] for s in stats]
-
-            if csv_col in ['tmin', 'tmax']:
-                converted_values = [v - 273.15 if v is not None else None for v in mean_values]
-            elif csv_col == 'precip':
-                converted_values = [v * 86400 if v is not None else None for v in mean_values]
-            elif csv_col == 'srad':
-                converted_values = [(v * 86400) / 1_000_000 if v is not None else None for v in mean_values]
-            else:
-                converted_values = mean_values
-
-            district_daily_stats[csv_col] = converted_values
-
+                if csv_col in ['tmin', 'tmax']:
+                    converted_values = [v - 273.15 if v is not None else None for v in mean_values]
+                elif csv_col == 'precip':
+                    converted_values = [v * 86400 if v is not None else None for v in mean_values]
+                elif csv_col == 'srad':
+                    converted_values = [(v * 86400) / 1_000_000 if v is not None else None for v in mean_values]
+                elif csv_col == 'wind':
+                    converted_values = mean_values
+                elif csv_col == 'vap':
+                    converted_values = []
+                    for v in mean_values:
+                        if v is not None:
+                            dewpoint_c = v - 273.15
+                            vap_kpa = 0.61094 * np.exp((17.625 * dewpoint_c) / (243.04 + dewpoint_c))
+                            converted_values.append(vap_kpa)
+                        else:
+                            converted_values.append(None)
+                else:
+                    converted_values = mean_values
+                district_daily_stats[csv_col] = converted_values
         return pd.DataFrame(district_daily_stats)
     except Exception as e:
-        # Log the error but return None so the process doesn't crash
-        logging.error(f"Error processing day {day} in worker {pid}: {e}")
+        logging.error(f"Failed to process day {day_str}: {e}", exc_info=True)
         return None
     finally:
-        # Clean up the unique temp file
-        if temp_raster_path.exists():
-            temp_raster_path.unlink()
+        if temp_raster_path.exists(): temp_raster_path.unlink()
 
 
-def create_daily_weather_file_parallel():
-    """
-    Main function to orchestrate the parallel processing of AgERA5 data.
-    """
-    logging.info("--- Starting: HIGH-PERFORMANCE Parallel Daily Weather CSV Creation ---")
+def create_daily_weather_file_for_year(year_to_process):
+    """Main controlling function to generate the daily weather CSV for a specific year."""
+    output_csv_path = OUTPUT_DIR / f"historical_daily_weather_era5_{year_to_process}.csv"
 
-    if OUTPUT_CSV_PATH.exists():
-        logging.info(f"Output file {OUTPUT_CSV_PATH} already exists. Skipping.")
-        return
+    logging.info(f"--- Starting: Daily Weather Creation for Year: {year_to_process} ---")
+    if output_csv_path.exists():
+        logging.info(f"Output file {output_csv_path.name} already exists. Skipping generation.")
+        return output_csv_path
 
-    # Create a directory for temporary raster files
     TEMP_RASTER_DIR.mkdir(exist_ok=True)
-
-    # Use all available CPU cores, but leave one free for system stability
     num_workers = max(1, multiprocessing.cpu_count() - 1)
-    logging.info(f"Initializing a pool of {num_workers} worker processes.")
-
-    # Get the list of all dates to process
-    with xr.open_dataset(AGERA5_INPUT_PATH) as temp_ds:
-        time_steps = temp_ds['time'].values
+    time_steps_for_year = pd.to_datetime(
+        pd.date_range(start=f'{year_to_process}-01-01', end=f'{year_to_process}-12-31', freq='D')).strftime('%Y-%m-%d')
 
     all_results = []
-
-    # Create the pool of processes
-    # The `initializer` function loads the large data files into each worker ONCE.
-    with multiprocessing.Pool(processes=num_workers, initializer=init_worker,
-                              initargs=(AGERA5_INPUT_PATH, GEOJSON_PATH)) as pool:
-
-        # Use imap_unordered for efficiency and wrap with tqdm for a progress bar
-        # It will process the list of dates and feed them to the worker function
-        results_iterator = pool.imap_unordered(process_day, time_steps)
-
-        for result_df in tqdm(results_iterator, total=len(time_steps), desc="Processing Daily Weather in Parallel"):
+    with multiprocessing.Pool(processes=num_workers, initializer=init_worker, initargs=(GEOJSON_PATH,)) as pool:
+        results_iterator = pool.imap_unordered(process_day, time_steps_for_year)
+        for result_df in tqdm(results_iterator, total=len(time_steps_for_year),
+                              desc=f"Processing {year_to_process} Weather Data"):
             if result_df is not None:
                 all_results.append(result_df)
 
-    # --- Finalize and Save ---
     if not all_results:
-        logging.error("No data was processed. Output file will not be created.")
-        return
+        logging.error(f"FATAL: No data was processed for {year_to_process}.")
+        return None
 
-    logging.info("Concatenating results from all workers...")
     final_df = pd.concat(all_results, ignore_index=True)
     final_df.sort_values(by=['date', 'district_no'], inplace=True)
-
-    logging.info(f"Saving final daily weather data to {OUTPUT_CSV_PATH}")
-    final_df.to_csv(OUTPUT_CSV_PATH, index=False, float_format='%.4f')
-
-    # Clean up the temp directory
+    logging.info(f"Saving data for {year_to_process} to {output_csv_path.name}")
+    final_df.to_csv(output_csv_path, index=False, float_format='%.4f')
     if TEMP_RASTER_DIR.exists():
-        os.rmdir(TEMP_RASTER_DIR)
+        try:
+            os.rmdir(TEMP_RASTER_DIR)
+        except OSError:
+            pass  # Directory not empty, which is fine
 
-    logging.info("--- SUCCESS: Parallel processing complete! Daily weather file created. ---")
+    logging.info(f"--- SUCCESS: Weather file created for {year_to_process}! ---")
+    return output_csv_path
 
 
 if __name__ == "__main__":
-    create_daily_weather_file_parallel()
+    # This allows the script to be run standalone to pre-generate data for a range of years.
+    logging.info("Running in standalone mode to generate data for a defined year range.")
+
+    # --- DEFINE THE RANGE OF YEARS YOU WANT TO PROCESS ~10 minutes per year ---
+    START_YEAR_TO_RUN = 1981
+    END_YEAR_TO_RUN = 1999  # Inclusive
+
+    for year in range(START_YEAR_TO_RUN, END_YEAR_TO_RUN + 1):
+        try:
+            create_daily_weather_file_for_year(year)
+        except Exception as e:
+            logging.error(f"--- FAILED to process year {year}. Error: {e} ---")
+            logging.info("Continuing to the next year.")
+            continue
+
+    logging.info("--- Standalone data generation complete. ---")

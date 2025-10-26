@@ -2,7 +2,7 @@
 # Description: This version reads directly from the "consolidated" intermediate files
 #              produced by the unchanged '03_process...' script, bypassing the flawed
 #              final merged file.
-
+import numpy as np
 import pandas as pd
 import xarray as xr
 import geopandas as gpd
@@ -21,7 +21,6 @@ TEST_YEAR = 2018
 
 # --- Configuration ---
 BASE_DIR = Path.cwd()
-# *** KEY CHANGE ***: Point to the directory of good, intermediate files.
 AGERA5_CONSOLIDATED_DIR = BASE_DIR / "data/02_intermediate/consolidated_agera5"
 GEOJSON_PATH = BASE_DIR / "data/01_raw/districts_official.geojson"
 OUTPUT_CSV_PATH = BASE_DIR / f"data/02_intermediate/historical_daily_weather_era5_{TEST_YEAR}_TEST.csv"
@@ -34,6 +33,8 @@ VARIABLE_MAP = {
     'tmax':   ('temp_maximum', 'Temperature_Air_2m_Max_24h'),
     'precip': ('precipitation_flux', 'Precipitation_Flux'),
     'srad':   ('solar_radiation_flux', 'Solar_Radiation_Flux'),
+    'wind': ('wind_speed_mean', 'Wind_Speed_10m_Mean_24h'),
+    'vap': ('dewpoint_temp_mean', 'Dew_Point_Temperature_2m_Mean_24h'),
 }
 
 # --- Worker Functions ---
@@ -80,12 +81,31 @@ def process_day(day_str):
 
                 mean_values = [s['mean'] for s in stats]
                 if csv_col in ['tmin', 'tmax']:
+                    # Convert Kelvin to Celsius
                     converted_values = [v - 273.15 if v is not None else None for v in mean_values]
                 elif csv_col == 'precip':
+                    # Convert kg m-2 s-1 to mm day-1
+                    # (Note: 1 kg m-2 is equivalent to 1 mm of water)
                     converted_values = [v * 86400 if v is not None else None for v in mean_values]
                 elif csv_col == 'srad':
-                    # Assuming original is W/m^2, convert to MJ/m^2/day
+                    # Assuming original is W/m^2 (J/s/m^2), convert to MJ/m^2/day
                     converted_values = [(v * 86400) / 1_000_000 if v is not None else None for v in mean_values]
+                elif csv_col == 'wind':
+                    # Wind speed is already in m/s, no conversion needed
+                    converted_values = mean_values
+                elif csv_col == 'vap':
+                    # Convert Dewpoint Temperature (in Kelvin) to Vapor Pressure (in kPa)
+                    converted_values = []
+                    for v in mean_values:
+                        if v is not None:
+                            # Convert dewpoint from Kelvin to Celsius
+                            dewpoint_c = v - 273.15
+                            # Apply August-Roche-Magnus formula to get vapor pressure in kPa
+                            # 0.61094 * exp( (17.625 * T_dew) / (243.04 + T_dew) )
+                            vap_kpa = 0.61094 * np.exp((17.625 * dewpoint_c) / (243.04 + dewpoint_c))
+                            converted_values.append(vap_kpa)
+                        else:
+                            converted_values.append(None)
                 else:
                     converted_values = mean_values
                 district_daily_stats[csv_col] = converted_values

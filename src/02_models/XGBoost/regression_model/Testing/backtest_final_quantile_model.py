@@ -1,3 +1,7 @@
+# File: src/models/backtest_final_quantile_model.py
+# Description: The definitive backtesting and diagnostic script for the
+#              Final Quantile Champion model (Lower, Median, Upper).
+
 import pandas as pd
 import geopandas as gpd
 import joblib
@@ -201,7 +205,6 @@ def main():
         print(f"❌ CRITICAL ERROR during loading. Details: {e}");
         return
 
-    # ENSURE this feature list is IDENTICAL to the one in the training script
     feature_cols = [
         'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly', 'antecedent_gdd_sum_anomaly',
         'spring_temp_anomaly_forecast', 'spring_precip_anomaly_forecast', 'spring_solar_rad_anomaly_forecast',
@@ -222,7 +225,12 @@ def main():
         'is_fertilizer_price_extreme', 'is_summer_forecast_dry', 'gdd_x_fertilizer_price',
         'spring_temp_x_spring_precip', 'antecedent_gdd_sum_anomaly_sq', 'summer_heat_x_profit_margin',
         'summer_precip_x_input_costs', 'spring_temp_prob_warm_forecast_sq', 'summer_temp_prob_warm_forecast_sq',
-        'spring_precip_prob_wet_forecast_sq', 'summer_precip_prob_wet_forecast_sq'
+        'spring_precip_prob_wet_forecast_sq', 'summer_precip_prob_wet_forecast_sq',
+        'profit_margin_proxy_lag1',
+        'wofost_forecast_yield_fresh_dt',
+        'wofost_forecast_x_profit_margin',
+        'wofost_uncertainty_x_sandy_soil',
+        'has_wofost_data'
     ]
 
     print("\n--- Applying Causal Detrending ---")
@@ -237,6 +245,16 @@ def main():
     if backtest_results.empty:
         print("❌ Backtest did not produce results. Terminating.");
         return
+
+    # --- CHANGE: SAVE THE FULL BACKTEST RESULTS ---
+    # Explanation: This is the crucial line that was missing. It saves the complete
+    # results of the backtest to a CSV file, allowing other scripts (like the
+    # model comparison script) to use this data without having to run the
+    # backtest again.
+    backtest_csv_path = os.path.join(REPORT_DIR, 'full_backtest_predictions.csv')
+    backtest_results.to_csv(backtest_csv_path, index=False)
+    print(f"\n✅ Full backtest results saved to {backtest_csv_path}")
+    # --- END OF CHANGE ---
 
     # --- Analysis & Reporting ---
     analyze_interval_performance(backtest_results)
