@@ -205,32 +205,66 @@ def main():
         print(f"❌ CRITICAL ERROR during loading. Details: {e}");
         return
 
+    # --- Definitive V3 Hybrid Feature Set ---
+    # This list combines the original V2 feature set with the new augmentations
+    # from the WOFOST simulation and the diagnostic analysis.
     feature_cols = [
-        'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly', 'antecedent_gdd_sum_anomaly',
-        'spring_temp_anomaly_forecast', 'spring_precip_anomaly_forecast', 'spring_solar_rad_anomaly_forecast',
-        'spring_evaporation_anomaly_forecast', 'spring_runoff_anomaly_forecast', 'spring_soil_temp_l1_anomaly_forecast',
-        'spring_snowfall_anomaly_forecast', 'summer_temp_anomaly_forecast', 'summer_precip_anomaly_forecast',
-        'summer_solar_rad_anomaly_forecast', 'summer_evaporation_anomaly_forecast', 'summer_runoff_anomaly_forecast',
-        'summer_soil_temp_l1_anomaly_forecast', 'summer_snowfall_anomaly_forecast', 'spring_temp_prob_warm_forecast',
-        'spring_precip_prob_wet_forecast', 'spring_solar_rad_prob_wet_forecast', 'spring_evaporation_prob_wet_forecast',
-        'spring_runoff_prob_wet_forecast', 'spring_soil_temp_l1_prob_warm_forecast',
-        'spring_snowfall_prob_wet_forecast',
-        'summer_temp_prob_warm_forecast', 'summer_precip_prob_wet_forecast', 'summer_solar_rad_prob_wet_forecast',
-        'summer_evaporation_prob_wet_forecast', 'summer_runoff_prob_wet_forecast',
-        'summer_soil_temp_l1_prob_warm_forecast', 'summer_snowfall_prob_wet_forecast', 'lat', 'lon', 'avg_elevation',
-        'avg_slope', 'avg_bdod_0_30cm', 'avg_clay_0_30cm', 'avg_sand_0_30cm', 'avg_som_0_30cm', 'avg_phh2o_0_30cm',
-        'avg_bdod_0_100cm', 'avg_clay_0_100cm', 'avg_sand_0_100cm', 'avg_som_0_100cm', 'avg_phh2o_0_100cm',
-        'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly', 'winter_cropland_LST_mean',
-        'winter_cropland_LST_anomaly', 'winter_cropland_snow_cover_days', 'fertilizer_price_index_lag1_anomaly_capped',
-        'is_fertilizer_price_extreme', 'is_summer_forecast_dry', 'gdd_x_fertilizer_price',
-        'spring_temp_x_spring_precip', 'antecedent_gdd_sum_anomaly_sq', 'summer_heat_x_profit_margin',
-        'summer_precip_x_input_costs', 'spring_temp_prob_warm_forecast_sq', 'summer_temp_prob_warm_forecast_sq',
-        'spring_precip_prob_wet_forecast_sq', 'summer_precip_prob_wet_forecast_sq',
-        'profit_margin_proxy_lag1',
+        # Original Weather Anomaly Features (SEAS5)
+        'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly',
+        'antecedent_gdd_sum_anomaly', 'spring_temp_anomaly_forecast',
+        'spring_precip_anomaly_forecast', 'spring_solar_rad_anomaly_forecast',
+        'spring_evaporation_anomaly_forecast', 'spring_runoff_anomaly_forecast',
+        'spring_soil_temp_l1_anomaly_forecast', 'spring_snowfall_anomaly_forecast',
+        'summer_temp_anomaly_forecast', 'summer_precip_anomaly_forecast',
+        'summer_solar_rad_anomaly_forecast', 'summer_evaporation_anomaly_forecast',
+        'summer_runoff_anomaly_forecast', 'summer_soil_temp_l1_anomaly_forecast',
+        'summer_snowfall_anomaly_forecast',
+
+        # Original Weather Probability Features (SEAS5)
+        'spring_temp_prob_warm_forecast', 'spring_precip_prob_wet_forecast',
+        'summer_temp_prob_warm_forecast', 'summer_precip_prob_wet_forecast',
+
+        # Static Geographic & Soil Features
+        'lat', 'lon', 'avg_elevation', 'avg_slope',
+        'avg_bdod_0_30cm', 'avg_clay_0_30cm', 'avg_sand_0_30cm', 'avg_som_0_30cm',
+        'avg_phh2o_0_30cm',
+
+        # Satellite Features
+        'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly',
+        'winter_cropland_LST_mean', 'winter_cropland_LST_anomaly',
+        'winter_cropland_snow_cover_days',
+
+        # Lagged Economic Features & Anomalies
+        'profit_margin_proxy_lag1', 'cost_of_inputs_lag1',
+        'producer_price_index_lag1_anomaly', 'seed_price_index_lag1_anomaly',
+        'energy_price_index_lag1_anomaly', 'fertilizer_price_index_lag1_anomaly',
+        'plant_protection_price_index_lag1_anomaly',
+        'fertilizer_price_index_lag1_anomaly_capped', 'is_fertilizer_price_extreme',
+
+        # Original V2 Interaction & Polynomial Features
+        'gdd_x_fertilizer_price', 'spring_temp_x_spring_precip',
+        'summer_heat_x_profit_margin', 'summer_precip_x_input_costs',
+        'hot_dry_interaction', 'lat_x_summer_temp', 'sandy_soil_x_drought',
+        'antecedent_gdd_sum_anomaly_sq', 'spring_temp_prob_warm_forecast_sq',
+        'summer_temp_prob_warm_forecast_sq', 'spring_precip_prob_wet_forecast_sq',
+        'summer_precip_prob_wet_forecast_sq',
+
+        # --- NEWLY AUGMENTED FEATURES (V3) ---
+
+        # 1. WOFOST Hybrid Model Features
         'wofost_forecast_yield_fresh_dt',
         'wofost_forecast_x_profit_margin',
-        'wofost_uncertainty_x_sandy_soil',
-        'has_wofost_data'
+        'has_wofost_data',
+
+        # 2. Diagnostic-Driven Features
+        'state_encoded',  # Addresses regional bias
+        'summer_precip_anomaly_forecast_sq',  # Addresses "wetness penalty"
+
+        # 3. Granular Weather Features (from daily data)
+        'summer_days_precip_gt_20mm',  # Specifically targets extreme wetness
+        'summer_days_tmax_gt_30c',  # Specifically targets heatwaves
+        'is_drought_high_clay_in_state_11',
+        'state6_precip_interaction',
     ]
 
     print("\n--- Applying Causal Detrending ---")
