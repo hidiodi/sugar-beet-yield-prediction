@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Point to the backtest results of your final, residual-fitting model
 NEW_MODEL_BACKTEST_FILE = 'reports/figures/district_level_diagnostics/final_quantile_champion/full_backtest_predictions.csv'
 # The honest walk-forward forecast file now serves as our primary baseline
-HONEST_FORECAST_FILE = 'data/09_model_output_walkforward_final/final_honest_forecasts.csv'
+HONEST_FORECAST_FILE = 'data/05_model_input/wofost_walkforward/final_honest_forecasts.csv'
 # The features file is used for weather context
 FEATURES_FILE = 'data/05_model_input/stage1_preseason_features.csv'
 

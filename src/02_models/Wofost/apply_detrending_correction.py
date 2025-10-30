@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore")
 CONFIG = {
     'FILE_PATHS': {
         'INPUT_YIELD_CSV': 'data/02_intermediate/sugarbeet_yield.csv',
-        'OUTPUT_DIR': 'data/09_model_output_walkforward_final',
+        'OUTPUT_DIR': 'data/05_model_input/wofost_walkforward',
     },
     'ARIMA_ORDER': (1, 0, 0),
     'GAM_SPLINES': 10,

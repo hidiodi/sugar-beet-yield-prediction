@@ -81,7 +81,7 @@ def main():
     master_file = Path('data/04_master/master_dataset.csv')
     producer_price_file = Path('data/01_raw/Bundesdatenbank/61211-0001_de.csv')
     input_price_file = Path('data/01_raw/Bundesdatenbank/61221-0003_de.csv')
-    satellite_features_file = Path('data/03_primary/satellite_features_districts_2001-2024.csv')
+    satellite_features_file = Path('data/03_processed/satellite_features_districts_2001-2024.csv')
     geojson_file = Path('data/01_raw/districts_official.geojson')
     weather_dir = Path('data/02_intermediate/daily_weather')
     output_path = Path('data/05_model_input/')
@@ -89,7 +89,7 @@ def main():
     output_path.mkdir(exist_ok=True, parents=True)
 
     # Dynamically find the latest WOFOST simulation output
-    walkforward_forecast_file = Path('data/09_model_output_walkforward_final/final_honest_forecasts.csv')
+    walkforward_forecast_file = Path('data/05_model_input/wofost_walkforward/final_honest_forecasts.csv')
     if not walkforward_forecast_file.exists():
         logging.error(f"FATAL: The required forecast file was not found at {walkforward_forecast_file}. Cannot proceed.")
         sys.exit(1)

@@ -17,11 +17,7 @@ warnings.filterwarnings("ignore")
 DATA_PATH = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
 MODEL_OUTPUT_DIR = 'src/models'
 
-# --- The XGBoost model will predict the RESIDUALS of our time-series forecast. ---
-# Therefore, the features should NOT include the forecasts themselves, but all the
-# OTHER information that the time-series model didn't have access to.
 FEATURE_COLS = [
-    # All weather, soil, economic, and satellite features
     'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly',
     'antecedent_gdd_sum_anomaly', 'spring_temp_anomaly_forecast',
     'spring_precip_anomaly_forecast', 'spring_solar_rad_anomaly_forecast',

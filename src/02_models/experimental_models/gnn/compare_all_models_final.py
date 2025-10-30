@@ -19,7 +19,7 @@ SPATIAL_MODEL_BACKTEST_FILE = 'reports/figures/district_level_diagnostics/final_
 
 # Keep the old ones for comparison
 NON_SPATIAL_MODEL_BACKTEST_FILE = 'reports/figures/district_level_diagnostics/final_quantile_champion/full_backtest_predictions.csv'
-HONEST_FORECAST_FILE = 'data/09_model_output_walkforward_final/final_honest_forecasts.csv'
+HONEST_FORECAST_FILE = 'data/05_model_input/wofost_walkforward/wofost_forecasts.csv'
 FEATURES_FILE = 'data/05_model_input/stage1_preseason_features.csv'
 
 # --- Output Directory ---

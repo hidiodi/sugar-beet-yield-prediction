@@ -77,7 +77,6 @@ src/models/*.pkl
 
 # Data files (optional, but recommended for large files)
 data/04_feature/
-data/03_processed/
 
 # OS-specific files
 .DS_Store

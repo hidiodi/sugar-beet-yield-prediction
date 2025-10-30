@@ -6,6 +6,8 @@
 # loop, as per the specified data structure.
 
 import datetime
+from pathlib import Path
+
 import yaml
 import pandas as pd
 import numpy as np
@@ -30,6 +32,8 @@ from joblib import Parallel, delayed
 # ==============================================================================
 # === G L O B A L   C O N F I G U R A T I O N ===
 # ==============================================================================
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
 CONFIG = {
     # --- MODIFIED: Define the multi-year (max 1981-2024) range for evaluation ---
     'START_YEAR': 1981,
@@ -37,13 +41,12 @@ CONFIG = {
     'DISTRICT_LIMIT': None,  # Set to None for a full run across all districts
 
     'FILE_PATHS': {
-        # --- MODIFIED: Path to the DIRECTORY containing yearly weather files ---
-        'HISTORICAL_DAILY_WEATHER_DIR': 'data/02_intermediate/daily_weather',
-        'STATIC_FEATURES': 'data/05_model_input/stage1_preseason_features.csv',
-        'SEAS5_MEMBER_FEATURES': 'data/02_intermediate/ecmwf51_forecast_features_BY_MEMBER.csv',
-        'CROP_YAML': 'data/01_raw/sugarbeet.yaml',
-        'OUTPUT_DIR': 'data/06_model_output/multi_year_final',
-        'DISTRICTS_GEOJSON': 'data/01_raw/districts_official.geojson',
+        'HISTORICAL_DAILY_WEATHER_DIR': PROJECT_ROOT / 'data/02_intermediate/daily_weather',
+        'STATIC_FEATURES': PROJECT_ROOT / 'data/05_model_input/stage1_preseason_features.csv',
+        'SEAS5_MEMBER_FEATURES': PROJECT_ROOT / 'data/02_intermediate/ecmwf51_forecast_features_BY_MEMBER.csv',
+        'CROP_YAML': PROJECT_ROOT / 'data/01_raw/sugarbeet.yaml',
+        'OUTPUT_DIR': PROJECT_ROOT / 'data/06_model_output/multi_year_final',
+        'DISTRICTS_GEOJSON': PROJECT_ROOT / 'data/01_raw/districts_official.geojson',
     },
     'WEATHER_DEFAULTS': {'WIND_SPEED': 2.0, 'VAPOR_PRESSURE': 1.0},
     'WEATHER_GENERATOR': {'PRECIP_THRESHOLD_MM': 0.3, 'MIN_SRAD': 100.0},
@@ -416,7 +419,7 @@ if __name__ == "__main__":
 
     except FileNotFoundError as e:
         logging.error(f"FATAL: A required multi-year data file was not found. Error: {e}");
-        sys.exit()
+        sys.exit(1)
 
     # 2. Fit the WeatherGenerator ONCE using all available historical data for maximum learning
     wg = WeatherGenerator()

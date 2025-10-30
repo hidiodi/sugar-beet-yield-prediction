@@ -19,7 +19,7 @@ END_YEAR = 2024  # Or your last year of yield data
 GEE_PROJECT_ID = 'augmented-audio-471809-h3'  # Your Project ID
 
 PATH_DISTRICTS_GEO = Path("data/01_raw/districts_official.geojson")
-OUTPUT_DIR = Path("data/03_primary")
+OUTPUT_DIR = Path("data/03_processed")
 OUTPUT_FILEPATH = OUTPUT_DIR / f"satellite_features_districts_{START_YEAR}-{END_YEAR}.csv"
 
 
