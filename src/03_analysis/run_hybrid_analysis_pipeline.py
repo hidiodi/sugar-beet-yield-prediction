@@ -12,9 +12,9 @@ def main():
     # Define the sequence of scripts to execute.
     # Paths must be relative to this file's location (the project root).
     SCRIPTS_TO_RUN = [
-        "src/03_analysis/hybrid_model_analysis/analyze_hybrid_model.py",
         "src/03_analysis/hybrid_model_analysis/analyze_input_features.py",
         "src/03_analysis/hybrid_model_analysis/analyze_wofost_pipeline.py",
+        "src/03_analysis/hybrid_model_analysis/analyze_hybrid_model.py",
     ]
 
     # Execute the pipeline
