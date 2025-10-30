@@ -305,6 +305,18 @@ def main():
     mae_total = backtest_results['abs_error'].mean()
     print(f"  R-squared (R²): {r2_total:.4f}")
     print(f"  Mean Absolute Error (MAE): {mae_total:.2f} dt/ha")
+
+    # --- Performance Summary for Reliable Districts ---
+    reliable_districts = district_performance[district_performance['data_point_count'] >= LOW_DATA_THRESHOLD]
+    if not reliable_districts.empty:
+        reliable_backtest_results = backtest_results[backtest_results['district_no'].isin(reliable_districts['district_no'])]
+        r2_reliable = r2_score(reliable_backtest_results['kreisYield'], reliable_backtest_results['predicted_yield_median'])
+        mae_reliable = reliable_backtest_results['abs_error'].mean()
+        print(f"\n--- Performance Summary for Reliable Districts (>={LOW_DATA_THRESHOLD} data points) ---")
+        print(f"  Number of Reliable Districts: {len(reliable_districts)}")
+        print(f"  R-squared (R²): {r2_reliable:.4f}")
+        print(f"  Mean Absolute Error (MAE): {mae_reliable:.2f} dt/ha")
+
     print("\n--- Evaluation Complete ---")
     print(f"All reports and plots saved in: {REPORT_DIR}")
 

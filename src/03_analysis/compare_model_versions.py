@@ -1,132 +1,144 @@
-# File: src/models/diagnose_hybrid_model.py
-# Description: A PROFESSIONAL diagnostic script with automated subgroup discovery to
-#              find the model's biggest blind spots.
-import numpy as np
+# File: src/models/compare_model_versions.py
+# Description: The definitive "Proof of Work" script. It compares the final hybrid model
+#              (Residual Fitting) against its own strong time-series baseline to provide a
+#              final, comprehensive performance verdict.
+#
+# REVISED VERSION v2: Updated to use the new, honestly-validated time-series models
+# as the primary baselines for a fair and powerful comparison.
+
 import pandas as pd
-import geopandas as gpd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import logging
 from pathlib import Path
+from sklearn.metrics import r2_score
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-MODEL_BACKTEST_FILE = 'reports/figures/district_level_diagnostics/final_quantile_champion/full_backtest_predictions.csv'
+# --- Input Files ---
+# Point to the backtest results of your final, residual-fitting model
+NEW_MODEL_BACKTEST_FILE = 'reports/figures/district_level_diagnostics/final_quantile_champion/full_backtest_predictions.csv'
+# The honest walk-forward forecast file now serves as our primary baseline
+HONEST_FORECAST_FILE = 'data/09_model_output_walkforward_final/final_honest_forecasts.csv'
+# The features file is used for weather context
 FEATURES_FILE = 'data/05_model_input/stage1_preseason_features.csv'
-GEOJSON_PATH = 'data/01_raw/districts_official.geojson'
-OUTPUT_DIR = Path('reports/figures/hybrid_model_diagnostics_advanced')
+
+# --- Output Directory ---
+OUTPUT_DIR = Path('reports/figures/final_proof_of_work')
 
 
-# --- Main Diagnostic Functions ---
-
-def load_and_merge_data(backtest_path, features_path):
-    # This function is correct and remains unchanged.
-    df_backtest = pd.read_csv(backtest_path)
-    df_features = pd.read_csv(features_path)
-    df_backtest['error'] = df_backtest['predicted_yield_median'] - df_backtest['kreisYield']
-    df_backtest['abs_error'] = df_backtest['error'].abs()
-    df_merged = pd.merge(df_backtest, df_features, on=['district_no', 'year'])
-    return df_merged
-
-
-def analyze_error_interactions(df: pd.DataFrame, output_dir: Path):
-    # This function provides our deep dive on the "wetness" problem and remains valuable.
-    # It is unchanged.
-    precip_bins = [-np.inf, -0.1, 0.1, 0.2, np.inf]
-    precip_labels = ["Drought (< -0.1)", "Normal (-0.1 to 0.1)", "Wet (0.1 to 0.2)", "Very Wet (> 0.2)"]
-    df['precip_category'] = pd.cut(df['summer_precip_anomaly_forecast'], bins=precip_bins, labels=precip_labels)
-    clay_bins = [0, 15, 25, np.inf]
-    clay_labels = ["Low Clay (<15%)", "Medium Clay (15-25%)", "High Clay (>25%)"]
-    df['clay_category'] = pd.cut(df['avg_clay_0_30cm'], bins=clay_bins, labels=clay_labels)
-    interaction_mae = df.groupby(['precip_category', 'clay_category'], observed=False)['abs_error'].mean().unstack()
-    interaction_count = df.groupby(['precip_category', 'clay_category'], observed=False).size().unstack()
-    print("\n--- Deep Dive: MAE by Precipitation vs. Clay Content ---\n")
-    print(interaction_mae.to_string(float_format="%.2f"))
-    print("\n--- Data Count for Deep Dive ---\n")
-    print(interaction_count.to_string(float_format="%d"))
-
-
-# --- NEW AND MOST POWERFUL FUNCTION: AUTOMATED SUBGROUP DISCOVERY ---
-
-def find_worst_performing_subgroups(df: pd.DataFrame, overall_mae: float):
+def create_final_proof_of_work_dashboard():
     """
-    Automatically searches for subgroups with disproportionately high error rates.
+    Generates a comprehensive dashboard comparing the final models to provide a
+    verdict on the project's success.
     """
-    logging.info("--- Automated Discovery: Identifying Worst-Performing Subgroups ---")
-
-    # Define categorical features and continuous features to bin for the search
-    categorical_features = ['state_encoded']
-    continuous_features_to_bin = {
-        'summer_temp_anomaly_forecast': [-np.inf, 0, 0.5, 1.0, np.inf],
-        'summer_precip_anomaly_forecast': [-np.inf, -0.1, 0.1, np.inf],
-        'avg_sand_0_30cm': [0, 20, 50, np.inf],
-        'wofost_forecast_yield_fresh_dt': [0, 500, 700, np.inf]
-    }
-
-    # Create binned versions of continuous features
-    for col, bins in continuous_features_to_bin.items():
-        bin_labels = [f'{col}_bin_{i}' for i in range(len(bins) - 1)]
-        df[f'{col}_binned'] = pd.cut(df[col], bins=bins, labels=bin_labels, right=False)
-        categorical_features.append(f'{col}_binned')
-
-    results = []
-    # Analyze single-feature subgroups
-    for feature in categorical_features:
-        grouped = df.groupby(feature, observed=False)
-        for name, group in grouped:
-            if len(group) > 50:  # Minimum sample size to be considered a valid subgroup
-                mae = group['abs_error'].mean()
-                if mae > overall_mae * 1.25:  # Report if MAE is 25% worse than average
-                    results.append({'Subgroup': f"{feature} = {name}", 'MAE': mae, 'Count': len(group)})
-
-    # Analyze two-feature interactions (example: state and weather)
-    feature1 = 'state_encoded'
-    feature2 = 'summer_precip_anomaly_forecast_binned'
-    grouped = df.groupby([feature1, feature2], observed=False)
-    for name, group in grouped:
-        if len(group) > 30:  # Stricter minimum for interactions
-            mae = group['abs_error'].mean()
-            if mae > overall_mae * 1.4:  # Report if MAE is 40% worse than average
-                results.append(
-                    {'Subgroup': f"{feature1}={name[0]} & {feature2}={name[1]}", 'MAE': mae, 'Count': len(group)})
-
-    if not results:
-        print("\nNo significant underperforming subgroups found based on current criteria.")
-        return
-
-    # Sort results by the highest error and print the top N
-    top_results = sorted(results, key=lambda x: x['MAE'], reverse=True)
-
-    print("\n" + "=" * 80)
-    print("      TOP UNDERPERFORMING SUBGROUPS (Model Blind Spots)")
-    print(f"      (Overall MAE for reference: {overall_mae:.2f} dt/ha)")
-    print("=" * 80)
-    for res in top_results[:10]:  # Print top 10 findings
-        print(f"  - MAE: {res['MAE']:.2f} | Count: {res['Count']:<4} | Subgroup: {res['Subgroup']}")
-    print("=" * 80 + "\n")
-
-
-# --- MAIN EXECUTION BLOCK ---
-if __name__ == '__main__':
+    logging.info("--- Starting Final Proof of Work Analysis ---")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    df_analysis = load_and_merge_data(MODEL_BACKTEST_FILE, FEATURES_FILE)
+    # --- 1. Load All Data Sources ---
+    try:
+        df_new = pd.read_csv(NEW_MODEL_BACKTEST_FILE)
+        df_forecast = pd.read_csv(HONEST_FORECAST_FILE)
+        df_features = pd.read_csv(FEATURES_FILE)
+    except FileNotFoundError as e:
+        logging.error(f"❌ FATAL: A required file was not found. Please check paths. Error: {e}")
+        return
 
-    if df_analysis is not None:
-        # Calculate overall MAE once
-        overall_mae = df_analysis['abs_error'].mean()
+    # --- 2. Prepare Forecasts for the Three Key Models ---
+    logging.info("Preparing forecasts from all models for comparison...")
 
-        print("\n" + "=" * 55)
-        print("      Overall Model Performance Summary")
-        print("=" * 55)
-        print(f"  Overall MAE:              {overall_mae:.2f} dt/ha")
-        print("=" * 55 + "\n")
+    # Model 1: Final Hybrid Model (Our Champion: Time-Series + XGBoost on Residuals)
+    df_new = df_new[['district_no', 'year', 'kreisYield', 'predicted_yield_median']].rename(
+        columns={'predicted_yield_median': 'final_hybrid_pred'})
 
-        # --- Run the NEW, automated discovery diagnostic first ---
-        find_worst_performing_subgroups(df_analysis, overall_mae)
+    # Model 2: Final Time-Series Model (Trend + ARIMA Correction)
+    df_ts_final = df_forecast[['district_no', 'year', 'final_corrected_forecast']].rename(
+        columns={'final_corrected_forecast': 'ts_final_pred'})
 
-        # --- Then, run the deep dive on our known "wetness" hypothesis ---
-        analyze_error_interactions(df_analysis, OUTPUT_DIR)
+    # Model 3: Base Trend Model (GAM Trend Only)
+    df_ts_base = df_forecast[['district_no', 'year', 'base_trend_forecast']].rename(
+        columns={'base_trend_forecast': 'ts_base_pred'})
 
-        logging.info("✓ Definitive diagnostic analysis complete.")
+    # --- 3. Merge into a Single DataFrame for a True Apples-to-Apples Comparison ---
+    df_merged = pd.merge(df_new, df_ts_final, on=['district_no', 'year'], how='inner')
+    df_merged = pd.merge(df_merged, df_ts_base, on=['district_no', 'year'], how='inner')
+    df_merged.dropna(inplace=True)
+
+    # --- 4. Calculate Overall Performance Metrics ---
+    models = {
+        "Final Hybrid Model (TS + XGB Residuals)": "final_hybrid_pred",
+        "Time-Series Model (Trend + ARIMA)": "ts_final_pred",
+        "Base Trend Model (GAM Only)": "ts_base_pred"
+    }
+
+    results = []
+    for name, pred_col in models.items():
+        mae = (df_merged[pred_col] - df_merged['kreisYield']).abs().mean()
+        r2 = r2_score(df_merged['kreisYield'], df_merged[pred_col])
+        results.append({'Model': name, 'MAE': mae, 'R-squared': r2})
+
+    df_summary = pd.DataFrame(results).sort_values('MAE').reset_index(drop=True)
+
+    print("\n" + "=" * 80)
+    print("      FINAL PROOF OF WORK: OVERALL MODEL PERFORMANCE SCORECARD")
+    print("=" * 80)
+    print(df_summary.to_string(index=False, float_format="%.4f"))
+    print("=" * 80 + "\n")
+
+    # --- 5. Calculate Yearly MAE for Visualization ---
+    for name, pred_col in models.items():
+        df_merged[f'{name}_mae'] = (df_merged[pred_col] - df_merged['kreisYield']).abs()
+
+    yearly_mae = df_merged.groupby('year').agg({f'{name}_mae': 'mean' for name in models}).reset_index()
+
+    # Add weather context
+    df_context = df_features.groupby('year')[
+        ['summer_temp_anomaly_forecast', 'summer_precip_anomaly_forecast']].mean().reset_index()
+    yearly_mae = pd.merge(yearly_mae, df_context, on='year', how='left')
+    yearly_mae = yearly_mae[yearly_mae['year'] >= yearly_mae['year'].min()].copy()
+
+    # --- 6. Generate the Final Dashboard Plot ---
+    logging.info("Generating final proof of work dashboard...")
+    sns.set_style("whitegrid")
+    fig, axes = plt.subplots(2, 1, figsize=(18, 16), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
+    start_year, end_year = yearly_mae['year'].min(), yearly_mae['year'].max()
+    fig.suptitle(f'Final Proof of Work: Model Performance Showdown ({start_year}-{end_year})', fontsize=22, y=0.98)
+
+    # Panel 1: Accuracy Showdown
+    ax1 = axes[0]
+    ax1.plot(yearly_mae['year'], yearly_mae['Base Trend Model (GAM Only)_mae'], marker='x', color='blue', linestyle=':',
+             label='Base Trend (GAM Only)')
+    ax1.plot(yearly_mae['year'], yearly_mae['Time-Series Model (Trend + ARIMA)_mae'], marker='^', color='purple', alpha=0.7, linestyle='--',
+             label='Time-Series (GAM + ARIMA)')
+    ax1.plot(yearly_mae['year'], yearly_mae['Final Hybrid Model (TS + XGB Residuals)_mae'], marker='s', markersize=8,
+             color='darkgreen', linewidth=3, label='Final Hybrid Model (Champion)')
+
+    ax1.set_title('Accuracy Showdown: Mean Absolute Error by Year (Lower is Better)', fontsize=18)
+    ax1.set_ylabel('Mean Absolute Error (MAE) in dt/ha', fontsize=14)
+    ax1.legend(fontsize=14)
+    ax1.grid(True, which='both', linestyle=':', linewidth=0.7)
+
+    # Panel 2: Weather Context
+    ax2 = axes[1]
+    ax2_twin = ax2.twinx()
+    colors = ['#86BBD8' if x > 0 else '#F26419' for x in yearly_mae['summer_precip_anomaly_forecast']]
+    ax2.bar(yearly_mae['year'], yearly_mae['summer_precip_anomaly_forecast'], color=colors, alpha=0.7)
+    ax2_twin.plot(yearly_mae['year'], yearly_mae['summer_temp_anomaly_forecast'], marker='^', color='#F6AE2D')
+    ax2.set_title('Context: Average Summer Weather Anomalies', fontsize=18)
+    ax2.set_ylabel('Precipitation Anomaly (%)', color='#33658A', fontsize=14)
+    ax2_twin.set_ylabel('Temperature Anomaly (°C)', color='#F6AE2D', fontsize=14)
+    ax2.set_xlabel('Year', fontsize=16)
+
+    plt.xticks(yearly_mae['year'], rotation=45)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+
+    output_filename = f'final_proof_of_work_dashboard_{start_year}-{end_year}.png'
+    output_path = OUTPUT_DIR / output_filename
+    plt.savefig(output_path, dpi=300)
+    logging.info(f"✓ Final Proof of Work dashboard saved successfully to: {output_path}")
+    plt.show()
+
+
+if __name__ == '__main__':
+    create_final_proof_of_work_dashboard()

@@ -89,15 +89,12 @@ def main():
     output_path.mkdir(exist_ok=True, parents=True)
 
     # Dynamically find the latest WOFOST simulation output
-    wofost_output_dir = Path('data/06_model_output/multi_year_final/')
-    try:
-        wofost_files = list(wofost_output_dir.glob('final_comparison_*.csv'))
-        if not wofost_files: raise FileNotFoundError
-        wofost_output_file = max(wofost_files, key=lambda p: p.stat().st_mtime)
-        logging.info(f"Dynamically found WOFOST output file: {wofost_output_file}")
-    except FileNotFoundError:
-        logging.error(f"FATAL: No 'final_comparison_*.csv' file found in {wofost_output_dir}. Cannot proceed.")
+    walkforward_forecast_file = Path('data/09_model_output_walkforward_final/final_honest_forecasts.csv')
+    if not walkforward_forecast_file.exists():
+        logging.error(f"FATAL: The required forecast file was not found at {walkforward_forecast_file}. Cannot proceed.")
         sys.exit(1)
+    logging.info(f"Using honest, walk-forward forecast file: {walkforward_forecast_file}")
+
 
     # --- STAGE 1: LOAD & MERGE BASE DATA ---
     logging.info("STAGE 1: Loading and Merging Base Data")
@@ -123,13 +120,17 @@ def main():
     merged_df = pd.merge(merged_df, df_satellite, on=['district_no', 'year'], how='left')
     logging.info("Satellite data merged.")
 
-    # 2c: Merge WOFOST simulation outputs
-    df_wofost = pd.read_csv(wofost_output_file)
-    df_wofost['district_no'] = df_wofost['district_no'].astype(str).str.zfill(5)
-    merged_df = pd.merge(merged_df,
-                         df_wofost[['year', 'district_no', 'forecast_yield_dry_kgha', 'forecast_uncertainty_std']],
-                         on=['year', 'district_no'], how='left')
-    logging.info("✓ WOFOST simulation features successfully merged.")
+    # 2c: Merge the new, honest walk-forward forecast as a feature
+    df_forecast = pd.read_csv(walkforward_forecast_file)
+    df_forecast['district_no'] = df_forecast['district_no'].astype(str).str.zfill(5)
+
+    # Select the relevant forecast columns to use as features
+    # 'final_corrected_forecast' is our best prediction.
+    # 'base_trend_forecast' can also be a useful feature on its own.
+    columns_to_merge = ['year', 'district_no', 'final_corrected_forecast', 'base_trend_forecast']
+
+    merged_df = pd.merge(merged_df, df_forecast[columns_to_merge], on=['year', 'district_no'], how='left')
+    logging.info("✓ Walk-forward forecast features successfully merged.")
 
     # 2d: Merge and encode state names
     gdf = gpd.read_file(geojson_file)
@@ -161,8 +162,12 @@ def main():
     merged_df['cost_of_inputs_lag1'] = merged_df['fertilizer_price_index_lag1'] + merged_df[
         'plant_protection_price_index_lag1'] + merged_df['seed_price_index_lag1']
 
-    # Process WOFOST features
-    merged_df['wofost_forecast_yield_fresh_dt'] = merged_df['forecast_yield_dry_kgha'] / (0.25 * 100)
+    # Process the new forecast features
+    # RENAME our new forecast to the name expected by downstream feature engineering steps.
+    merged_df.rename(columns={'final_corrected_forecast': 'wofost_forecast_yield_fresh_dt'}, inplace=True)
+
+    # The unit conversion line is NO LONGER NEEDED as our new forecast is already in fresh weight dt/ha.
+    # The following lines will now use our superior forecast as their input.
     merged_df['wofost_forecast_x_profit_margin'] = merged_df['wofost_forecast_yield_fresh_dt'] * merged_df[
         'profit_margin_proxy_lag1']
     merged_df['has_wofost_data'] = merged_df['wofost_forecast_yield_fresh_dt'].notna().astype(int)
