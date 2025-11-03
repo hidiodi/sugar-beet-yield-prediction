@@ -1,7 +1,7 @@
 # File: src/models/backtest_adaptive_cqr_model.py
 # Description: Backtesting and diagnostics for the Adaptive Conformalized Quantile Regression (CQR) model.
-#              This method calculates a new adjustment factor for each year in the backtest.
 
+# ... (all your existing imports and configuration are the same) ...
 import pandas as pd
 import geopandas as gpd
 import joblib
@@ -111,7 +111,7 @@ def run_adaptive_cqr_backtest(df: pd.DataFrame, feature_cols: list, model_lower_
     print("\nAdaptive CQR backtest complete.")
     return results_df
 
-
+# ... (all your other functions like analyze_interval_performance, calculate_district_metrics, etc. are the same) ...
 def analyze_interval_performance(results_df: pd.DataFrame):
     """Analyzes the performance of the adaptive conformalized prediction interval."""
     print("\n--- Analyzing Adaptive Prediction Interval Performance (Target: 95%) ---")
@@ -138,9 +138,6 @@ def calculate_district_metrics(results_df: pd.DataFrame, report_dir: str):
     performance['is_low_data'] = performance['data_point_count'] < LOW_DATA_THRESHOLD
     performance.to_csv(os.path.join(report_dir, 'district_level_metrics.csv'), index=False)
     return performance
-
-
-# --- PLOTTING FUNCTIONS (Modified for Adaptive CQR context) ---
 
 def plot_national_average_timeline(backtest_results: pd.DataFrame, report_dir: str):
     """Generates a national average plot with the 95% adaptive CQR interval."""
@@ -232,9 +229,8 @@ def plot_r2_vs_data_count(district_performance: pd.DataFrame, report_dir: str):
     plt.savefig(os.path.join(report_dir, '04_adaptive_cqr_r2_vs_data_count.png'), bbox_inches='tight');
     plt.close()
 
-
 def main():
-    """Main function to orchestrate the Adaptive CQR model evaluation."""
+    # ... (the start of your main function is the same) ...
     os.makedirs(REPORT_DIR, exist_ok=True)
     print("--- Starting Adaptive CQR Model Evaluation Pipeline ---")
 
@@ -269,7 +265,7 @@ def main():
         'avg_bdod_0_100cm', 'avg_clay_0_100cm', 'avg_sand_0_100cm', 'avg_som_0_100cm', 'avg_phh2o_0_100cm',
         'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly', 'winter_cropland_LST_mean',
         'winter_cropland_LST_anomaly', 'winter_cropland_snow_cover_days', 'fertilizer_price_index_lag1_anomaly_capped',
-        'is_fertilizer_price_extreme', 'is_summer_forecast_dry', 'gdd_x_fertilizer_price',
+        'is_fertilizer_price_extreme', 'gdd_x_fertilizer_price',
         'spring_temp_x_spring_precip', 'antecedent_gdd_sum_anomaly_sq', 'summer_heat_x_profit_margin',
         'summer_precip_x_input_costs', 'spring_temp_prob_warm_forecast_sq', 'summer_temp_prob_warm_forecast_sq',
         'spring_precip_prob_wet_forecast_sq', 'summer_precip_prob_wet_forecast_sq'
@@ -289,6 +285,13 @@ def main():
         return
 
     # --- Analysis & Reporting ---
+    # --->>> ADD THIS SECTION TO SAVE THE DETAILED PREDICTIONS <<<---
+    print("\n--- Saving Detailed Backtest Predictions for Comparison ---")
+    output_predictions_path = os.path.join(REPORT_DIR, 'full_backtest_predictions.csv')
+    backtest_results.to_csv(output_predictions_path, index=False)
+    print(f"-> Saved detailed backtest predictions to: {output_predictions_path}")
+    # --- END OF ADDED SECTION ---
+
     analyze_interval_performance(backtest_results)
     district_performance = calculate_district_metrics(backtest_results, REPORT_DIR)
 

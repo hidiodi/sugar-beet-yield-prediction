@@ -1,3 +1,10 @@
+import sys
+import os
+
+script_path = os.path.abspath(__file__)
+script_dir = os.path.dirname(script_path)
+project_root = os.path.dirname(os.path.dirname(script_dir))
+sys.path.insert(0, project_root)
 
 from src.utils.pipeline_runner import run_pipeline
 
@@ -10,13 +17,13 @@ def main():
     PIPELINE_NAME = "Main Hybrid Model Pipeline"
 
     # Define the sequence of scripts to execute.
-    # Paths must be relative to this file's location (the project root).
     SCRIPTS_TO_RUN = [
-        #"src/02_models/Wofost/run_wofost_pipeline.py",
+        "src/02_models/Wofost/run_wofost_pipeline.py",
+        "src/02_models/Wofost/run_detrending.py",
         "src/01_data/FeatureEngineering/build_stage1_features.py",
         "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py",
         "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",
-        "src/03_analysis/compare_model_versions.py",
+        "src/03_analysis/basic_analysis/compare_model_versions.py",
     ]
 
     # Execute the pipeline

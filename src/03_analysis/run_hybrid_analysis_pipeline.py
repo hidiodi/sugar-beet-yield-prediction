@@ -1,3 +1,12 @@
+# C:\Users\timSc\PycharmProjects\sugar-beet-yield-prediction\src\03_analysis\run_hybrid_analysis_pipeline.py
+
+import sys
+import os
+
+script_path = os.path.abspath(__file__)
+script_dir = os.path.dirname(script_path)
+project_root = os.path.dirname(os.path.dirname(script_dir))
+sys.path.insert(0, project_root)
 
 from src.utils.pipeline_runner import run_pipeline
 
@@ -7,10 +16,9 @@ def main():
     This script is just a definition file; all execution logic
     is handled by the pipeline_runner.
     """
-    PIPELINE_NAME = "Main Hybrid Model Pipeline"
+    PIPELINE_NAME = "Analysis Hybrid Model Pipeline"
 
     # Define the sequence of scripts to execute.
-    # Paths must be relative to this file's location (the project root).
     SCRIPTS_TO_RUN = [
         "src/03_analysis/hybrid_model_analysis/analyze_input_features.py",
         "src/03_analysis/hybrid_model_analysis/analyze_wofost_pipeline.py",

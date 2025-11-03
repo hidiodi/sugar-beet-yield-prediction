@@ -19,7 +19,7 @@ import geopandas as gpd
 from scipy.stats import gamma
 
 from pcse.util import penman_monteith
-from pcse.models import Wofost72_WLP_FD
+from pcse.models import Wofost72_WLP_FD, Wofost72_PP
 from pcse.base import ParameterProvider, WeatherDataProvider
 
 from tqdm import tqdm
@@ -276,10 +276,15 @@ def run_historical_simulation(df_static_year, df_daily_hist_year, cropdata, year
             weather_provider = SimpleWeatherDataProvider(weather_df, site_data)
             crop_start = cfg['AGROMANAGEMENT']['CROP_START_DATE'].replace(year=year);
             crop_end = cfg['AGROMANAGEMENT']['CROP_END_DATE'].replace(year=year)
-            agromanagement = [{crop_start: ParameterDict({'CropCalendar': ParameterDict(
-                {'crop_start_date': crop_start, 'crop_start_type': 'emergence', 'crop_end_date': crop_end,
-                 'crop_end_type': 'harvest', 'max_duration': cfg['AGROMANAGEMENT']['MAX_DURATION']}),
-                'TimedEvents': None, 'StateEvents': None})}]
+            agromanagement = [{crop_start: ParameterDict({
+                'CropCalendar': ParameterDict({
+                    'crop_start_date': crop_start, 'crop_start_type': 'emergence', 'crop_end_date': crop_end,
+                    'crop_end_type': 'harvest', 'max_duration': cfg['AGROMANAGEMENT']['MAX_DURATION']
+                }),
+                'TimedEvents': None,
+                'StateEvents': None
+            })}]
+
             model = Wofost72_WLP_FD(parameters, weather_provider, agromanagement);
             model.run_till_terminate()
             output = model.get_output();
@@ -293,7 +298,11 @@ def run_historical_simulation(df_static_year, df_daily_hist_year, cropdata, year
 
 
 def _run_single_forecast_member(member_row, district_no, year, wg, parameters, site_data, cfg):
+    """
+    Worker function that runs a single forecast member through both WLP and PP models.
+    """
     try:
+        # 1. Generate the synthetic weather for this specific ensemble member
         monthly_anomalies = {}
         for month in range(3, 11):
             temp_col = f'temp_anomaly_forecast_{month}';
@@ -302,84 +311,157 @@ def _run_single_forecast_member(member_row, district_no, year, wg, parameters, s
             monthly_anomalies[f'precip_anomaly_{month}'] = member_row.get(precip_col, 0)
         start_date, end_date = f'{year}-03-01', f'{year}-10-31'
         synth_weather = wg.generate(district_no, start_date, end_date, monthly_anomalies)
-        if synth_weather.empty: return np.nan
+        if synth_weather.empty: return None
+
+        # 2. Setup common components
         weather_provider = SimpleWeatherDataProvider(synth_weather, site_data)
-        crop_start = cfg['AGROMANAGEMENT']['CROP_START_DATE'].replace(year=year);
+        crop_start = cfg['AGROMANAGEMENT']['CROP_START_DATE'].replace(year=year)
         crop_end = cfg['AGROMANAGEMENT']['CROP_END_DATE'].replace(year=year)
-        agromanagement = [{crop_start: ParameterDict({'CropCalendar': ParameterDict(
-            {'crop_start_date': crop_start, 'crop_start_type': 'emergence', 'crop_end_date': crop_end,
-             'crop_end_type': 'harvest', 'max_duration': cfg['AGROMANAGEMENT']['MAX_DURATION']}),
-            'TimedEvents': None, 'StateEvents': None})}]
-        model = Wofost72_WLP_FD(parameters, weather_provider, agromanagement);
-        model.run_till_terminate()
-        return model.get_output()[-1]['TWSO'] if model.get_output() else np.nan
+        agromanagement = [{crop_start: ParameterDict({
+            'CropCalendar': ParameterDict({
+                'crop_start_date': crop_start, 'crop_start_type': 'emergence', 'crop_end_date': crop_end,
+                'crop_end_type': 'harvest', 'max_duration': cfg['AGROMANAGEMENT']['MAX_DURATION']
+            }),
+            'TimedEvents': None,
+            'StateEvents': None
+        })}]
+
+        # 3. Run Water-Limited Potential (WLP) model
+        model_wlp = Wofost72_WLP_FD(parameters, weather_provider, agromanagement)
+        model_wlp.run_till_terminate()
+        yield_wlp = model_wlp.get_output()[-1]['TWSO'] if model_wlp.get_output() else np.nan
+
+        # 4. Run Potential Production (PP) model (no water stress)
+        model_pp = Wofost72_PP(parameters, weather_provider, agromanagement)
+        model_pp.run_till_terminate()
+        yield_pp = model_pp.get_output()[-1]['TWSO'] if model_pp.get_output() else np.nan
+
+        return {
+            'member': member_row.get('member', 'N/A'),
+            'yield_water_limited': yield_wlp,
+            'yield_potential': yield_pp
+        }
     except Exception as e:
-        logging.error(f"[FORECAST_WORKER] Error for dist {district_no}, member {member_row.get('member', 'N/A')}: {e}");
-        return np.nan
+        logging.error(f"[FORECAST_WORKER] Error for dist {district_no}, member {member_row.get('member', 'N/A')}: {e}")
+        return None
 
 
+# --- MODIFIED: The main forecast function now orchestrates the full ensemble collection ---
 def run_forecast_simulation(df_static_year, df_seas5_year, wg, cropdata, year, cfg):
-    logging.info(f"--- Running Parallel Forecast Simulation for {year} ---")
-    forecast_results = []
-    # Disable logging during parameter creation to avoid console spam
+    logging.info(f"--- Running Parallel Forecast Simulation for {year} (Full Ensemble) ---")
+    full_ensemble_results = []
     logging.disable(logging.INFO)
     district_params = {row['district_no']: _create_district_specific_parameters(row, cropdata) for _, row in
                        df_static_year.iterrows()}
     logging.disable(logging.NOTSET)
+
     for district_no, group in tqdm(df_seas5_year.groupby('district_no'), desc=f"Forecast Sim {year}"):
         if district_no not in district_params: continue
         parameters, site_data = district_params[district_no]
-        tasks = [delayed(_run_single_forecast_member)(member_row, district_no, year, wg, parameters, site_data, cfg) for
-                 _, member_row in group.iterrows()]
-        ensemble_yields = Parallel(n_jobs=-1, backend='loky')(tasks)
-        valid_yields = [y for y in ensemble_yields if not np.isnan(y)]
-        forecast_results.append({'year': year, 'district_no': district_no,
-                                 'lintul_yield_forecast_weather': np.mean(valid_yields) if valid_yields else np.nan,
-                                 'forecast_uncertainty_std': np.std(valid_yields) if valid_yields else np.nan})
-    return pd.DataFrame(forecast_results)
+
+        # Create parallel tasks for each member
+        tasks = [delayed(_run_single_forecast_member)(member_row, district_no, year, wg, parameters, site_data, cfg)
+                 for _, member_row in group.iterrows()]
+        ensemble_outputs = Parallel(n_jobs=-1, backend='loky')(tasks)
+
+        # Process the results for this district
+        for result in ensemble_outputs:
+            if result is not None:
+                full_ensemble_results.append({
+                    'year': year,
+                    'district_no': district_no,
+                    'member': result['member'],
+                    'yield_water_limited_dry_kgha': result['yield_water_limited'],
+                    'yield_potential_dry_kgha': result['yield_potential']
+                })
+
+    return pd.DataFrame(full_ensemble_results)
 
 
-def analyze_and_plot_results(df_hist, df_fcst, output_dir, start_year, end_year):
-    logging.info("=" * 70 + "\n[ANALYSIS] Analyzing Final Multi-Year Results\n" + "=" * 70)
-    df_final = pd.merge(df_hist, df_fcst, on=['year', 'district_no']).dropna()
-    if df_final.empty: logging.error("[ANALYSIS] No valid merged results to analyze!"); return
+def analyze_and_plot_ensemble_results(df_hist, df_fcst_ensemble, output_dir, start_year, end_year):
+    """
+    Analyzes the full ensemble results. It saves the raw data, calculates distributional
+    metrics, and generates a diagnostic scatter plot with ensemble ranges.
+    """
+    logging.info("=" * 70 + "\n[ANALYSIS] Analyzing Full Ensemble Results\n" + "=" * 70)
     dmc = CONFIG['CONSTANTS']['DMC_SUGARBEET']
-    df_final['actual_yield_dry_kgha'] = df_final['actual_yield'] * 100.0 * dmc
-    df_final = df_final.rename(columns={'lintul_yield_perfect_weather': 'perfect_yield_dry_kgha',
-                                        'lintul_yield_forecast_weather': 'forecast_yield_dry_kgha'})
-    for col in ['actual_yield_dry_kgha', 'perfect_yield_dry_kgha', 'forecast_yield_dry_kgha']:
-        df_final[col.replace('_dry_kgha', '_dt')] = df_final[col] / 100.0
-    output_path = os.path.join(output_dir, f'final_comparison_{start_year}-{end_year}.csv')
-    df_final.to_csv(output_path, index=False);
-    logging.info(f"[ANALYSIS] ✓ Multi-year results saved to {output_path}")
-    print("\n--- Overall Performance Metrics (Dry Weight dt/ha) ---")
-    mae_p = mean_absolute_error(df_final['actual_yield_dt'], df_final['perfect_yield_dt']);
-    r2_p = r2_score(df_final['actual_yield_dt'], df_final['perfect_yield_dt'])
-    mae_f = mean_absolute_error(df_final['actual_yield_dt'], df_final['forecast_yield_dt']);
-    r2_f = r2_score(df_final['actual_yield_dt'], df_final['forecast_yield_dt'])
-    print(f"  Perfect Weather:  MAE = {mae_p:.2f}, R² = {r2_p:.3f}");
-    print(f"  Forecast Weather: MAE = {mae_f:.2f}, R² = {r2_f:.3f}\n")
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6));
-    fig.suptitle(f'WOFOST Performance ({start_year}-{end_year})', fontsize=16)
-    min_val = df_final[['actual_yield_dt', 'perfect_yield_dt', 'forecast_yield_dt']].min().min() * 0.9
-    max_val = df_final[['actual_yield_dt', 'perfect_yield_dt', 'forecast_yield_dt']].max().max() * 1.1
-    axes[0].scatter(df_final['actual_yield_dt'], df_final['perfect_yield_dt'], alpha=0.6);
-    axes[0].plot([min_val, max_val], [min_val, max_val], 'r--', label='1:1 Line')
-    axes[0].set_title(f'Perfect Weather\nMAE={mae_p:.2f}, R²={r2_p:.3f}');
-    axes[0].set_xlabel('Actual Yield (dt/ha)');
-    axes[0].set_ylabel('Simulated Yield (dt/ha)')
-    axes[1].scatter(df_final['actual_yield_dt'], df_final['forecast_yield_dt'], alpha=0.6, color='orange');
-    axes[1].plot([min_val, max_val], [min_val, max_val], 'r--', label='1:1 Line')
-    axes[1].set_title(f'Forecast Weather\nMAE={mae_f:.2f}, R²={r2_f:.3f}');
-    axes[1].set_xlabel('Actual Yield (dt/ha)');
-    axes[1].set_ylabel('Simulated Yield (dt/ha)')
-    for ax in axes: ax.set_xlim(min_val, max_val); ax.set_ylim(min_val, max_val); ax.grid(True, alpha=0.3); ax.legend()
-    plt.tight_layout();
-    plot_path = os.path.join(output_dir, f'results_scatter_{start_year}-{end_year}.png');
-    plt.savefig(plot_path, dpi=300)
-    logging.info(f"[ANALYSIS] ✓ Plot saved to {plot_path}");
-    plt.show()
 
+    # --- Step 1: Save the raw ensemble data (unchanged) ---
+    if not df_fcst_ensemble.empty:
+        fcst_output_path = output_dir / f'forecast_ensemble_{start_year}-{end_year}.csv'
+        df_fcst_ensemble.to_csv(fcst_output_path, index=False)
+        logging.info(f"✓ Full forecast ensemble results saved to {fcst_output_path}")
+
+    # --- Step 2: NEW - Aggregate the ensemble to get mean and percentile ranges ---
+    df_fcst_ensemble['yield_wlp_fresh_dt'] = (df_fcst_ensemble['yield_water_limited_dry_kgha'] / dmc) / 100.0
+
+    df_fcst_agg = df_fcst_ensemble.groupby(['year', 'district_no']).agg(
+        forecast_yield_mean=('yield_wlp_fresh_dt', 'mean'),
+        forecast_yield_p10=('yield_wlp_fresh_dt', lambda x: x.quantile(0.10)),
+        forecast_yield_p90=('yield_wlp_fresh_dt', lambda x: x.quantile(0.90))
+    ).reset_index()
+
+    # --- Step 3: Merge and prepare for plotting ---
+    # Convert historical simulation yield to fresh dt/ha
+    df_hist['perfect_yield_dt'] = (df_hist['lintul_yield_perfect_weather'] / dmc) / 100.0
+
+    df_final = pd.merge(df_hist[['year', 'district_no', 'actual_yield', 'perfect_yield_dt']], df_fcst_agg,
+                        on=['year', 'district_no']).dropna()
+    if df_final.empty:
+        logging.error("[ANALYSIS] No valid merged results to analyze!");
+        return
+
+    output_path = output_dir / f'final_comparison_with_ranges_{start_year}-{end_year}.csv'
+    df_final.to_csv(output_path, index=False)
+    logging.info(f"[ANALYSIS] ✓ Aggregated comparison results saved to {output_path}")
+
+    # --- Step 4: Generate the improved diagnostic plots ---
+    mae_p = mean_absolute_error(df_final['actual_yield'], df_final['perfect_yield_dt'])
+    r2_p = r2_score(df_final['actual_yield'], df_final['perfect_yield_dt'])
+    mae_f = mean_absolute_error(df_final['actual_yield'], df_final['forecast_yield_mean'])
+    r2_f = r2_score(df_final['actual_yield'], df_final['forecast_yield_mean'])
+
+    print("\n--- Overall Performance Metrics (Fresh Weight dt/ha, based on Ensemble Mean) ---")
+    print(f"  Perfect Weather:  MAE = {mae_p:.2f}, R² = {r2_p:.3f}")
+    print(f"  Forecast Weather: MAE = {mae_f:.2f}, R² = {r2_f:.3f}\n")
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7), sharey=True)
+    fig.suptitle(f'WOFOST Performance Diagnosis ({start_year}-{end_year})', fontsize=16)
+
+    min_val = df_final[['actual_yield', 'perfect_yield_dt']].min().min() * 0.9
+    max_val = df_final[['actual_yield', 'perfect_yield_dt']].max().max() * 1.1
+
+    # Plot 1: Perfect Weather (unchanged)
+    axes[0].scatter(df_final['actual_yield'], df_final['perfect_yield_dt'], alpha=0.6)
+    axes[0].plot([min_val, max_val], [min_val, max_val], 'r--', label='1:1 Line')
+    axes[0].set_title(f'Perfect Weather\nMAE={mae_p:.2f}, R²={r2_p:.3f}')
+    axes[0].set_xlabel('Actual Yield (dt/ha)')
+    axes[0].set_ylabel('Simulated Yield (dt/ha)')
+
+    # Plot 2: NEW - Forecast Weather with Ensemble Range
+    # The error array for yerr needs to be in the shape (2, N), representing lower and upper error bounds.
+    lower_error = df_final['forecast_yield_mean'] - df_final['forecast_yield_p10']
+    upper_error = df_final['forecast_yield_p90'] - df_final['forecast_yield_mean']
+    y_err = [lower_error.values, upper_error.values]
+
+    axes[1].errorbar(df_final['actual_yield'], df_final['forecast_yield_mean'], yerr=y_err,
+                     fmt='o', color='orange', ecolor='lightgray', elinewidth=3, capsize=0, alpha=0.8,
+                     label='Ensemble Mean & 10-90th Pct. Range')
+    axes[1].plot([min_val, max_val], [min_val, max_val], 'r--', label='1:1 Line')
+    axes[1].set_title(f'Forecast Weather (Ensemble Range)\nMean MAE={mae_f:.2f}, Mean R²={r2_f:.3f}')
+    axes[1].set_xlabel('Actual Yield (dt/ha)')
+
+    for ax in axes:
+        ax.set_xlim(min_val, max_val);
+        ax.set_ylim(min_val, max_val);
+        ax.grid(True, alpha=0.3);
+        ax.legend()
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plot_path = output_dir / f'results_scatter_with_ensemble_{start_year}-{end_year}.png'
+    plt.savefig(plot_path, dpi=300)
+    logging.info(f"[ANALYSIS] ✓ Diagnostic plot saved to {plot_path}")
+    plt.show()
 
 if __name__ == "__main__":
     os.makedirs(CONFIG['FILE_PATHS']['OUTPUT_DIR'], exist_ok=True)
@@ -505,7 +587,7 @@ if __name__ == "__main__":
     if all_hist_results and all_fcst_results:
         final_hist_df = pd.concat(all_hist_results, ignore_index=True)
         final_fcst_df = pd.concat(all_fcst_results, ignore_index=True)
-        analyze_and_plot_results(final_hist_df, final_fcst_df, CONFIG['FILE_PATHS']['OUTPUT_DIR'], CONFIG['START_YEAR'],
+        analyze_and_plot_ensemble_results(final_hist_df, final_fcst_df, CONFIG['FILE_PATHS']['OUTPUT_DIR'], CONFIG['START_YEAR'],
                                  CONFIG['END_YEAR'])
         logging.info("\n" + "=" * 70 + "\n✓ MULTI-YEAR PIPELINE COMPLETED SUCCESSFULLY!\n" + "=" * 70)
     else:

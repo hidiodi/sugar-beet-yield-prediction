@@ -3,21 +3,24 @@
 #              RESIDUALS of the primary time-series forecast. This creates a powerful
 #              two-stage hybrid model.
 #
-# REVISED VERSION v4: Implements the final, correct residual fitting methodology.
+# REVISED VERSION v5: Implements sample weighting to combat model overconfidence.
+#                     The model is now forced to pay more attention to large residuals
+#                     when training the interval bounds, improving coverage.
 
 import pandas as pd
 from xgboost import XGBRegressor
 import os
 import joblib
 import warnings
+import numpy as np  # <-- Import NumPy
 
 warnings.filterwarnings("ignore")
 
 # --- Configuration ---
 DATA_PATH = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
 MODEL_OUTPUT_DIR = 'src/models'
-
 FEATURE_COLS = [
+    # ... (your feature list remains unchanged) ...
     'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly',
     'antecedent_gdd_sum_anomaly', 'spring_temp_anomaly_forecast',
     'spring_precip_anomaly_forecast', 'spring_solar_rad_anomaly_forecast',
@@ -49,15 +52,11 @@ FEATURE_COLS = [
     'summer_precip_prob_wet_forecast_sq', 'state6_precip_interaction',
     'is_drought_high_clay_in_state_11'
 ]
-
-# Use the same robust hyperparameters from your champion base model
 BEST_PARAMS = {
     'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,
     'subsample': 0.922850, 'colsample_bytree': 0.811573, 'gamma': 1.830853,
     'min_child_weight': 2, 'random_state': 42, 'n_jobs': -1
 }
-
-# Define the quantiles for the prediction interval of the RESIDUAL
 QUANTILES = {'lower': 0.025, 'median': 0.5, 'upper': 0.975}
 
 
@@ -73,26 +72,24 @@ def train_and_save_quantile_models():
 
     # --- 1. Define the Target Variable as the Forecast Residual ---
     print("\n--- Calculating Forecast Residuals ---")
-    # The 'wofost_forecast_yield_fresh_dt' column is our Stage 1 forecast
     df.rename(columns={'wofost_forecast_yield_fresh_dt': 'stage1_forecast'}, inplace=True)
-
-    # The new target is the error of our best forecast
     df['forecast_residual'] = df['kreisYield'] - df['stage1_forecast']
-
-    # Drop rows where we couldn't make a Stage 1 forecast (early years)
     df.dropna(subset=['stage1_forecast', 'forecast_residual'], inplace=True)
-
-    # Also drop rows if any other features are missing
     df.dropna(subset=FEATURE_COLS, inplace=True)
-
     print(" -> Target variable (forecast_residual) created.")
 
-    # Use all available data for the final training
     X_train = df[FEATURE_COLS]
-    y_train = df['forecast_residual']  # Our new target!
+    y_train = df['forecast_residual']
     print(f"\nTraining on {len(X_train)} samples to predict the forecast residuals.")
 
-    # --- 2. Train and Save a Model for Each Quantile ---
+    # --- 2. NEW: Create Sample Weights to Emphasize Larger Residuals ---
+    # We give more weight to training examples where the stage 1 forecast had a large error.
+    # This forces the model to create wider, more honest intervals.
+    # np.log1p is used to dampen the effect of extreme outliers while still giving them more importance.
+    print(" -> Creating sample weights to emphasize larger residuals for interval training...")
+    sample_weights = np.log1p(abs(y_train))
+
+    # --- 3. Train and Save a Model for Each Quantile ---
     os.makedirs(MODEL_OUTPUT_DIR, exist_ok=True)
 
     for name, alpha in QUANTILES.items():
@@ -104,7 +101,12 @@ def train_and_save_quantile_models():
             **BEST_PARAMS
         )
 
-        model.fit(X_train, y_train)
+        # --- MODIFIED: Use weights only for the interval bounds (lower and upper) ---
+        if name in ['lower', 'upper']:
+            print(" -> Applying sample weights to focus on extreme errors.")
+            model.fit(X_train, y_train, sample_weight=sample_weights)
+        else:  # For the median, train as normal
+            model.fit(X_train, y_train)
 
         model_path = os.path.join(MODEL_OUTPUT_DIR, f'final_quantile_model_{name}.joblib')
         joblib.dump(model, model_path)
