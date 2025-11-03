@@ -50,7 +50,7 @@ FEATURE_COLS = [
     'summer_precip_x_input_costs', 'spring_temp_prob_warm_forecast_sq',
     'summer_temp_prob_warm_forecast_sq', 'spring_precip_prob_wet_forecast_sq',
     'summer_precip_prob_wet_forecast_sq', 'state6_precip_interaction',
-    'is_drought_high_clay_in_state_11'
+    'is_drought_high_clay_in_state_11', 'nao_winter_avg', 'sca_winter_avg', 'enso_mei_winter_avg'
 ]
 BEST_PARAMS = {
     'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,

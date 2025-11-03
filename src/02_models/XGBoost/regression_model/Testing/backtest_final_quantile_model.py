@@ -265,6 +265,7 @@ def main():
         'summer_days_tmax_gt_30c',  # Specifically targets heatwaves
         'is_drought_high_clay_in_state_11',
         'state6_precip_interaction',
+        #'nao_winter_avg', 'sca_winter_avg', 'enso_mei_winter_avg'
     ]
 
     print("\n--- Applying Causal Detrending ---")

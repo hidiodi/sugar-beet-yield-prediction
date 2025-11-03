@@ -134,6 +134,9 @@ def main():
     input_price_file = Path('data/01_raw/Bundesdatenbank/61221-0003_de.csv')
     geojson_path = Path('data/01_raw/districts_official.geojson')
 
+    # --- NEW: Define path for the climate features file ---
+    climate_features_file = Path('data/02_intermediate/climateIndices/long_range_climate_features.csv')
+
     output_path = Path('data/04_master/')
     output_file = output_path / 'master_dataset.csv'
     output_path.mkdir(exist_ok=True)
@@ -146,6 +149,11 @@ def main():
 
         static_features = pd.read_csv(static_features_file)
         static_features['district_no'] = static_features['district_no'].astype(str).str.zfill(5)
+
+        # --- NEW: Load the climate features data ---
+        logging.info("Loading long-range climate features...")
+        df_climate = pd.read_csv(climate_features_file)
+
     except FileNotFoundError as e:
         logging.error(f"A required input file was not found. Please check paths. Error: {e}")
         return
@@ -173,6 +181,9 @@ def main():
     if not df_economic.empty:
         master_df = pd.merge(master_df, df_economic, on='year', how='left')
 
+    # --- NEW: Merge climate data on 'year' ---
+    master_df = pd.merge(master_df, df_climate, on='year', how='left')
+
     logging.info("-> Merging complete.")
 
     # --- Step 4: Save Final Dataset ---
@@ -181,6 +192,9 @@ def main():
     logging.info(f"Master dataset has {master_df.shape[0]} rows and {master_df.shape[1]} columns.")
     logging.info(f"Columns: {master_df.columns.tolist()}")
 
+
+if __name__ == '__main__':
+    main()
 
 if __name__ == '__main__':
     main()
