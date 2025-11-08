@@ -1,20 +1,20 @@
-# File: src/models/train_final_quantile_model.py
-# FINAL VERSION: Removes all heuristics (sample_weights) and reverts to a
-#                single, robust hyperparameter set. Relies purely on the
-#                quantile objective and a proper CQR calibration step.
+# File: src/models/train_final_ngboost_model.py
+# Description: Trains a definitive NGBoost model by fitting it on the RESIDUALS
+#              of the primary time-series forecast. This version includes
+#              proper data handling and a validation set for stable training.
 
 import pandas as pd
-from xgboost import XGBRegressor
+from ngboost import NGBRegressor
+from ngboost.distns import Normal
 import os
 import joblib
 import warnings
-import numpy as np
 
 warnings.filterwarnings("ignore")
 
 # --- Configuration ---
 DATA_PATH = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
-MODEL_OUTPUT_DIR = 'src/models'
+MODEL_OUTPUT_PATH = os.path.join('src/models', 'final_ngboost_model.joblib')
 
 FEATURE_COLS = [
     'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly', 'antecedent_gdd_sum_anomaly',
@@ -48,51 +48,56 @@ FEATURE_COLS = [
     'stage1_forecast'
 ]
 
-# Use a single, validated set of parameters for ALL models.
-BEST_PARAMS = {
-    'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,
-    'subsample': 0.922850, 'colsample_bytree': 0.811573, 'gamma': 1.830853,
-    'min_child_weight': 2, 'random_state': 42, 'n_jobs': -1
-}
 
-QUANTILES = {'lower': 0.025, 'median': 0.5, 'upper': 0.975}
+def train_and_save_ngboost_model():
+    """Trains a single NGBoost model to predict the distribution of residuals."""
+    print("--- Starting NGBoost Residual Fitting Pipeline ---")
 
+    try:
+        df = pd.read_csv(DATA_PATH)
+    except FileNotFoundError:
+        print(f"❌ Error: Dataset not found at {DATA_PATH}.")
+        return
 
-def train_and_save_quantile_models():
-    """Trains quantile models using a unified, robust approach."""
-    print("--- Starting Final Residual Fitting Pipeline (FINAL - No Heuristics) ---")
-
-    df = pd.read_csv(DATA_PATH)
+    print("\n--- Calculating Forecast Residuals ---")
     df.rename(columns={'wofost_forecast_yield_fresh_dt': 'stage1_forecast'}, inplace=True)
     df['forecast_residual'] = df['kreisYield'] - df['stage1_forecast']
-    df.dropna(subset=['stage1_forecast', 'forecast_residual'], inplace=True)
-    df.dropna(subset=FEATURE_COLS, inplace=True)
 
-    X_train = df[FEATURE_COLS]
-    y_train = df['forecast_residual']
-    print(f"\nTraining on {len(X_train)} samples to predict the forecast residuals.")
+    # CRITICAL FIX: Only drop rows where essential data for the target is missing.
+    # NGBoost can handle NaNs in other feature columns. This prevents massive data loss.
+    df.dropna(subset=['stage1_forecast', 'forecast_residual', 'kreisYield'], inplace=True)
+    print(" -> Target variable (forecast_residual) created.")
 
-    os.makedirs(MODEL_OUTPUT_DIR, exist_ok=True)
+    X = df[FEATURE_COLS]
+    y = df['forecast_residual']
+    print(f"\nTotal samples available: {len(X)}")
 
-    for name, alpha in QUANTILES.items():
-        print(f"\n--- Training {name.upper()} Residual Model (Quantile: {alpha}) ---")
+    # CRITICAL FIX: Create a time-series-aware validation set for early stopping.
+    # This prevents overfitting and stabilizes training.
+    train_end_idx = int(len(X) * 0.85)
+    X_train, y_train = X[:train_end_idx], y[:train_end_idx]
+    X_val, y_val = X[train_end_idx:], y[train_end_idx:]
+    print(f"Training on {len(X_train)} samples, validating on {len(X_val)} samples.")
 
-        model = XGBRegressor(
-            objective='reg:quantileerror',
-            quantile_alpha=alpha,
-            **BEST_PARAMS
-        )
+    # Initialize the NGBoost model with a validation set for early stopping
+    ngb_model = NGBRegressor(
+        Dist=Normal,
+        n_estimators=500,
+        learning_rate=0.05,
+        verbose=True,
+        random_state=42,
+        minibatch_frac=0.8  # Add regularization
+    )
 
-        # CRITICAL CHANGE: NO SAMPLE WEIGHTS.
-        # Let the model learn the quantiles directly from the data distribution.
-        model.fit(X_train, y_train)
+    print("\n--- Training NGBoost Model with Validation Set ---")
+    ngb_model.fit(X_train, y_train, X_val=X_val, Y_val=y_val, early_stopping_rounds=20)
 
-        model_path = os.path.join(MODEL_OUTPUT_DIR, f'final_quantile_model_{name}.joblib')
-        joblib.dump(model, model_path)
-        print(f"✅ {name.upper()} model saved to {model_path}")
-
-    print("\n--- All Residual Models Trained and Saved Successfully ---")
+    # Save the final model
+    os.makedirs(os.path.dirname(MODEL_OUTPUT_PATH), exist_ok=True)
+    joblib.dump(ngb_model, MODEL_OUTPUT_PATH)
+    print(f"\n✅ NGBoost model saved to {MODEL_OUTPUT_PATH}")
+    print("\n--- NGBoost Model Trained and Saved Successfully ---")
 
 
 if __name__ == "__main__":
-    train_and_save_quantile_models()
+    train_and_save_ngboost_model()

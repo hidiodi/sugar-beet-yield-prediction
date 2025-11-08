@@ -1,12 +1,7 @@
-# File: src/models/compare_model_versions.py
-# Description: This script provides a comprehensive performance comparison between different
-#              modeling approaches, including the Adaptive CQR model, a hybrid XGBoost model,
-#              and various time-series baselines.
+# File: src/03_analysis/compare_model_versions.py
+# Description: Generates final comparison plots for all models, including the champion ensemble.
 #
-# REVISED VERSION v10: The definitive version. Implements the proper Interval Score to
-#                      holistically evaluate prediction interval quality. The nominal
-#                      coverage is now correctly configured to 95%. The dashboard is
-#                      upgraded to three panels to visualize accuracy, sharpness, and score.
+# REVISED VERSION v13.2: Final version with all syntax and logic corrections.
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -14,214 +9,182 @@ import seaborn as sns
 import logging
 from pathlib import Path
 from sklearn.metrics import r2_score
-from sklearn.linear_model import LinearRegression
 import numpy as np
 import sys
-from tqdm import tqdm
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- Quantile Configuration ---
-# Define the ACTUAL column names for the lower and upper prediction bounds.
-LOWER_BOUND_COL_NAME = 'predicted_yield_lower'
-UPPER_BOUND_COL_NAME = 'predicted_yield_upper'
-
-# **CRITICAL**: Set the nominal coverage percentage that your interval represents.
-# For a 95% interval (e.g., from 2.5 to 97.5 quantiles, or 5 to 95), set this to 95.0.
 NOMINAL_COVERAGE_PERCENT = 95.0
-ALPHA = 1 - (NOMINAL_COVERAGE_PERCENT / 100.0)  # Alpha is the desired miss-rate (e.g., 0.05 for 95%)
+ALPHA = 1 - (NOMINAL_COVERAGE_PERCENT / 100.0)
 
 # --- Input Files ---
+FINAL_ENSEMBLE_PREDICTIONS_FILE = 'reports/figures/district_level_diagnostics/final_ensemble_champion/full_backtest_predictions.csv'
+NGBOOST_PREDICTIONS_FILE = 'reports/figures/district_level_diagnostics/final_ngboost_champion/full_backtest_predictions.csv'
 ADAPTIVE_CQR_PREDICTIONS_FILE = 'reports/figures/district_level_diagnostics/adaptive_cqr_champion/full_backtest_predictions.csv'
 HYBRID_XGB_PREDICTIONS_FILE = 'reports/figures/district_level_diagnostics/final_quantile_champion/full_backtest_predictions.csv'
-TIMESERIES_FORECAST_FILE = 'data/05_model_input/wofost_walkforward/final_honest_forecasts.csv'
 
-# --- Output Directory ---
-OUTPUT_DIR = Path('reports/figures/district_level_diagnostics/adaptive_cqr_champion')
+OUTPUT_DIR = Path('reports/figures/final_model_comparison')
 
+
+# --- Function Definitions ---
 
 def validate_dataframe_columns(df, required_cols, filename):
-    """Checks if a dataframe contains all required columns and logs errors if not."""
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
-        logging.error(f"❌ FATAL: Missing required columns in file: {filename}")
-        logging.error(f"   Missing columns: {missing_cols}")
-        logging.error(f"   Available columns are: {df.columns.tolist()}")
+        logging.error(f"❌ FATAL: Missing columns in {filename}: {missing_cols}")
         sys.exit(1)
     return True
 
+
 def calculate_interval_score(y_true, lower, upper, alpha):
-    """Calculates the Winkler Interval Score. Lower is better."""
+    """Calculates the Winkler Interval Score."""
     width = upper - lower
     penalty_lower = (2 / alpha) * (lower - y_true) * (y_true < lower)
     penalty_upper = (2 / alpha) * (y_true - upper) * (y_true > upper)
     return width + penalty_lower + penalty_upper
 
 
-def create_model_comparison_dashboard():
-    """
-    Generates a comprehensive dashboard comparing models on point accuracy (MAE)
-    and interval quality (Coverage, Width, and Interval Score).
-    """
-    logging.info("--- Starting Comprehensive Model Comparison Analysis ---")
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def plot_accuracy_comparison(yearly_stats, models, start_year, end_year):
+    """Generates the MAE comparison plot."""
+    plt.figure(figsize=(18, 8))
+    for name, spec in models.items():
+        plt.plot(yearly_stats['year'], yearly_stats[f'{name}_mae'], **spec)
 
-    # --- 1. Load All Data Sources ---
+    plt.title(f'Point Accuracy Comparison: Mean Absolute Error ({start_year}-{end_year})', fontsize=20)
+    plt.ylabel('Mean Absolute Error (MAE)', fontsize=14)
+    plt.xlabel('Year', fontsize=14)
+    plt.legend(fontsize=14, title="Model", title_fontsize=14)
+    plt.grid(True, which='both', linestyle=':', linewidth=0.7)
+    plt.xticks(yearly_stats['year'], rotation=45, ha="right")
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / f'comparison_01_accuracy_{start_year}-{end_year}.png', dpi=300)
+    plt.close()
+
+
+def plot_sharpness_comparison(yearly_stats, models_quantile, df_quantile_summary, start_year, end_year):
+    """Generates the Interval Width comparison plot."""
+    plt.figure(figsize=(18, 8))
+    for name, spec in models_quantile.items():
+        coverage = df_quantile_summary.loc[df_quantile_summary['Model'] == name, 'Coverage (%)'].iloc[0]
+        spec['label'] = f'{name} — Coverage: {coverage:.1f}%'
+        if name == 'Hybrid Ensemble':
+            spec['label'] += ' (CHAMPION)'
+        plt.plot(yearly_stats['year'], yearly_stats[f'{name}_width'], **spec)
+
+    plt.title(f'Interval Sharpness Comparison: Average Width ({start_year}-{end_year})', fontsize=20)
+    plt.ylabel('Average Interval Width', fontsize=14)
+    plt.xlabel('Year', fontsize=14)
+    plt.legend(fontsize=14, title="Model & Achieved Coverage", title_fontsize=14)
+    plt.grid(True, which='both', linestyle=':', linewidth=0.7)
+    plt.xticks(yearly_stats['year'], rotation=45, ha="right")
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / f'comparison_02_sharpness_{start_year}-{end_year}.png', dpi=300)
+    plt.close()
+
+
+def plot_score_comparison(yearly_stats, models_quantile, start_year, end_year):
+    """Generates the Interval Score comparison plot."""
+    plt.figure(figsize=(18, 8))
+    for name, spec in models_quantile.items():
+        spec['label'] = name
+        if name == 'Hybrid Ensemble':
+            spec['label'] += ' (CHAMPION)'
+        plt.plot(yearly_stats['year'], yearly_stats[f'{name}_score'], **spec)
+
+    plt.title(f'Overall Interval Quality: {int(NOMINAL_COVERAGE_PERCENT)}% Interval Score ({start_year}-{end_year})',
+              fontsize=20)
+    plt.ylabel('Mean Interval Score (Lower is Better)', fontsize=14)
+    plt.xlabel('Year', fontsize=14)
+    plt.legend(fontsize=14, title="Model", title_fontsize=14)
+    plt.grid(True, which='both', linestyle=':', linewidth=0.7)
+    plt.xticks(yearly_stats['year'], rotation=45, ha="right")
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / f'comparison_03_score_{start_year}-{end_year}.png', dpi=300)
+    plt.close()
+
+
+def main():
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    logging.info("--- Loading Final Model Predictions for Comparison ---")
+
     try:
-        logging.info(f"Loading Adaptive CQR predictions from: {ADAPTIVE_CQR_PREDICTIONS_FILE}")
-        df_adaptive_cqr = pd.read_csv(ADAPTIVE_CQR_PREDICTIONS_FILE)
-        logging.info(f"Columns found in Adaptive CQR file: {df_adaptive_cqr.columns.tolist()}")
-        logging.info(f"Loading Hybrid XGB predictions from: {HYBRID_XGB_PREDICTIONS_FILE}")
-        df_hybrid_xgb = pd.read_csv(HYBRID_XGB_PREDICTIONS_FILE)
-        logging.info(f"Columns found in Hybrid XGB file: {df_hybrid_xgb.columns.tolist()}")
-        logging.info(f"Loading time-series baselines from: {TIMESERIES_FORECAST_FILE}")
-        df_timeseries = pd.read_csv(TIMESERIES_FORECAST_FILE)
+        df_ensemble = pd.read_csv(FINAL_ENSEMBLE_PREDICTIONS_FILE)
+        df_xgb = pd.read_csv(HYBRID_XGB_PREDICTIONS_FILE)
+        df_cqr = pd.read_csv(ADAPTIVE_CQR_PREDICTIONS_FILE)
+        df_ngb = pd.read_csv(NGBOOST_PREDICTIONS_FILE)
     except FileNotFoundError as e:
-        logging.error(f"❌ FATAL: Input file not found. Details: {e}")
+        logging.error(f"❌ FATAL: Input file not found. Ensure all backtests have been run. Details: {e}")
         sys.exit(1)
 
-    # --- 2. Define required columns and VALIDATE DataFrames ---
-    cqr_required_cols = ['district_no', 'year', 'kreisYield', 'predicted_yield_median', LOWER_BOUND_COL_NAME, UPPER_BOUND_COL_NAME]
-    validate_dataframe_columns(df_adaptive_cqr, cqr_required_cols, ADAPTIVE_CQR_PREDICTIONS_FILE)
-    xgb_required_cols = ['district_no', 'year', 'predicted_yield_median', LOWER_BOUND_COL_NAME, UPPER_BOUND_COL_NAME]
-    validate_dataframe_columns(df_hybrid_xgb, xgb_required_cols, HYBRID_XGB_PREDICTIONS_FILE)
-    logging.info("✓ All data sources loaded and validated successfully.")
+    df_merged = df_ensemble.rename(
+        columns={'predicted_yield_median': 'Hybrid Ensemble_pred', 'predicted_yield_lower': 'Hybrid Ensemble_lower',
+                 'predicted_yield_upper': 'Hybrid Ensemble_upper'})
+    df_merged['Hybrid (TS+XGB)_pred'] = df_xgb['predicted_yield_median']
+    df_merged['Hybrid (TS+XGB)_lower'] = df_xgb['predicted_yield_lower']
+    df_merged['Hybrid (TS+XGB)_upper'] = df_xgb['predicted_yield_upper']
+    df_merged['Adaptive CQR_pred'] = df_cqr['predicted_yield_median']
+    df_merged['Adaptive CQR_lower'] = df_cqr['predicted_yield_lower']
+    df_merged['Adaptive CQR_upper'] = df_cqr['predicted_yield_upper']
+    df_merged['NGBoost_pred'] = df_ngb['predicted_yield_median']
+    df_merged['NGBoost_lower'] = df_ngb['predicted_yield_lower']
+    df_merged['NGBoost_upper'] = df_ngb['predicted_yield_upper']
 
-    # --- 3. Prepare Forecasts ---
-    logging.info("Preparing forecasts from all models for comparison...")
-    df_adaptive_cqr = df_adaptive_cqr[cqr_required_cols].rename(columns={
-        'predicted_yield_median': 'adaptive_cqr_pred',
-        LOWER_BOUND_COL_NAME: 'adaptive_cqr_lower',
-        UPPER_BOUND_COL_NAME: 'adaptive_cqr_upper'})
-    df_hybrid_xgb = df_hybrid_xgb[xgb_required_cols].rename(columns={
-        'predicted_yield_median': 'hybrid_xgb_pred',
-        LOWER_BOUND_COL_NAME: 'hybrid_xgb_lower',
-        UPPER_BOUND_COL_NAME: 'hybrid_xgb_upper'})
-    df_ts_final = df_timeseries[['district_no', 'year', 'final_corrected_forecast']].rename(columns={'final_corrected_forecast': 'ts_final_pred'})
-    df_ts_base = df_timeseries[['district_no', 'year', 'base_trend_forecast']].rename(columns={'base_trend_forecast': 'ts_base_pred'})
-
-    # --- 4. Merge DataFrames ---
-    df_merged = pd.merge(df_adaptive_cqr, df_hybrid_xgb, on=['district_no', 'year'], how='inner')
-    df_merged = pd.merge(df_merged, df_ts_final, on=['district_no', 'year'], how='inner')
-    df_merged = pd.merge(df_merged, df_ts_base, on=['district_no', 'year'], how='inner')
-    df_merged.dropna(inplace=True)
-    df_merged.sort_values(by=['district_no', 'year'], inplace=True)
-
-    # --- 5. Calculate Leak-Proof Linear Trend Baseline ---
-    # ... (Code remains the same) ...
-    logging.info("Calculating leak-proof basic linear trend...")
-    df_merged['basic_linear_trend_pred'] = np.nan
-    predictions = []
-    for district, group in tqdm(df_merged.groupby('district_no'), desc="Processing Districts for Trend Baseline"):
-        district_preds = []
-        for year_to_predict in group['year']:
-            train_df = group[group['year'] < year_to_predict]
-            if len(train_df) >= 2:
-                lr = LinearRegression()
-                lr.fit(train_df[['year']], train_df['kreisYield'])
-                prediction = lr.predict(pd.DataFrame({'year': [year_to_predict]}))
-                district_preds.append(prediction[0])
-            else:
-                district_preds.append(np.nan)
-        predictions.extend(district_preds)
-    df_merged['basic_linear_trend_pred'] = predictions
-    df_merged.dropna(subset=['basic_linear_trend_pred'], inplace=True)
-
-    # --- 6. Calculate Overall Performance Metrics ---
-    # Point forecast metrics
-    models_point = {
-        "Adaptive CQR": "adaptive_cqr_pred", "Hybrid (TS+XGB)": "hybrid_xgb_pred",
-        "TS (GAM+ARIMA)": "ts_final_pred", "TS (GAM Only)": "ts_base_pred",
-        "Linear Trend": "basic_linear_trend_pred"}
-    point_results = []
-    for name, pred_col in models_point.items():
-        mae = (df_merged[pred_col] - df_merged['kreisYield']).abs().mean()
-        r2 = r2_score(df_merged['kreisYield'], df_merged[pred_col])
-        point_results.append({'Model': name, 'MAE': mae, 'R-squared': r2})
-    df_summary = pd.DataFrame(point_results).sort_values('MAE').reset_index(drop=True)
-
-    print("\n" + "=" * 80)
-    print("      MODEL COMPARISON: POINT FORECAST ACCURACY (MEDIAN)")
-    print("=" * 80)
-    print(df_summary.to_string(index=False, float_format="%.4f"))
+    models_point = ["Hybrid Ensemble", "Hybrid (TS+XGB)", "Adaptive CQR", "NGBoost"]
+    point_results = [{'Model': name, 'MAE': (df_merged[f'{name}_pred'] - df_merged['kreisYield']).abs().mean(),
+                      'R-squared': r2_score(df_merged['kreisYield'], df_merged[f'{name}_pred'])} for name in
+                     models_point]
+    df_summary = pd.DataFrame(point_results).sort_values('MAE')
+    print("\n" + "=" * 80);
+    print("      POINT FORECAST ACCURACY");
+    print("=" * 80);
+    print(df_summary.to_string(index=False, float_format="%.4f"));
     print("=" * 80)
 
-    # --- 7. Quantile Quality Analysis (Coverage, Width, and Interval Score) ---
-    logging.info("Performing comprehensive quantile quality analysis...")
+    models_quantile = ["Hybrid Ensemble", "Adaptive CQR", "Hybrid (TS+XGB)", "NGBoost"]
     quantile_results = []
-    quantile_models = {"Adaptive CQR": ("adaptive_cqr_lower", "adaptive_cqr_upper"),
-                       "Hybrid (TS+XGB)": ("hybrid_xgb_lower", "hybrid_xgb_upper")}
-    for name, (lower_col, upper_col) in quantile_models.items():
-        df_merged[f'{name}_width'] = df_merged[upper_col] - df_merged[lower_col]
-        df_merged[f'{name}_score'] = calculate_interval_score(df_merged['kreisYield'], df_merged[lower_col], df_merged[upper_col], ALPHA)
-        avg_width = df_merged[f'{name}_width'].mean()
-        avg_score = df_merged[f'{name}_score'].mean()
-        is_covered = (df_merged['kreisYield'] >= df_merged[lower_col]) & (df_merged['kreisYield'] <= df_merged[upper_col])
-        coverage_percent = is_covered.mean() * 100
-        quantile_results.append({
-            'Model': name, 'Interval Score (Lower is Better)': avg_score,
-            'Coverage (%)': coverage_percent, 'Nominal Coverage (%)': NOMINAL_COVERAGE_PERCENT,
-            'Avg. Interval Width': avg_width})
-    df_quantile_summary = pd.DataFrame(quantile_results).sort_values('Interval Score (Lower is Better)').reset_index(drop=True)
-
-    print("\n" + "=" * 80)
-    print(f"      MODEL COMPARISON: PREDICTION INTERVAL QUALITY ({int(NOMINAL_COVERAGE_PERCENT)}% Interval)")
+    for name in models_quantile:
+        score = calculate_interval_score(df_merged['kreisYield'], df_merged[f'{name}_lower'],
+                                         df_merged[f'{name}_upper'], ALPHA).mean()
+        coverage = ((df_merged['kreisYield'] >= df_merged[f'{name}_lower']) & (
+                    df_merged['kreisYield'] <= df_merged[f'{name}_upper'])).mean() * 100
+        width = (df_merged[f'{name}_upper'] - df_merged[f'{name}_lower']).mean()
+        quantile_results.append({'Model': name, 'Interval Score': score, 'Coverage (%)': coverage, 'Width': width})
+    df_quantile_summary = pd.DataFrame(quantile_results).sort_values('Interval Score')
+    print("\n" + "=" * 80);
+    print(f"      PREDICTION INTERVAL QUALITY ({int(NOMINAL_COVERAGE_PERCENT)}%)");
+    print("=" * 80);
+    print(df_quantile_summary.to_string(index=False, float_format="%.4f"));
     print("=" * 80)
-    print(df_quantile_summary.to_string(index=False, float_format="%.4f"))
-    print("=" * 80 + "\n")
 
-    # --- 8. Prepare Data for Plotting ---
-    for name, pred_col in models_point.items():
-        df_merged[f'{name}_mae'] = (df_merged[pred_col] - df_merged['kreisYield']).abs()
+    logging.info("Generating final comparison plots...")
+    for name in models_point: df_merged[f'{name}_mae'] = (df_merged[f'{name}_pred'] - df_merged['kreisYield']).abs()
+    for name in models_quantile:
+        df_merged[f'{name}_width'] = df_merged[f'{name}_upper'] - df_merged[f'{name}_lower']
+        df_merged[f'{name}_score'] = calculate_interval_score(df_merged['kreisYield'], df_merged[f'{name}_lower'],
+                                                              df_merged[f'{name}_upper'], ALPHA)
+
+    # CORRECT SYNTAX: Use .agg() with a dictionary to only calculate mean on numeric columns
     agg_dict = {f'{name}_mae': 'mean' for name in models_point}
-    agg_dict.update({f'{name}_width': 'mean' for name in quantile_models})
-    agg_dict.update({f'{name}_score': 'mean' for name in quantile_models})
+    agg_dict.update({f'{name}_width': 'mean' for name in models_quantile})
+    agg_dict.update({f'{name}_score': 'mean' for name in models_quantile})
     yearly_stats = df_merged.groupby('year').agg(agg_dict).reset_index()
 
-    # --- 9. Generate the Final 3-Panel Dashboard Plot ---
-    logging.info("Generating final 3-panel model comparison dashboard...")
-    sns.set_style("whitegrid")
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(20, 24), sharex=True)
     start_year, end_year = yearly_stats['year'].min(), yearly_stats['year'].max()
-    fig.suptitle(f'Comprehensive Model Performance Comparison ({start_year}-{end_year})', fontsize=28, y=0.98)
 
-    # Panel 1: Accuracy Comparison (MAE)
-    ax1.plot(yearly_stats['year'], yearly_stats['Linear Trend_mae'], marker='o', color='grey', linestyle=':', label='Linear Trend')
-    ax1.plot(yearly_stats['year'], yearly_stats['TS (GAM Only)_mae'], marker='x', color='cornflowerblue', linestyle='--', label='TS (GAM Only)')
-    ax1.plot(yearly_stats['year'], yearly_stats['TS (GAM+ARIMA)_mae'], marker='^', color='slateblue', linestyle='--', label='TS (GAM+ARIMA)')
-    ax1.plot(yearly_stats['year'], yearly_stats['Hybrid (TS+XGB)_mae'], marker='s', color='darkorange', linewidth=2.5, label='Hybrid (TS+XGB)')
-    ax1.plot(yearly_stats['year'], yearly_stats['Adaptive CQR_mae'], marker='*', markersize=10, color='darkgreen', linewidth=3.5, label='Adaptive CQR')
-    ax1.set_title('Panel 1: Point Accuracy - Mean Absolute Error by Year (Lower is Better)', fontsize=20, pad=10)
-    ax1.set_ylabel('Mean Absolute Error (MAE)', fontsize=16)
-    ax1.legend(fontsize=16, title="Model", title_fontsize=16)
+    models_to_plot = {
+        "NGBoost": {'marker': 'D', 'color': 'firebrick', 'linewidth': 2.0},
+        "Hybrid (TS+XGB)": {'marker': 's', 'color': 'darkorange', 'linewidth': 2.5},
+        "Adaptive CQR": {'marker': '*', 'markersize': 10, 'color': 'darkgreen', 'linewidth': 2.0},
+        "Hybrid Ensemble": {'marker': 'P', 'markersize': 12, 'color': 'purple', 'linewidth': 3.5}
+    }
 
-    # Panel 2: Interval Sharpness (Width)
-    cqr_cov = df_quantile_summary.loc[df_quantile_summary['Model'] == 'Adaptive CQR', 'Coverage (%)'].iloc[0]
-    hybrid_cov = df_quantile_summary.loc[df_quantile_summary['Model'] == 'Hybrid (TS+XGB)', 'Coverage (%)'].iloc[0]
-    ax2.plot(yearly_stats['year'], yearly_stats['Hybrid (TS+XGB)_width'], marker='s', color='darkorange', linewidth=2.5, label=f'Hybrid (TS+XGB) — Overall Coverage: {hybrid_cov:.1f}%')
-    ax2.plot(yearly_stats['year'], yearly_stats['Adaptive CQR_width'], marker='*', markersize=10, color='darkgreen', linewidth=3.5, label=f'Adaptive CQR — Overall Coverage: {cqr_cov:.1f}%')
-    ax2.set_title('Panel 2: Interval Sharpness - Average Width by Year (Lower is Better)', fontsize=20, pad=10)
-    ax2.set_ylabel('Average Interval Width', fontsize=16)
-    ax2.legend(fontsize=16, title="Model & Achieved Coverage", title_fontsize=16)
+    plot_accuracy_comparison(yearly_stats, models_to_plot, start_year, end_year)
+    plot_sharpness_comparison(yearly_stats, models_to_plot, df_quantile_summary, start_year, end_year)
+    plot_score_comparison(yearly_stats, models_to_plot, start_year, end_year)
 
-    # Panel 3: Overall Interval Quality (Score)
-    ax3.plot(yearly_stats['year'], yearly_stats['Hybrid (TS+XGB)_score'], marker='s', color='darkorange', linewidth=2.5, label='Hybrid (TS+XGB)')
-    ax3.plot(yearly_stats['year'], yearly_stats['Adaptive CQR_score'], marker='*', markersize=10, color='darkgreen', linewidth=3.5, label='Adaptive CQR')
-    ax3.set_title(f'Panel 3: Overall Interval Quality - {int(NOMINAL_COVERAGE_PERCENT)}% Interval Score by Year (Lower is Better)', fontsize=20, pad=10)
-    ax3.set_ylabel('Mean Interval Score', fontsize=16)
-    ax3.set_xlabel('Year', fontsize=16)
-    ax3.legend(fontsize=16, title="Model", title_fontsize=16)
+    logging.info(f"✓ Final comparison plots saved successfully to: {OUTPUT_DIR}")
 
-    for ax in [ax1, ax2, ax3]:
-        ax.grid(True, which='both', linestyle=':', linewidth=0.7)
-    plt.xticks(yearly_stats['year'], rotation=45, ha="right")
-    plt.tight_layout(rect=[0, 0.03, 1, 0.96])
-    output_filename = f'model_comparison_dashboard_v3_final_{start_year}-{end_year}.png'
-    output_path = OUTPUT_DIR / output_filename
-    plt.savefig(output_path, dpi=300)
-    logging.info(f"✓ Final 3-panel dashboard saved successfully to: {output_path}")
-    plt.show()
 
 if __name__ == '__main__':
-    create_model_comparison_dashboard()
+    main()
