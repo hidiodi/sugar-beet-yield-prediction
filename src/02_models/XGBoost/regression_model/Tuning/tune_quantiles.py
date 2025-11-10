@@ -1,29 +1,31 @@
 # File: src/models/tune_xgboost_for_intervals.py
-# Description: An advanced hyperparameter tuning script that optimizes for the overall
-#              quality of the prediction interval, not just individual quantiles.
+# Description: A hyperparameter tuning script that optimizes each quantile model (lower,
+#              median, upper) independently to find the best possible parameters for each task.
+#              This script is fully integrated with the project's config file.
 #
-# REVISED VERSION v6: The objective function now trains all three quantile models
-#                     simultaneously and minimizes a combined metric of the Interval Score
-#                     and the Median Pinball Loss to combat overconfidence.
+# REVISED VERSION v8: Implements separate tuning for each quantile model.
 
 import pandas as pd
 from xgboost import XGBRegressor
 import numpy as np
-import os
 import warnings
 import optuna
+import sys
+from pathlib import Path
 
+# --- Project Setup ---
 warnings.filterwarnings("ignore")
+# Ensure the project root is in the Python path for module imports
+project_root = Path(__file__).resolve().parents[5]
+sys.path.insert(0, str(project_root))
+from src import config
 
-# --- CONFIGURATION ---
-N_TRIALS = 100  # Increased trials for a more complex search space
-STUDY_NAME = "xgb_yield_INTERVAL_tuning_v6"
-VALIDATION_START_YEAR = 2007
-VALIDATION_END_YEAR = 2014
-QUANTILES = {'lower': 0.025, 'median': 0.5, 'upper': 0.975}
+# --- Load Configuration ---
+TUNE_CONFIG = config.XGBOOST_TUNING_CONFIG
+TRAIN_CONFIG = config.XGBOOST_TRAINING_CONFIG
 
 
-# --- METRIC FUNCTIONS ---
+# --- METRIC FUNCTION ---
 def pinball_loss(y_true, y_pred, alpha):
     """Calculates the pinball loss, the correct metric for quantile regression."""
     delta = y_true - y_pred
@@ -31,146 +33,129 @@ def pinball_loss(y_true, y_pred, alpha):
     return np.mean(loss)
 
 
-def interval_score(y_true, lower, upper, alpha):
+def load_and_prepare_data(train_config):
     """
-    Calculates the Winkler Interval Score. A holistic metric for interval quality.
-    Penalizes wide intervals and heavily penalizes intervals that miss the true value. Lower is better.
+    Loads data using paths from the config file and prepares the target variable (forecast residuals).
+    It also validates the feature set against the config.
     """
-    width = upper - lower
-    # Penalty for when the true value is below the lower bound
-    penalty_lower = (2 / alpha) * (lower - y_true) * (y_true < lower)
-    # Penalty for when the true value is above the upper bound
-    penalty_upper = (2 / alpha) * (y_true - upper) * (y_true > upper)
-    return np.mean(width + penalty_lower + penalty_upper)
-
-
-def load_and_prepare_data():
-    """Loads data and prepares the target variable (forecast residuals)."""
-    file_path = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
+    file_path = train_config['DATA_PATH']
     try:
         df = pd.read_csv(file_path)
     except FileNotFoundError:
-        print("Error: Please run the updated feature engineering script first.")
+        print(f"Error: The input file was not found at {file_path}. Please run the feature engineering script first.")
         return None, None, None
 
-    # --- Use the same residual-fitting approach as the final model ---
+    # Use the same residual-fitting approach as the final model
     df.rename(columns={'wofost_forecast_yield_fresh_dt': 'stage1_forecast'}, inplace=True)
     df['forecast_residual'] = df['kreisYield'] - df['stage1_forecast']
     df.dropna(subset=['stage1_forecast', 'forecast_residual'], inplace=True)
 
-    # Define the feature set (ensure this matches your training script)
-    feature_cols = [
-        'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly', 'antecedent_gdd_sum_anomaly',
-        # ... (Include the FULL list of features from your training script)
-        'is_drought_high_clay_in_state_11'
-    ]
+    # Get feature list directly from the training configuration
+    feature_cols = train_config['FEATURE_COLS']
 
-    # For simplicity in this example, ensure all feature columns from your training script are listed here.
-    # A robust way is to load them from a shared config file.
-
-    # Quick check for missing features in the dataframe
-    df_feature_cols = [col for col in feature_cols if col in df.columns]
-    if len(df_feature_cols) != len(feature_cols):
-        missing_in_df = set(feature_cols) - set(df.columns)
-        print(f"Warning: The following features are defined but not in the dataframe: {missing_in_df}")
+    # Validate that all configured features are present in the dataframe
+    missing_in_df = set(feature_cols) - set(df.columns)
+    if missing_in_df:
+        print(
+            f"CRITICAL WARNING: The following features from the config are MISSING from the input data: {missing_in_df}")
+        feature_cols = [col for col in feature_cols if col in df.columns]
+        print(f"Proceeding with {len(feature_cols)} available features.")
 
     print("Data loaded and prepared successfully.")
-    return df, df_feature_cols, 'forecast_residual'
+    return df, feature_cols, 'forecast_residual'
 
 
-def objective(trial, df, feature_cols, target_col):
+def objective_quantile(trial, df, feature_cols, target_col, alpha, tune_config):
     """
-    Objective function for Optuna. Trains all three models and optimizes a combined
-    score for interval quality and median accuracy.
+    Generic objective function for Optuna. Trains a SINGLE quantile model and optimizes
+    its pinball loss.
     """
-    # These hyperparameters will be shared across all three models
+    # Define the hyperparameter search space for this trial
     params = {
-        'n_estimators': trial.suggest_int('n_estimators', 500, 1500),
-        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.05, log=True),
-        'max_depth': trial.suggest_int('max_depth', 4, 8),
-        'subsample': trial.suggest_float('subsample', 0.7, 1.0),
-        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.7, 1.0),
-        'gamma': trial.suggest_float('gamma', 1, 10),
-        'min_child_weight': trial.suggest_int('min_child_weight', 1, 8),
+        'objective': 'reg:quantileerror',
+        'quantile_alpha': alpha,
+        'n_estimators': trial.suggest_int('n_estimators', 400, 2000),
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
+        'max_depth': trial.suggest_int('max_depth', 3, 9),
+        'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+        'gamma': trial.suggest_float('gamma', 0.5, 20),
+        'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
         'random_state': 42,
         'n_jobs': -1
     }
 
-    all_predictions = []
-    for year_to_predict in range(VALIDATION_START_YEAR, VALIDATION_END_YEAR + 1):
+    # Get validation years from config
+    validation_start = tune_config['VALIDATION_START_YEAR']
+    validation_end = tune_config['VALIDATION_END_YEAR']
+
+    all_losses = []
+    for year_to_predict in range(validation_start, validation_end + 1):
         train_df = df[df['year'] < year_to_predict]
         test_df = df[df['year'] == year_to_predict]
         if test_df.empty or train_df.empty:
             continue
 
         X_train, y_train = train_df[feature_cols], train_df[target_col]
-        X_test = test_df[feature_cols]
+        X_test, y_test = test_df[feature_cols], test_df[target_col]
 
-        # --- Train a model for each quantile using the same hyperparameters ---
-        models = {}
-        for name, alpha in QUANTILES.items():
-            model = XGBRegressor(objective='reg:quantileerror', quantile_alpha=alpha, **params)
-            model.fit(X_train, y_train)
-            models[name] = model
+        model = XGBRegressor(**params)
+        model.fit(X_train, y_train)
 
-        # --- Generate predictions for all quantiles ---
-        fold_results = test_df[['kreisYield', 'stage1_forecast']].copy()
-        # Predict the residual and then add back the Stage 1 forecast
-        fold_results['pred_lower'] = models['lower'].predict(X_test) + test_df['stage1_forecast']
-        fold_results['pred_median'] = models['median'].predict(X_test) + test_df['stage1_forecast']
-        fold_results['pred_upper'] = models['upper'].predict(X_test) + test_df['stage1_forecast']
-        all_predictions.append(fold_results)
+        # Predict the residual
+        y_pred_residual = model.predict(X_test)
 
-    if not all_predictions:
+        # We evaluate the loss on the RESIDUAL, as that's what the model is trained on.
+        loss = pinball_loss(y_test, y_pred_residual, alpha)
+        all_losses.append(loss)
+
+    if not all_losses:
         return float('inf')
 
-    results_df = pd.concat(all_predictions)
-
-    # --- Calculate the final combined loss metric ---
-    # 1. The quality of the interval
-    alpha_for_score = 1 - (QUANTILES['upper'] - QUANTILES['lower'])
-    score = interval_score(results_df['kreisYield'], results_df['pred_lower'], results_df['pred_upper'],
-                           alpha_for_score)
-
-    # 2. The accuracy of the median
-    median_loss = pinball_loss(results_df['kreisYield'], results_df['pred_median'], QUANTILES['median'])
-
-    # Return a combined score to balance both goals
-    return score + median_loss
+    return np.mean(all_losses)
 
 
 if __name__ == "__main__":
-    data, feature_cols, target_col = load_and_prepare_data()
+    data, feature_cols, target_col = load_and_prepare_data(TRAIN_CONFIG)
 
-    if data is not None:
-        storage_name = f"sqlite:///{STUDY_NAME}.db"
-        study = optuna.create_study(direction='minimize', study_name=STUDY_NAME, storage=storage_name,
-                                    load_if_exists=True)
+    if data is not None and feature_cols:
+        quantiles = TRAIN_CONFIG['QUANTILES']
+        storage_name = f"sqlite:///{TUNE_CONFIG['STORAGE_DB_NAME']}"
+        all_best_params = {}
 
-        print(f"\n--- Starting unified hyperparameter tuning for INTERVAL QUALITY ---")
-        print(f"Using study: {STUDY_NAME}")
+        for name, alpha in quantiles.items():
+            study_name = TUNE_CONFIG['STUDY_NAMES'][name]
+            study = optuna.create_study(direction='minimize', study_name=study_name, storage=storage_name,
+                                        load_if_exists=True)
 
-        study.optimize(
-            lambda trial: objective(trial, data, feature_cols, target_col),
-            n_trials=N_TRIALS,
-            show_progress_bar=True
-        )
+            print("\n" + "=" * 50)
+            print(f"--- Starting SEPARATE hyperparameter tuning for {name.upper()} model (alpha={alpha}) ---")
+            print(f"Using study: {study_name} in database {TUNE_CONFIG['STORAGE_DB_NAME']}")
+            print("=" * 50)
 
-        print("\n\n" + "=" * 50)
-        print("      INTERVAL TUNING FINISHED!")
-        print("=" * 50)
+            study.optimize(
+                lambda trial: objective_quantile(trial, data, feature_cols, target_col, alpha, TUNE_CONFIG),
+                n_trials=TUNE_CONFIG['N_TRIALS_PER_MODEL'],
+                show_progress_bar=True
+            )
+            all_best_params[name] = study.best_params
 
-        print("\nBest Hyperparameters for the Interval Model:")
-        print(f"-> USE THIS DICTIONARY FOR ALL THREE (LOWER, MEDIAN, UPPER) MODELS <-\n")
-        print(f"BEST_INTERVAL_PARAMS = {{")
-        for key, value in study.best_params.items():
-            if isinstance(value, str):
-                print(f"    '{key}': '{value}',")
-            elif isinstance(value, float):
-                print(f"    '{key}': {value:.6f},")
-            else:
-                print(f"    '{key}': {value},")
-        print("    'random_state': 42,")
-        print("    'n_jobs': -1")
-        print("}")
-        print("\nCopy this dictionary into your final training script and replace 'BEST_PARAMS'.")
+        print("\n\n" + "=" * 60)
+        print("      SEPARATE QUANTILE MODEL TUNING FINISHED!")
+        print("=" * 60)
+
+        for name, params in all_best_params.items():
+            print(f"\n--- Best Hyperparameters for the {name.upper()} Model ---")
+            print(f"BEST_PARAMS_{name.upper()} = {{")
+            for key, value in params.items():
+                if isinstance(value, str):
+                    print(f"    '{key}': '{value}',")
+                elif isinstance(value, float):
+                    print(f"    '{key}': {value:.6f},")
+                else:
+                    print(f"    '{key}': {value},")
+            print("    'random_state': 42,")
+            print("    'n_jobs': -1")
+            print("}")
+
+        print("\n\nUpdate your training script to use these separate parameter sets for each respective model.")

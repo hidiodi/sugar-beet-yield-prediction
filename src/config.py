@@ -22,13 +22,16 @@ SCRIPTS_TO_RUN = [
     #"src/02_models/Wofost7.1/run_wofost_pipeline.py",
     #"src/02_models/Wofost7.1/apply_detrending_correction.py",
     #"src/01_data/FeatureEngineering/build_stage1_features.py",
-    "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py",
-    "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",
+    #"src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
+    #"src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
+    "src/02_models/XGBoost/regression_model/ModelScripts/train_standalone_xgb_model.py", # uses wofost as a simple input and trains with detrended yield as target
+    "src/02_models/XGBoost/regression_model/Testing/backtest_standalone_xgb_model.py", # uses wofost as a simple input and trains with detrended yield as target
     #"src/02_models/NGboost/train_final_ngboost_model.py",
     #"src/02_models/NGboost/backtest_final_ngboost_model.py",
     #"src/02_models/FinalEnsemble/backtest_final_ensemble.py",
     "src/03_analysis/basic_analysis/compare_model_versions.py",
-    "src/03_analysis/shap_analysis_xgb.py",
+    #"src/02_models/XGBoost/regression_model/Tuning/tune_quantiles.py",
+    #"src/03_analysis/shap_analysis_xgb.py",
     #"src/03_analysis/run_hybrid_analysis_pipeline.py",
 ]
 
@@ -138,10 +141,15 @@ FEATURE_ENGINEERING_CONFIG = {
 }
 
 # --- XGBoost Model Training Configuration ---
+# --- XGBoost Model Training Configuration ---
+# --- XGBoost Model Training Configuration ---
 XGBOOST_TRAINING_CONFIG = {
     'DATA_PATH': DATA_DIR / '05_model_input/stage1_preseason_features.csv',
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models',
     'FEATURE_COLS': [
+        # --- Trend & Technology Proxy ---
+        'national_avg_yield_lag1',
+
         # --- Antecedent Weather Features (Observed by March) ---
         'antecedent_precip_sum',
         'antecedent_frost_days',
@@ -149,74 +157,128 @@ XGBOOST_TRAINING_CONFIG = {
         'antecedent_gdd_sum_anomaly',
 
         # --- Seasonal Forecast - Central Tendency (Ensemble Mean) ---
-        'spring_temp_anomaly_mean',
-        'spring_precip_anomaly_mean',
-        'summer_temp_anomaly_mean',
-        'summer_precip_anomaly_mean',
+        'spring_temp_anomaly_forecast_mean',
+        'spring_precip_anomaly_forecast_mean',
+        'summer_temp_anomaly_forecast_mean',
+        'summer_precip_anomaly_forecast_mean',
 
         # --- Seasonal Forecast - Uncertainty & Spread (Ensemble Std Dev) ---
-        'spring_temp_anomaly_std',
-        'summer_temp_anomaly_std',
-        'spring_precip_anomaly_std',
-        'summer_precip_anomaly_std',
-        'forecast_uncertainty_summer_temp',  # (Duplicate of summer_temp_anomaly_std, but explicit)
+        'spring_temp_anomaly_forecast_std',
+        'summer_temp_anomaly_forecast_std',
+        'spring_precip_anomaly_forecast_std',
+        'summer_precip_anomaly_forecast_std',
 
         # --- Seasonal Forecast - Tail Risk (Ensemble Quantiles) ---
-        'spring_temp_anomaly_p10',
-        'spring_temp_anomaly_p90',
-        'summer_temp_anomaly_p10',
-        'summer_temp_anomaly_p90',
-        'summer_precip_anomaly_p10',
-        'summer_precip_anomaly_p90',
+        'spring_temp_anomaly_forecast_p10',
+        'spring_temp_anomaly_forecast_p90',
+        'summer_temp_anomaly_forecast_p10',
+        'summer_temp_anomaly_forecast_p90',
+        'summer_precip_anomaly_forecast_p10',
+        'summer_precip_anomaly_forecast_p90',
+
+        # --- Monthly Summer Temperature Risk ---
+        'june_temp_anomaly_p10',
+        'july_temp_anomaly_p10',
+        'august_temp_anomaly_p10',
+
+        # --- Solar Radiation Forecast Features ---
+        'summer_solar_rad_anomaly_forecast_mean',
+        'summer_solar_rad_anomaly_forecast_std',
+        'summer_solar_rad_anomaly_forecast_p10',
+        'summer_solar_rad_anomaly_forecast_p90',
 
         # --- Seasonal Forecast - Probabilistic Risk Features ---
-        'prob_hot_summer',  # Probability of summer temp anomaly > +1.5C
-        'prob_dry_summer',  # Probability of summer precip anomaly < -0.5 mm/day
+        'prob_hot_summer',
+        'prob_dry_summer',
 
-        # --- Static Geographic & Soil Features (Unchanged) ---
+        # --- Static Geographic & Soil Features ---
         'lat', 'lon', 'avg_elevation', 'avg_slope',
         'avg_bdod_0_30cm', 'avg_clay_0_30cm', 'avg_sand_0_30cm',
         'avg_som_0_30cm', 'avg_phh2o_0_30cm',
 
-        # --- Satellite Features (Unchanged) ---
+        # --- Satellite Features ---
         'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly',
         'winter_cropland_LST_mean', 'winter_cropland_LST_anomaly',
         'winter_cropland_snow_cover_days',
 
-        # --- Teleconnection Indices (Unchanged) ---
+        # --- Teleconnection Indices ---
         'nao_winter_avg', 'sca_winter_avg', 'enso_mei_winter_avg',
 
-        # --- Lagged Economic Features & Anomalies (Unchanged) ---
+        # --- Lagged Economic Features & Anomalies ---
         'profit_margin_proxy_lag1', 'cost_of_inputs_lag1',
         'producer_price_index_lag1_anomaly', 'seed_price_index_lag1_anomaly',
         'energy_price_index_lag1_anomaly', 'plant_protection_price_index_lag1_anomaly',
         'fertilizer_price_index_lag1_anomaly_capped', 'is_fertilizer_price_extreme',
 
-        # --- Stage 1 Model & Hybrid Features ---
-        'wofost_forecast_yield_fresh_dt',  # Renamed from 'stage1_forecast' to match CSV
+        # --- WOFOST-Related Hybrid Features (but NOT the forecast itself) ---
         'wofost_forecast_x_profit_margin',
         'has_wofost_data',
 
-        # --- General Regional & Temporal Features (Unchanged) ---
+        # --- General Regional & Temporal Features ---
         'state_encoded',
         'year_trend',
 
-        # --- Interaction & Risk Features (Updated to use new, robust inputs) ---
-        'gdd_x_fertilizer_price',  # Interaction of antecedent heat and input cost
-        'hot_dry_interaction',  # Interaction of mean summer heat and mean dryness forecast
-        'forecast_hot_dry_risk_p90',  # Advanced Risk: Pessimistic heat (p90) x Pessimistic dryness (p10)
-        'lat_x_summer_temp',  # Interaction of geography and mean summer heat forecast
-        'sandy_soil_x_drought',  # Interaction of soil type and mean summer dryness forecast
+        # --- Interaction & Risk Features ---
+        'gdd_x_fertilizer_price',
+        'hot_dry_interaction',
+        'forecast_hot_dry_risk_p90',
+        'profit_margin_proxy_lag1_x_spring_temp_anomaly_mean',
+        'antecedent_precip_sum_x_spring_temp_anomaly_mean',
+
+        'summer_temp_forecast_range',
+        'summer_precip_forecast_range',
+        'enso_x_spring_temp_forecast',
+        'sca_x_spring_temp_forecast',
     ],
-    'BEST_PARAMS': {
-        'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,
-        'subsample': 0.922850, 'colsample_bytree': 0.811573, 'gamma': 1.830853,
-        'min_child_weight': 2, 'random_state': 42, 'n_jobs': -1
+    'BEST_PARAMS_LOWER': {
+        'n_estimators': 1397,
+        'learning_rate': 0.070545,
+        'max_depth': 9,
+        'subsample': 0.612895,
+        'colsample_bytree': 0.957773,
+        'gamma': 2.371925,
+        'min_child_weight': 7,
+        'random_state': 42,
+        'n_jobs': -1
     },
-'QUANTILES': {'lower': 0.025, 'median': 0.5, 'upper': 0.975},
+    'BEST_PARAMS_MEDIAN': {
+        'n_estimators': 1433,
+        'learning_rate': 0.055466,
+        'max_depth': 5,
+        'subsample': 0.954196,
+        'colsample_bytree': 0.854452,
+        'gamma': 6.528400,
+        'min_child_weight': 9,
+        'random_state': 42,
+        'n_jobs': -1
+    },
+    'BEST_PARAMS_UPPER': {
+        'n_estimators': 1374,
+        'learning_rate': 0.098116,
+        'max_depth': 9,
+        'subsample': 0.804305,
+        'colsample_bytree': 0.875319,
+        'gamma': 10.142525,
+        'min_child_weight': 6,
+        'random_state': 42,
+        'n_jobs': -1
+    },
+    'QUANTILES': {'lower': 0.025, 'median': 0.5, 'upper': 0.975},
     'LOWER_MODEL_PATH': BASE_DIR / 'src/models/final_quantile_model_lower.joblib',
     'MEDIAN_MODEL_PATH': BASE_DIR / 'src/models/final_quantile_model_median.joblib',
     'UPPER_MODEL_PATH': BASE_DIR / 'src/models/final_quantile_model_upper.joblib'
+}
+# --- XGBoost Model Tuning Configuration ---
+XGBOOST_TUNING_CONFIG = {
+    'N_TRIALS_PER_MODEL': 75,  # Number of trials for EACH quantile model
+    'STUDY_NAMES': {
+        'lower': "xgb_yield_LOWER_tuning_v7",
+        'median': "xgb_yield_MEDIAN_tuning_v7",
+        'upper': "xgb_yield_UPPER_tuning_v7"
+    },
+    'VALIDATION_START_YEAR': 2007,
+    'VALIDATION_END_YEAR': 2014,
+    'STORAGE_DB_NAME': "xgb_yield_separate_tuning_v7.db" # A single DB can hold multiple studies
 }
 
 # --- Backtesting Configuration ---
@@ -242,6 +304,41 @@ ENSEMBLE_BACKTESTING_CONFIG = {
     'NOMINAL_COVERAGE': 0.95
 }
 
+STANDALONE_XGB_CONFIG = {
+    # UPDATED: Point back to the ORIGINAL source file.
+    'DATA_PATH': DATA_DIR / '05_model_input/stage1_preseason_features.csv',
+    'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models/standalone_xgb',
+
+    'FEATURE_COLS': XGBOOST_TRAINING_CONFIG['FEATURE_COLS'] + [
+        'wofost_forecast_yield_fresh_dt'
+    ],
+
+    # The script will CREATE and use 'yield_detrended' as the target
+    'TARGET_COL': 'yield_detrended',
+
+    'BEST_PARAMS_LOWER': XGBOOST_TRAINING_CONFIG['BEST_PARAMS_LOWER'],
+    'BEST_PARAMS_MEDIAN': XGBOOST_TRAINING_CONFIG['BEST_PARAMS_MEDIAN'],
+    'BEST_PARAMS_UPPER': XGBOOST_TRAINING_CONFIG['BEST_PARAMS_UPPER'],
+
+    'QUANTILES': {'lower': 0.025, 'median': 0.5, 'upper': 0.975},
+
+    'LOWER_MODEL_PATH': BASE_DIR / 'src/models/standalone_xgb/standalone_model_lower.joblib',
+    'MEDIAN_MODEL_PATH': BASE_DIR / 'src/models/standalone_xgb/standalone_model_median.joblib',
+    'UPPER_MODEL_PATH': BASE_DIR / 'src/models/standalone_xgb/standalone_model_upper.joblib'
+}
+
+# --- Standalone XGBoost Backtesting Configuration (OVERRIDDEN) ---
+STANDALONE_BACKTESTING_CONFIG = {
+    'GEOJSON_PATH': DATA_DIR / '01_raw/districts_official.geojson',
+    'REPORT_DIR': BASE_DIR / 'reports/figures/district_level_diagnostics/standalone_xgb_champion',
+    'BACKTEST_START_YEAR': 2000,
+    'BACKTEST_END_YEAR': 2024,
+    'LOW_DATA_THRESHOLD': 10,
+    'MIN_DATAPOINTS_FOR_PLOT': 10,
+    'CALIBRATION_SET_SIZE': 0.15,
+    'NOMINAL_COVERAGE': 0.95
+}
+
 # --- Model Comparison Configuration ---
 MODEL_COMPARISON_CONFIG = {
     'NOMINAL_COVERAGE_PERCENT': 95.0,
@@ -249,6 +346,7 @@ MODEL_COMPARISON_CONFIG = {
     'NGBOOST_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/final_ngboost_champion/full_backtest_predictions.csv',
     'ADAPTIVE_CQR_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/adaptive_cqr_champion/full_backtest_predictions.csv',
     'HYBRID_XGB_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/final_quantile_champion/full_backtest_predictions.csv',
+    'STANDALONE_XGB_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/standalone_xgb_champion/full_backtest_predictions.csv',
     'OUTPUT_DIR': BASE_DIR / 'reports/figures/final_model_comparison'
 }
 
