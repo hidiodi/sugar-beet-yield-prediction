@@ -30,7 +30,7 @@ REPORT_DIR = os.path.join('reports', 'figures', 'district_level_diagnostics', 'a
 BACKTEST_START_YEAR = 2000
 BACKTEST_END_YEAR = 2024
 CALIBRATION_WINDOW_SIZE = 3  # Years of recent data to use for each fold's calibration
-TARGET_COVERAGE = 0.98
+TARGET_COVERAGE = 0.95
 LOW_DATA_THRESHOLD = 10
 MIN_DATAPOINTS_FOR_PLOT = 10
 

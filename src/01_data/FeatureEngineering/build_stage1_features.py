@@ -9,38 +9,95 @@ from tqdm import tqdm
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-# --- NEW FUNCTION: GRANULAR WEATHER FEATURE ENGINEERING ---
+# --- FINAL ROBUST FUNCTION: PHYSIOLOGICAL WEATHER FEATURE ENGINEERING ---
 def create_granular_weather_features(weather_dir: Path, start_year: int, end_year: int):
     """
-    Loads all daily weather files and engineers a rich set of seasonal weather features.
+    Loads daily weather files to engineer a rich set of self-contained,
+    physiologically-grounded seasonal weather features. This version is robust
+    and relies only on columns known to exist (tmin, tmax, precip).
     """
-    logging.info("--- Starting Granular Weather Feature Engineering ---")
+    logging.info("--- Starting Final, Robust, Self-Contained Physiological Weather Feature Engineering ---")
 
-    all_weather_files = [weather_dir / f"historical_daily_weather_era5_{year}.csv" for year in
-                         range(start_year, end_year + 1)]
-    df_weather = pd.concat([pd.read_csv(f) for f in all_weather_files if f.exists()])
+    # --- Configuration: Final Physiological Thresholds ---
+    PHYSIOLOGY_PARAMS = {
+        'TMAX_STRESS_THRESHOLD': 30.0,
+        'TMIN_STRESS_THRESHOLD': 17.0,
+        'TMAX_OPTIMAL_MIN': 17.0,
+        'TMAX_OPTIMAL_MAX': 25.0,
+        'TMIN_OPTIMAL_MAX': 15.0,
+        'PRECIP_DEFICIT_WINDOW': 30,
+        'PRECIP_DEFICIT_THRESHOLD': 20.0,
+        'ECES_EXPONENT': 1.5,
+        'DTR_SUNNY_DAY_QUANTILE': 0.75
+    }
+    logging.info(f"Using physiological parameters: {PHYSIOLOGY_PARAMS}")
 
-    df_weather['date'] = pd.to_datetime(df_weather['date'])
-    df_weather['month'] = df_weather['date'].dt.month
-    df_weather['year'] = df_weather['date'].dt.year
+    all_weather_files = [weather_dir / f"historical_daily_weather_era5_{year}.csv" for year in range(start_year, end_year + 1)]
+    df_daily = pd.concat([pd.read_csv(f) for f in all_weather_files if f.exists()])
+    df_daily['date'] = pd.to_datetime(df_daily['date'])
+    df_daily['month'] = df_daily['date'].dt.month
+    df_daily['year'] = df_daily['date'].dt.year
 
-    summer_months = [6, 7, 8]
-    df_weather['precip_mm'] = df_weather['precip'] / 100000.0
-    df_weather['is_very_heavy_rain'] = (df_weather['precip_mm'] > 20).astype(int)
-    df_weather['is_heatwave_day'] = (df_weather['tmax'] > 30).astype(int)
+    # --- 1. Engineer Daily Intermediate Variables ---
+    logging.info("Calculating intermediate variables (anomalies, rolling precip, DTR)...")
+    df_daily = df_daily.sort_values(by=['district_no', 'date'])
+    df_daily['precip_rolling_sum'] = df_daily.groupby('district_no')['precip'].transform(
+        lambda x: x.rolling(window=PHYSIOLOGY_PARAMS['PRECIP_DEFICIT_WINDOW'], min_periods=1).sum()
+    )
+    df_daily['diurnal_temp_range'] = df_daily['tmax'] - df_daily['tmin']
+    df_normals = df_daily[df_daily['year'].between(1981, 2010)].copy()
+    daily_normals = df_normals.groupby(df_normals['date'].dt.dayofyear)[['tmax', 'precip']].mean().rename(
+        columns={'tmax': 'tmax_30yr_avg', 'precip': 'precip_30yr_avg'})
+    df_daily = pd.merge(df_daily, daily_normals, left_on=df_daily['date'].dt.dayofyear, right_index=True, how='left')
+    df_daily['tmax_anomaly_daily_pos'] = (df_daily['tmax'] - df_daily['tmax_30yr_avg']).clip(lower=0)
+    df_daily['precip_anomaly_daily_neg'] = (df_daily['precip_30yr_avg'] - df_daily['precip']).clip(lower=0)
+    dtr_thresholds = df_daily.groupby(['district_no', 'month'])['diurnal_temp_range'].transform(
+        'quantile', PHYSIOLOGY_PARAMS['DTR_SUNNY_DAY_QUANTILE']
+    )
+    df_daily['dtr_p75_local'] = dtr_thresholds
 
-    tqdm.pandas(desc="Aggregating Granular Weather")
-    seasonal_aggregates = df_weather.groupby(['district_no', 'year']).progress_apply(lambda g: pd.Series({
-        'summer_days_precip_gt_20mm': g[g['month'].isin(summer_months)]['is_very_heavy_rain'].sum(),
-        'summer_days_tmax_gt_30c': g[g['month'].isin(summer_months)]['is_heatwave_day'].sum(),
+    # --- 2. Define Phenological Windows ---
+    df_daily['phase'] = 0
+    df_daily.loc[df_daily['month'].isin([4, 5, 6]), 'phase'] = 1
+    df_daily.loc[df_daily['month'].isin([7, 8, 9]), 'phase'] = 2
+
+    # --- 3. Aggregate Features by District and Year (ROBUST METHOD) ---
+    # The conditions are now calculated INSIDE the apply function on each group 'g'
+    # This prevents any possibility of an IndexError.
+    tqdm.pandas(desc="Aggregating Physiological Weather Features")
+    seasonal_aggregates = df_daily.groupby(['district_no', 'year']).progress_apply(lambda g: pd.Series({
+        'CASDI_Phase2_Count': g.loc[
+            (g['phase'] == 2) &
+            (g['tmax'] > PHYSIOLOGY_PARAMS['TMAX_STRESS_THRESHOLD']) &
+            (g['precip_rolling_sum'] < PHYSIOLOGY_PARAMS['PRECIP_DEFICIT_THRESHOLD'])
+        ].shape[0],
+
+        'NMSD_Phase2_Count': g.loc[
+            (g['phase'] == 2) & (g['tmin'] > PHYSIOLOGY_PARAMS['TMIN_STRESS_THRESHOLD'])
+        ].shape[0],
+
+        'OSAW_Phase2_Count': g.loc[
+            (g['phase'] == 2) &
+            (g['tmax'] > PHYSIOLOGY_PARAMS['TMAX_OPTIMAL_MIN']) &
+            (g['tmax'] < PHYSIOLOGY_PARAMS['TMAX_OPTIMAL_MAX']) &
+            (g['tmin'] < PHYSIOLOGY_PARAMS['TMIN_OPTIMAL_MAX']) &
+            (g['precip_rolling_sum'] > PHYSIOLOGY_PARAMS['PRECIP_DEFICIT_THRESHOLD']) &
+            (g['diurnal_temp_range'] > g['dtr_p75_local'])
+        ].shape[0],
+
+        'ECES_Phase1_Cumulative': ((g.loc[g['phase'] == 1, 'tmax_anomaly_daily_pos'] ** PHYSIOLOGY_PARAMS['ECES_EXPONENT']) * \
+                                  (g.loc[g['phase'] == 1, 'precip_anomaly_daily_neg'] ** PHYSIOLOGY_PARAMS['ECES_EXPONENT'])).sum(),
+
+        'summer_days_tmax_gt_30c': (g.loc[g['month'].isin([6, 7, 8]), 'tmax'] > 30).sum(),
     })).reset_index()
 
-    logging.info("✓ Granular weather features (extreme event counters) created successfully.")
+    logging.info("✓ Advanced physiological weather features created successfully (final robust version).")
     return seasonal_aggregates
 
 
 def load_and_process_economic_data(producer_price_file, input_price_file):
-    # This function is correct and remains unchanged.
+    # This function remains unchanged.
+    # ... (code as before)
     logging.info("Loading and processing granular economic data sources...")
     try:
         df_prod_raw = pd.read_csv(producer_price_file)
@@ -72,7 +129,6 @@ def load_and_process_economic_data(producer_price_file, input_price_file):
         logging.error(f"Failed to load or process economic data files. Details: {e}", exc_info=True)
         return None
 
-
 def main():
     """Main function to build the definitive, augmented feature set."""
     logging.info("--- Starting Definitive Hybrid Feature Engineering Pipeline ---")
@@ -88,15 +144,12 @@ def main():
     output_file = output_path / 'stage1_preseason_features.csv'
     output_path.mkdir(exist_ok=True, parents=True)
 
-    # Dynamically find the latest WOFOST simulation output
     walkforward_forecast_file = Path('data/05_model_input/wofost_walkforward/final_honest_forecasts.csv')
     if not walkforward_forecast_file.exists():
         logging.error(f"FATAL: The required forecast file was not found at {walkforward_forecast_file}. Cannot proceed.")
         sys.exit(1)
     logging.info(f"Using honest, walk-forward forecast file: {walkforward_forecast_file}")
 
-
-    # --- STAGE 1: LOAD & MERGE BASE DATA ---
     logging.info("STAGE 1: Loading and Merging Base Data")
     master_df = pd.read_csv(master_file)
     master_df['district_no'] = master_df['district_no'].astype(str).str.zfill(5)
@@ -106,14 +159,13 @@ def main():
     merged_df['kreisYield'] = pd.to_numeric(merged_df['yield'], errors='coerce')
     merged_df.dropna(subset=['kreisYield'], inplace=True)
 
-    # --- STAGE 2: AUGMENT WITH ALL ADDITIONAL FEATURE SETS ---
     logging.info("STAGE 2: Augmenting with All Additional Feature Sets")
 
-    # 2a: Merge Granular Weather Features
-    df_granular_weather = create_granular_weather_features(weather_dir, start_year=1981, end_year=2024)
-    df_granular_weather['district_no'] = df_granular_weather['district_no'].astype(str).str.zfill(5)
-    merged_df = pd.merge(merged_df, df_granular_weather, on=['district_no', 'year'], how='left')
+    df_advanced_weather = create_granular_weather_features(weather_dir, start_year=1981, end_year=2024)
+    df_advanced_weather['district_no'] = df_advanced_weather['district_no'].astype(str).str.zfill(5)
+    merged_df = pd.merge(merged_df, df_advanced_weather, on=['district_no', 'year'], how='left')
 
+    # ... The rest of the script is identical ...
     # 2b: Merge satellite data
     df_satellite = pd.read_csv(satellite_features_file)
     df_satellite['district_no'] = df_satellite['district_no'].astype(str).str.zfill(5)
@@ -123,12 +175,7 @@ def main():
     # 2c: Merge the new, honest walk-forward forecast as a feature
     df_forecast = pd.read_csv(walkforward_forecast_file)
     df_forecast['district_no'] = df_forecast['district_no'].astype(str).str.zfill(5)
-
-    # Select the relevant forecast columns to use as features
-    # 'final_corrected_forecast' is our best prediction.
-    # 'base_trend_forecast' can also be a useful feature on its own.
     columns_to_merge = ['year', 'district_no', 'final_corrected_forecast', 'base_trend_forecast']
-
     merged_df = pd.merge(merged_df, df_forecast[columns_to_merge], on=['year', 'district_no'], how='left')
     logging.info("✓ Walk-forward forecast features successfully merged.")
 
@@ -140,7 +187,7 @@ def main():
     merged_df['state_encoded'], _ = pd.factorize(merged_df['state'])
     logging.info("✓ State-level features created successfully using Label Encoding.")
 
-    # --- STAGE 3: ENGINEERING THE COMPLETE HYBRID FEATURE SET ---
+    # --- STAGE 3: Engineering the Complete Hybrid Feature Set ---
     logging.info("STAGE 3: Engineering the Complete Hybrid Feature Set")
 
     merged_df.rename(columns={'latitude': 'lat', 'longitude': 'lon'}, inplace=True)
@@ -212,29 +259,6 @@ def main():
 
     # "Wetness penalty" feature
     merged_df['summer_precip_anomaly_forecast_sq'] = merged_df['summer_precip_anomaly_forecast'] ** 2
-
-    # --- V5 FEATURE ENGINEERING: TARGETED NUMERICAL INTERACTIONS ---
-    logging.info("Creating targeted numerical interaction features based on V4 diagnostics...")
-
-    # Isolate the precipitation effect for the most problematic state
-    merged_df['state6_precip_interaction'] = np.where(
-        merged_df['state_encoded'] == 6,
-        merged_df['summer_precip_anomaly_forecast'],
-        0
-    )
-    logging.info("Creating hyper-targeted interaction feature for State 11 drought/clay issue...")
-
-    # Define the high-risk conditions based on our final diagnosis
-    is_state_11 = merged_df['state_encoded'] == 11
-    is_drought = merged_df['summer_precip_anomaly_forecast'] < -0.1
-    is_high_clay = merged_df['avg_clay_0_30cm'] > 25
-
-    # Create a binary flag that is 1 only when all three conditions are met
-    merged_df['is_drought_high_clay_in_state_11'] = (is_state_11 & is_drought & is_high_clay).astype(int)
-
-    logging.info("✓ Created definitive 'Toxic Combo' feature for State 11.")
-
-    logging.info("✓ Created state-specific precipitation interaction terms.")
 
     # --- FINAL CLEANUP ---
     cols_to_remove = [
