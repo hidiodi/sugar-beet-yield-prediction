@@ -6,7 +6,16 @@ import sys
 import geopandas as gpd
 from tqdm import tqdm
 
+# Ensure the project root is in the Python path
+project_root = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(project_root))
+
+from src import config
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Use the FEATURE_ENGINEERING_CONFIG dictionary from the central config file
+CONFIG = config.FEATURE_ENGINEERING_CONFIG
 
 
 # --- FINAL ROBUST FUNCTION: PHYSIOLOGICAL WEATHER FEATURE ENGINEERING ---
@@ -19,17 +28,7 @@ def create_granular_weather_features(weather_dir: Path, start_year: int, end_yea
     logging.info("--- Starting Final, Robust, Self-Contained Physiological Weather Feature Engineering ---")
 
     # --- Configuration: Final Physiological Thresholds ---
-    PHYSIOLOGY_PARAMS = {
-        'TMAX_STRESS_THRESHOLD': 30.0,
-        'TMIN_STRESS_THRESHOLD': 17.0,
-        'TMAX_OPTIMAL_MIN': 17.0,
-        'TMAX_OPTIMAL_MAX': 25.0,
-        'TMIN_OPTIMAL_MAX': 15.0,
-        'PRECIP_DEFICIT_WINDOW': 30,
-        'PRECIP_DEFICIT_THRESHOLD': 20.0,
-        'ECES_EXPONENT': 1.5,
-        'DTR_SUNNY_DAY_QUANTILE': 0.75
-    }
+    PHYSIOLOGY_PARAMS = CONFIG['PHYSIOLOGY_PARAMS']
     logging.info(f"Using physiological parameters: {PHYSIOLOGY_PARAMS}")
 
     all_weather_files = [weather_dir / f"historical_daily_weather_era5_{year}.csv" for year in range(start_year, end_year + 1)]
@@ -62,8 +61,6 @@ def create_granular_weather_features(weather_dir: Path, start_year: int, end_yea
     df_daily.loc[df_daily['month'].isin([7, 8, 9]), 'phase'] = 2
 
     # --- 3. Aggregate Features by District and Year (ROBUST METHOD) ---
-    # The conditions are now calculated INSIDE the apply function on each group 'g'
-    # This prevents any possibility of an IndexError.
     tqdm.pandas(desc="Aggregating Physiological Weather Features")
     seasonal_aggregates = df_daily.groupby(['district_no', 'year']).progress_apply(lambda g: pd.Series({
         'CASDI_Phase2_Count': g.loc[
@@ -96,8 +93,6 @@ def create_granular_weather_features(weather_dir: Path, start_year: int, end_yea
 
 
 def load_and_process_economic_data(producer_price_file, input_price_file):
-    # This function remains unchanged.
-    # ... (code as before)
     logging.info("Loading and processing granular economic data sources...")
     try:
         df_prod_raw = pd.read_csv(producer_price_file)
@@ -133,18 +128,19 @@ def main():
     """Main function to build the definitive, augmented feature set."""
     logging.info("--- Starting Definitive Hybrid Feature Engineering Pipeline ---")
 
-    # Consolidated file paths
-    master_file = Path('data/04_master/master_dataset.csv')
-    producer_price_file = Path('data/01_raw/Bundesdatenbank/61211-0001_de.csv')
-    input_price_file = Path('data/01_raw/Bundesdatenbank/61221-0003_de.csv')
-    satellite_features_file = Path('data/03_processed/satellite_features_districts_2001-2024.csv')
-    geojson_file = Path('data/01_raw/districts_official.geojson')
-    weather_dir = Path('data/02_intermediate/daily_weather')
-    output_path = Path('data/05_model_input/')
-    output_file = output_path / 'stage1_preseason_features.csv'
+    # Consolidated file paths from config
+    file_paths = CONFIG['FILE_PATHS']
+    master_file = file_paths['MASTER_DATASET']
+    producer_price_file = file_paths['PRODUCER_PRICE_CSV']
+    input_price_file = file_paths['INPUT_PRICE_CSV']
+    satellite_features_file = file_paths['SATELLITE_FEATURES_CSV']
+    geojson_file = file_paths['GEOJSON_DISTRICTS']
+    weather_dir = file_paths['DAILY_WEATHER_DIR']
+    output_path = file_paths['OUTPUT_DIR']
+    output_file = file_paths['OUTPUT_FILE']
     output_path.mkdir(exist_ok=True, parents=True)
 
-    walkforward_forecast_file = Path('data/05_model_input/wofost_walkforward/final_honest_forecasts.csv')
+    walkforward_forecast_file = file_paths['WALKFORWARD_FORECAST_CSV']
     if not walkforward_forecast_file.exists():
         logging.error(f"FATAL: The required forecast file was not found at {walkforward_forecast_file}. Cannot proceed.")
         sys.exit(1)
@@ -161,25 +157,25 @@ def main():
 
     logging.info("STAGE 2: Augmenting with All Additional Feature Sets")
 
-    df_advanced_weather = create_granular_weather_features(weather_dir, start_year=1981, end_year=2024)
+    df_advanced_weather = create_granular_weather_features(
+        weather_dir,
+        start_year=CONFIG['WEATHER_FEATURE_YEAR_START'],
+        end_year=CONFIG['WEATHER_FEATURE_YEAR_END']
+    )
     df_advanced_weather['district_no'] = df_advanced_weather['district_no'].astype(str).str.zfill(5)
     merged_df = pd.merge(merged_df, df_advanced_weather, on=['district_no', 'year'], how='left')
 
-    # ... The rest of the script is identical ...
-    # 2b: Merge satellite data
     df_satellite = pd.read_csv(satellite_features_file)
     df_satellite['district_no'] = df_satellite['district_no'].astype(str).str.zfill(5)
     merged_df = pd.merge(merged_df, df_satellite, on=['district_no', 'year'], how='left')
     logging.info("Satellite data merged.")
 
-    # 2c: Merge the new, honest walk-forward forecast as a feature
     df_forecast = pd.read_csv(walkforward_forecast_file)
     df_forecast['district_no'] = df_forecast['district_no'].astype(str).str.zfill(5)
     columns_to_merge = ['year', 'district_no', 'final_corrected_forecast', 'base_trend_forecast']
     merged_df = pd.merge(merged_df, df_forecast[columns_to_merge], on=['year', 'district_no'], how='left')
     logging.info("✓ Walk-forward forecast features successfully merged.")
 
-    # 2d: Merge and encode state names
     gdf = gpd.read_file(geojson_file)
     gdf_states = gdf[['id', 'state']].rename(columns={'id': 'district_no'})
     gdf_states['district_no'] = gdf_states['district_no'].astype(str).str.zfill(5)
@@ -187,16 +183,12 @@ def main():
     merged_df['state_encoded'], _ = pd.factorize(merged_df['state'])
     logging.info("✓ State-level features created successfully using Label Encoding.")
 
-    # --- STAGE 3: Engineering the Complete Hybrid Feature Set ---
     logging.info("STAGE 3: Engineering the Complete Hybrid Feature Set")
 
     merged_df.rename(columns={'latitude': 'lat', 'longitude': 'lon'}, inplace=True)
     merged_df['year_trend'] = merged_df['year'] - merged_df['year'].min()
     merged_df = merged_df.sort_values(by=['district_no', 'year'])
 
-    # This section now restores ALL original feature engineering
-
-    # Lagged economic features
     lagged_cols = {
         'producer_price_index': 'producer_price_index_lag1', 'seed_price_index': 'seed_price_index_lag1',
         'energy_price_index': 'energy_price_index_lag1', 'fertilizer_price_index': 'fertilizer_price_index_lag1',
@@ -209,24 +201,17 @@ def main():
     merged_df['cost_of_inputs_lag1'] = merged_df['fertilizer_price_index_lag1'] + merged_df[
         'plant_protection_price_index_lag1'] + merged_df['seed_price_index_lag1']
 
-    # Process the new forecast features
-    # RENAME our new forecast to the name expected by downstream feature engineering steps.
     merged_df.rename(columns={'final_corrected_forecast': 'wofost_forecast_yield_fresh_dt'}, inplace=True)
-
-    # The unit conversion line is NO LONGER NEEDED as our new forecast is already in fresh weight dt/ha.
-    # The following lines will now use our superior forecast as their input.
     merged_df['wofost_forecast_x_profit_margin'] = merged_df['wofost_forecast_yield_fresh_dt'] * merged_df[
         'profit_margin_proxy_lag1']
     merged_df['has_wofost_data'] = merged_df['wofost_forecast_yield_fresh_dt'].notna().astype(int)
 
-    # Economic anomalies
     economic_features_to_detrend = list(lagged_cols.values())
     for feature in economic_features_to_detrend:
         trend = merged_df.groupby('district_no')[feature].transform(
             lambda x: x.rolling(window=5, min_periods=1).mean().shift(1))
         merged_df[f'{feature}_anomaly'] = merged_df[feature] - trend.ffill().bfill()
 
-    # Capped and extreme economic features
     lower_bound_series = merged_df.groupby('district_no')['fertilizer_price_index_lag1_anomaly'].transform(
         lambda s: s.expanding(min_periods=20).quantile(0.05)).ffill().bfill()
     upper_bound_series = merged_df.groupby('district_no')['fertilizer_price_index_lag1_anomaly'].transform(
@@ -237,7 +222,6 @@ def main():
         (merged_df['fertilizer_price_index_lag1_anomaly'] < lower_bound_series) | (
                     merged_df['fertilizer_price_index_lag1_anomaly'] > upper_bound_series), 1, 0)
 
-    # Original interaction features
     merged_df['gdd_x_fertilizer_price'] = merged_df['antecedent_gdd_sum_anomaly'] * merged_df[
         'fertilizer_price_index_lag1_anomaly_capped']
     merged_df['spring_temp_x_spring_precip'] = merged_df['spring_temp_anomaly_forecast'] * merged_df[
@@ -251,16 +235,13 @@ def main():
     merged_df['lat_x_summer_temp'] = merged_df['lat'] * merged_df['summer_temp_anomaly_forecast']
     merged_df['sandy_soil_x_drought'] = merged_df['avg_sand_0_30cm'] * merged_df['summer_precip_anomaly_forecast']
 
-    # Original polynomial features
     merged_df['antecedent_gdd_sum_anomaly_sq'] = merged_df['antecedent_gdd_sum_anomaly'] ** 2
     for feature in ['spring_temp_prob_warm_forecast', 'summer_temp_prob_warm_forecast',
                     'spring_precip_prob_wet_forecast', 'summer_precip_prob_wet_forecast']:
         merged_df[f'{feature}_sq'] = merged_df[feature] ** 2
 
-    # "Wetness penalty" feature
     merged_df['summer_precip_anomaly_forecast_sq'] = merged_df['summer_precip_anomaly_forecast'] ** 2
 
-    # --- FINAL CLEANUP ---
     cols_to_remove = [
         'yield', 'producer_price_index', 'seed_price_index', 'energy_price_index', 'fertilizer_price_index',
         'plant_protection_price_index', 'state', 'state_name', 'crs_anomaly'
@@ -268,7 +249,6 @@ def main():
     merged_df.drop(columns=cols_to_remove, inplace=True, errors='ignore')
     logging.info(f"Dropped intermediate source columns to finalize dataset.")
 
-    # --- SAVE FINAL DATASET ---
     logging.info(f"Saving Stage 1 model-ready dataset to '{output_file}'...")
     merged_df.to_csv(output_file, index=False, float_format='%.6f')
 

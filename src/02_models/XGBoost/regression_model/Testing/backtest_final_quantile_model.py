@@ -1,6 +1,7 @@
 # File: src/models/backtest_final_quantile_model.py
 # FINAL VERSION: Implements Simple CQR with a sequential split to provide a
 #                robust, final evaluation of the base models.
+# Refactored to use central configuration from src.config
 
 import pandas as pd
 import geopandas as gpd
@@ -15,38 +16,33 @@ from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.base import clone
 from tqdm import tqdm
 import numpy as np
+from pathlib import Path
+import sys
+
+# Ensure the project root is in the Python path
+project_root = Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(project_root))
+
+from src import config
 
 warnings.filterwarnings("ignore")
 sns.set_theme(style="whitegrid")
 
-# --- Configuration ---
-LOWER_MODEL_PATH = os.path.join('src/models', 'final_quantile_model_lower.joblib')
-MEDIAN_MODEL_PATH = os.path.join('src/models', 'final_quantile_model_median.joblib')
-UPPER_MODEL_PATH = os.path.join('src/models', 'final_quantile_model_upper.joblib')
-DATA_PATH = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
-GEOJSON_PATH = os.path.join('data', '01_raw', 'districts_official.geojson')
-REPORT_DIR = os.path.join('reports', 'figures', 'district_level_diagnostics', 'final_quantile_champion')
-
-BACKTEST_START_YEAR = 2000
-BACKTEST_END_YEAR = 2024
-LOW_DATA_THRESHOLD = 10
-MIN_DATAPOINTS_FOR_PLOT = 10
-
-# --- CQR Configuration ---
-CALIBRATION_SET_SIZE = 0.15 # Use a 15% window, which was our most effective setting
-NOMINAL_COVERAGE = 0.95
+# Use the config dictionaries from the central config file
+XGB_CONFIG = config.XGBOOST_TRAINING_CONFIG
+BACKTEST_CONFIG = config.BACKTESTING_CONFIG
 
 def run_backtest_with_cqr(df: pd.DataFrame, feature_cols: list, model_lower_clone: XGBRegressor,
                           model_median_clone: XGBRegressor, model_upper_clone: XGBRegressor):
-    print(f"\n--- Starting Backtest with Simple CQR from {BACKTEST_START_YEAR} to {BACKTEST_END_YEAR} ---")
+    print(f"\n--- Starting Backtest with Simple CQR from {BACKTEST_CONFIG['BACKTEST_START_YEAR']} to {BACKTEST_CONFIG['BACKTEST_END_YEAR']} ---")
     all_predictions = []
 
-    for year_to_predict in tqdm(range(BACKTEST_START_YEAR, BACKTEST_END_YEAR + 1), desc="Backtesting Years"):
+    for year_to_predict in tqdm(range(BACKTEST_CONFIG['BACKTEST_START_YEAR'], BACKTEST_CONFIG['BACKTEST_END_YEAR'] + 1), desc="Backtesting Years"):
         train_df_full = df[df['year'] < year_to_predict].copy()
         test_df = df[df['year'] == year_to_predict].copy()
         if test_df.empty or len(train_df_full) < 20: continue
 
-        calib_size = int(len(train_df_full) * CALIBRATION_SET_SIZE)
+        calib_size = int(len(train_df_full) * BACKTEST_CONFIG['CALIBRATION_SET_SIZE'])
         if calib_size < 10: continue
         train_df = train_df_full.iloc[:-calib_size]
         calib_df = train_df_full.iloc[-calib_size:]
@@ -63,7 +59,7 @@ def run_backtest_with_cqr(df: pd.DataFrame, feature_cols: list, model_lower_clon
         calib_pred_lower = model_lower.predict(X_calib)
         calib_pred_upper = model_upper.predict(X_calib)
         conformity_scores = np.maximum(y_calib_residual - calib_pred_upper, calib_pred_lower - y_calib_residual)
-        q_hat = np.quantile(conformity_scores, NOMINAL_COVERAGE, interpolation='higher')
+        q_hat = np.quantile(conformity_scores, BACKTEST_CONFIG['NOMINAL_COVERAGE'], interpolation='higher')
 
         fold_results = test_df[['district_no', 'year', 'kreisYield', 'name', 'stage1_forecast']].copy()
         predicted_residual_lower = model_lower.predict(X_test)
@@ -82,7 +78,7 @@ def run_backtest_with_cqr(df: pd.DataFrame, feature_cols: list, model_lower_clon
     return results_df
 
 def analyze_interval_performance(results_df: pd.DataFrame):
-    print(f"\n--- Analyzing Prediction Interval Performance (Target: {NOMINAL_COVERAGE:.0%}) ---")
+    print(f"\n--- Analyzing Prediction Interval Performance (Target: {BACKTEST_CONFIG['NOMINAL_COVERAGE']:.0%}) ---")
     results_df['is_covered'] = (results_df['kreisYield'] >= results_df['predicted_yield_lower']) & \
                                (results_df['kreisYield'] <= results_df['predicted_yield_upper'])
     coverage = results_df['is_covered'].mean()
@@ -97,7 +93,7 @@ def calculate_district_metrics(results_df: pd.DataFrame, report_dir: str):
     performance = results_df.groupby('district_no').apply(lambda g: pd.Series(
         {'r2': r2_safe(g), 'mae': mean_absolute_error(g['kreisYield'], g['predicted_yield_median']),
          'name': g['name'].iloc[0], 'data_point_count': len(g)})).reset_index()
-    performance['is_low_data'] = performance['data_point_count'] < LOW_DATA_THRESHOLD
+    performance['is_low_data'] = performance['data_point_count'] < BACKTEST_CONFIG['LOW_DATA_THRESHOLD']
     performance.to_csv(os.path.join(report_dir, 'district_level_metrics.csv'), index=False)
     return performance
 
@@ -115,7 +111,7 @@ def plot_national_average_timeline(backtest_results: pd.DataFrame, report_dir: s
 
 def plot_best_worst_district_timelines(district_performance: pd.DataFrame, backtest_results: pd.DataFrame, report_dir: str):
     print("-> Generating Best vs. Worst District Timelines...")
-    reliable_perf = district_performance[district_performance['data_point_count'] >= MIN_DATAPOINTS_FOR_PLOT]
+    reliable_perf = district_performance[district_performance['data_point_count'] >= BACKTEST_CONFIG['MIN_DATAPOINTS_FOR_PLOT']]
     if len(reliable_perf) < 6: print(f"   Warning: Not enough reliable districts (found {len(reliable_perf)}) to plot. Skipping."); return
     best_districts, worst_districts = reliable_perf.nlargest(3, 'r2'), reliable_perf.nsmallest(3, 'r2')
     districts_to_plot = pd.concat([best_districts, worst_districts])
@@ -133,7 +129,7 @@ def plot_performance_map(district_performance: pd.DataFrame, gdf_districts: gpd.
     fig, ax = plt.subplots(1, 1, figsize=(12, 12)); merged_gdf.plot(column='r2', cmap='RdYlGn', linewidth=0.5, ax=ax, edgecolor='0.8', legend=True, legend_kwds={'label': "R-squared (R²)", 'orientation': "horizontal"}, missing_kwds={'color': 'lightgrey'}, vmin=-1, vmax=1)
     low_data_gdf = merged_gdf[merged_gdf['is_low_data'] == True]
     if not low_data_gdf.empty: low_data_gdf.plot(ax=ax, facecolor='none', hatch='//', edgecolor='black', linewidth=0.5)
-    hatch_patch = mpatches.Patch(hatch='//', facecolor='white', edgecolor='black', label=f'Low Data (< {LOW_DATA_THRESHOLD} years)')
+    hatch_patch = mpatches.Patch(hatch='//', facecolor='white', edgecolor='black', label=f'Low Data (< {BACKTEST_CONFIG["LOW_DATA_THRESHOLD"]} years)')
     plt.legend(handles=[hatch_patch], loc='lower left', title='Data Availability'); ax.set_title('Model Performance (R²) by District - Final Quantile Model', fontsize=16); ax.set_axis_off(); plt.savefig(os.path.join(report_dir, '03_r_squared_map.png'), bbox_inches='tight'); plt.close()
 
 def plot_r2_vs_data_count(district_performance: pd.DataFrame, report_dir: str):
@@ -142,13 +138,14 @@ def plot_r2_vs_data_count(district_performance: pd.DataFrame, report_dir: str):
     plt.xlabel("Number of Years in Backtest per District"); plt.ylabel("R-squared (R²)"); plt.legend(title='Is Low Data?'); plt.savefig(os.path.join(report_dir, '04_r2_vs_data_count.png'), bbox_inches='tight'); plt.close()
 
 def main():
-    os.makedirs(REPORT_DIR, exist_ok=True)
+    report_dir = BACKTEST_CONFIG['REPORT_DIR']
+    os.makedirs(report_dir, exist_ok=True)
     print("--- Starting Final Quantile Champion Model Evaluation Pipeline ---")
     try:
-        model_lower, model_median, model_upper = joblib.load(LOWER_MODEL_PATH), joblib.load(
-            MEDIAN_MODEL_PATH), joblib.load(UPPER_MODEL_PATH)
-        df = pd.read_csv(DATA_PATH)
-        gdf_districts = gpd.read_file(GEOJSON_PATH)
+        model_lower, model_median, model_upper = joblib.load(XGB_CONFIG['LOWER_MODEL_PATH']), joblib.load(
+            XGB_CONFIG['MEDIAN_MODEL_PATH']), joblib.load(XGB_CONFIG['UPPER_MODEL_PATH'])
+        df = pd.read_csv(XGB_CONFIG['DATA_PATH'])
+        gdf_districts = gpd.read_file(BACKTEST_CONFIG['GEOJSON_PATH'])
         gdf_districts.rename(columns={'id': 'district_no', 'name': 'name'}, inplace=True)
         gdf_districts['district_no'] = gdf_districts['district_no'].astype(str).str.zfill(5)
         df['district_no'] = df['district_no'].astype(str).str.zfill(5)
@@ -163,77 +160,22 @@ def main():
     df.dropna(subset=['stage1_forecast', 'forecast_residual'], inplace=True)
     print(" -> Target variable defined.")
 
-    feature_cols = [
-        # --- Original SEAS5 Weather Anomaly Features (Antecedent & Seasonal) ---
-        'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly', 'antecedent_gdd_sum_anomaly',
-        'spring_temp_anomaly_forecast', 'spring_precip_anomaly_forecast', 'spring_solar_rad_anomaly_forecast',
-        'spring_evaporation_anomaly_forecast', 'spring_runoff_anomaly_forecast', 'spring_soil_temp_l1_anomaly_forecast',
-        'spring_snowfall_anomaly_forecast', 'summer_temp_anomaly_forecast', 'summer_precip_anomaly_forecast',
-        'summer_solar_rad_anomaly_forecast', 'summer_evaporation_anomaly_forecast', 'summer_runoff_anomaly_forecast',
-        'summer_soil_temp_l1_anomaly_forecast', 'summer_snowfall_anomaly_forecast',
-
-        # --- Original SEAS5 Weather Probability Features ---
-        'spring_temp_prob_warm_forecast', 'spring_precip_prob_wet_forecast', 'summer_temp_prob_warm_forecast',
-        'summer_precip_prob_wet_forecast',
-
-        # --- Static Geographic & Soil Features ---
-        'lat', 'lon', 'avg_elevation', 'avg_slope', 'avg_bdod_0_30cm', 'avg_clay_0_30cm',
-        'avg_sand_0_30cm', 'avg_som_0_30cm', 'avg_phh2o_0_30cm',
-
-        # --- Satellite Features (Early Season Condition) ---
-        'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly', 'winter_cropland_LST_mean',
-        'winter_cropland_LST_anomaly', 'winter_cropland_snow_cover_days',
-
-        # --- Teleconnection Indices ---
-        'nao_winter_avg', 'sca_winter_avg', 'enso_mei_winter_avg',
-
-        # --- Lagged Economic Features & Anomalies ---
-        'profit_margin_proxy_lag1', 'cost_of_inputs_lag1', 'producer_price_index_lag1_anomaly',
-        'seed_price_index_lag1_anomaly', 'energy_price_index_lag1_anomaly',
-        # 'fertilizer_price_index_lag1_anomaly',
-        'plant_protection_price_index_lag1_anomaly',
-        'fertilizer_price_index_lag1_anomaly_capped', 'is_fertilizer_price_extreme',
-
-        # --- Stage 1 Model & Hybrid Features ---
-        'stage1_forecast',  # Note: This is the column name from the file, used as 'stage1_forecast'
-        'wofost_forecast_x_profit_margin',
-        'has_wofost_data',
-
-        # --- General Regional & Temporal Features ---
-        'state_encoded',
-        'year_trend',
-
-        # --- Original Interaction & Polynomial Features ---
-        'gdd_x_fertilizer_price', 'spring_temp_x_spring_precip', 'summer_heat_x_profit_margin',
-        'summer_precip_x_input_costs',
-        'hot_dry_interaction',
-        'lat_x_summer_temp', 'sandy_soil_x_drought',
-        'antecedent_gdd_sum_anomaly_sq', 'spring_temp_prob_warm_forecast_sq',
-        'summer_temp_prob_warm_forecast_sq', 'spring_precip_prob_wet_forecast_sq',
-        'summer_precip_prob_wet_forecast_sq', 'summer_precip_anomaly_forecast_sq',
-
-        # --- NEW Physiologically-Grounded Features for Extremes ---
-        'CASDI_Phase2_Count',  # Compounded Abiotic Stress (Heat & Drought)
-        'NMSD_Phase2_Count',  # Nighttime Metabolic Stress Days
-        'OSAW_Phase2_Count',  # Optimal Sugar Accumulation Window
-        'ECES_Phase1_Cumulative',  # Early Canopy Establishment Stress
-        'summer_days_tmax_gt_30c'  # Retained as a simple, direct measure of heat
-    ]
+    feature_cols = XGB_CONFIG['FEATURE_COLS']
 
     backtest_results = run_backtest_with_cqr(df, feature_cols, model_lower, model_median, model_upper)
     if backtest_results.empty:
         print("❌ Backtest did not produce results. Terminating."); return
 
-    backtest_csv_path = os.path.join(REPORT_DIR, 'full_backtest_predictions.csv')
+    backtest_csv_path = os.path.join(report_dir, 'full_backtest_predictions.csv')
     backtest_results.to_csv(backtest_csv_path, index=False)
     print(f"\n✅ Full backtest results saved to {backtest_csv_path}")
 
     analyze_interval_performance(backtest_results)
-    district_performance = calculate_district_metrics(backtest_results, REPORT_DIR)
-    plot_national_average_timeline(backtest_results, REPORT_DIR)
-    plot_best_worst_district_timelines(district_performance, backtest_results, REPORT_DIR)
-    plot_performance_map(district_performance, gdf_districts, REPORT_DIR)
-    plot_r2_vs_data_count(district_performance, REPORT_DIR)
+    district_performance = calculate_district_metrics(backtest_results, str(report_dir))
+    plot_national_average_timeline(backtest_results, str(report_dir))
+    plot_best_worst_district_timelines(district_performance, backtest_results, str(report_dir))
+    plot_performance_map(district_performance, gdf_districts, str(report_dir))
+    plot_r2_vs_data_count(district_performance, str(report_dir))
 
     print("\n--- Overall Performance Summary (All Districts, Median Prediction) ---")
     r2_total = r2_score(backtest_results['kreisYield'], backtest_results['predicted_yield_median'])
@@ -241,18 +183,18 @@ def main():
     print(f"  R-squared (R²): {r2_total:.4f}")
     print(f"  Mean Absolute Error (MAE): {mae_total:.2f} dt/ha")
 
-    reliable_districts = district_performance[district_performance['data_point_count'] >= LOW_DATA_THRESHOLD]
+    reliable_districts = district_performance[district_performance['data_point_count'] >= BACKTEST_CONFIG['LOW_DATA_THRESHOLD']]
     if not reliable_districts.empty:
         reliable_backtest_results = backtest_results[backtest_results['district_no'].isin(reliable_districts['district_no'])]
         r2_reliable = r2_score(reliable_backtest_results['kreisYield'], reliable_backtest_results['predicted_yield_median'])
         mae_reliable = reliable_backtest_results['abs_error'].mean()
-        print(f"\n--- Performance Summary for Reliable Districts (>={LOW_DATA_THRESHOLD} data points) ---")
+        print(f"\n--- Performance Summary for Reliable Districts (>={BACKTEST_CONFIG['LOW_DATA_THRESHOLD']} data points) ---")
         print(f"  Number of Reliable Districts: {len(reliable_districts)}")
         print(f"  R-squared (R²): {r2_reliable:.4f}")
         print(f"  Mean Absolute Error (MAE): {mae_reliable:.2f} dt/ha")
 
     print("\n--- Evaluation Complete ---")
-    print(f"All reports and plots saved in: {REPORT_DIR}")
+    print(f"All reports and plots saved in: {report_dir}")
 
 if __name__ == "__main__":
     main()

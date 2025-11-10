@@ -1,8 +1,6 @@
 # File: src/03_analysis/backtest_final_ensemble.py
 # Description: This script constructs and evaluates the final champion model: the Hybrid Ensemble.
-# It takes the best median from the Hybrid (TS+XGB) model and combines it with the
-# best uncertainty interval from the Adaptive CQR model.
-# Version 1.1: Fixes a dtype mismatch for plotting the performance map.
+# Refactored to use central configuration from src.config
 
 import pandas as pd
 import geopandas as gpd
@@ -13,24 +11,23 @@ import matplotlib.patches as mpatches
 import seaborn as sns
 from sklearn.metrics import mean_absolute_error, r2_score
 from pathlib import Path
+import sys
+
+# Ensure the project root is in the Python path
+project_root = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(project_root))
+
+from src import config
 
 warnings.filterwarnings("ignore")
 sns.set_theme(style="whitegrid")
 
-# --- Configuration ---
-HYBRID_XGB_INPUT_FILE = 'reports/figures/district_level_diagnostics/final_quantile_champion/full_backtest_predictions.csv'
-ADAPTIVE_CQR_INPUT_FILE = 'reports/figures/district_level_diagnostics/adaptive_cqr_champion/full_backtest_predictions.csv'
-GEOJSON_PATH = os.path.join('data', '01_raw', 'districts_official.geojson')
-
-REPORT_DIR = Path('reports/figures/district_level_diagnostics/final_ensemble_champion')
-
-LOW_DATA_THRESHOLD = 10
-MIN_DATAPOINTS_FOR_PLOT = 10
-NOMINAL_COVERAGE = 0.95
+# Use the ENSEMBLE_BACKTESTING_CONFIG dictionary from the central config file
+CONFIG = config.ENSEMBLE_BACKTESTING_CONFIG
 
 
 def analyze_interval_performance(results_df: pd.DataFrame):
-    print(f"\n--- Analyzing Prediction Interval Performance (Target: {NOMINAL_COVERAGE:.0%}) ---")
+    print(f"\n--- Analyzing Prediction Interval Performance (Target: {CONFIG['NOMINAL_COVERAGE']:.0%}) ---")
     results_df['is_covered'] = (results_df['kreisYield'] >= results_df['predicted_yield_lower']) & \
                                (results_df['kreisYield'] <= results_df['predicted_yield_upper'])
     coverage = results_df['is_covered'].mean()
@@ -48,7 +45,7 @@ def calculate_district_metrics(results_df: pd.DataFrame, report_dir: Path):
     performance = results_df.groupby('district_no').apply(lambda g: pd.Series(
         {'r2': r2_safe(g), 'mae': mean_absolute_error(g['kreisYield'], g['predicted_yield_median']),
          'name': g['name'].iloc[0], 'data_point_count': len(g)})).reset_index()
-    performance['is_low_data'] = performance['data_point_count'] < LOW_DATA_THRESHOLD
+    performance['is_low_data'] = performance['data_point_count'] < CONFIG['LOW_DATA_THRESHOLD']
     performance.to_csv(report_dir / 'district_level_metrics.csv', index=False)
     return performance
 
@@ -78,7 +75,7 @@ def plot_national_average_timeline(backtest_results: pd.DataFrame, report_dir: P
 def plot_best_worst_district_timelines(district_performance: pd.DataFrame, backtest_results: pd.DataFrame,
                                        report_dir: Path):
     print("-> Generating Best vs. Worst District Timelines...");
-    reliable_perf = district_performance[district_performance['data_point_count'] >= MIN_DATAPOINTS_FOR_PLOT]
+    reliable_perf = district_performance[district_performance['data_point_count'] >= CONFIG['MIN_DATAPOINTS_FOR_PLOT']]
     if len(reliable_perf) < 6: print(f"   Warning: Not enough reliable districts to plot. Skipping."); return
     best_districts, worst_districts = reliable_perf.nlargest(3, 'r2'), reliable_perf.nsmallest(3, 'r2');
     districts_to_plot = pd.concat([best_districts, worst_districts])
@@ -104,7 +101,6 @@ def plot_best_worst_district_timelines(district_performance: pd.DataFrame, backt
 def plot_performance_map(district_performance: pd.DataFrame, gdf_districts: gpd.GeoDataFrame, report_dir: Path):
     print("-> Generating R-squared Map...")
 
-    # --- CRITICAL FIX: Ensure both key columns are the same string type before merging ---
     district_performance['district_no'] = district_performance['district_no'].astype(str).str.zfill(5)
 
     merged_gdf = gdf_districts.merge(district_performance, on='district_no', how='left')
@@ -115,7 +111,7 @@ def plot_performance_map(district_performance: pd.DataFrame, gdf_districts: gpd.
     low_data_gdf = merged_gdf[merged_gdf['is_low_data'] == True]
     if not low_data_gdf.empty: low_data_gdf.plot(ax=ax, facecolor='none', hatch='//', edgecolor='black', linewidth=0.5)
     hatch_patch = mpatches.Patch(hatch='//', facecolor='white', edgecolor='black',
-                                 label=f'Low Data (< {LOW_DATA_THRESHOLD} years)');
+                                 label=f'Low Data (< {CONFIG["LOW_DATA_THRESHOLD"]} years)');
     plt.legend(handles=[hatch_patch], loc='lower left', title='Data Availability');
     ax.set_title('Model Performance (R²) by District - Final Ensemble Model', fontsize=16);
     ax.set_axis_off();
@@ -139,13 +135,14 @@ def plot_r2_vs_data_count(district_performance: pd.DataFrame, report_dir: Path):
 
 
 def main():
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    report_dir = CONFIG['REPORT_DIR']
+    report_dir.mkdir(parents=True, exist_ok=True)
     print("--- Starting Final Ensemble Champion Model Evaluation Pipeline ---")
 
     try:
-        df_xgb = pd.read_csv(HYBRID_XGB_INPUT_FILE)
-        df_cqr = pd.read_csv(ADAPTIVE_CQR_INPUT_FILE)
-        gdf_districts = gpd.read_file(GEOJSON_PATH)
+        df_xgb = pd.read_csv(CONFIG['HYBRID_XGB_INPUT_FILE'])
+        df_cqr = pd.read_csv(CONFIG['ADAPTIVE_CQR_INPUT_FILE'])
+        gdf_districts = gpd.read_file(CONFIG['GEOJSON_PATH'])
         gdf_districts.rename(columns={'id': 'district_no'}, inplace=True)
         gdf_districts['district_no'] = gdf_districts['district_no'].astype(str).str.zfill(5)
         print("Model component data and geo-data loaded successfully.")
@@ -153,7 +150,6 @@ def main():
         print(f"❌ CRITICAL ERROR during loading. Details: {e}");
         return
 
-    # Ensure dtypes of merge keys are consistent before merging
     df_xgb['district_no'] = df_xgb['district_no'].astype(str).str.zfill(5)
     df_cqr['district_no'] = df_cqr['district_no'].astype(str).str.zfill(5)
 
@@ -178,17 +174,17 @@ def main():
 
     print("✓ Ensemble constructed.")
 
-    backtest_csv_path = REPORT_DIR / 'full_backtest_predictions.csv'
+    backtest_csv_path = report_dir / 'full_backtest_predictions.csv'
     ensemble_df.to_csv(backtest_csv_path, index=False)
     print(f"\n✅ Full backtest results for Champion Ensemble saved to {backtest_csv_path}")
 
     analyze_interval_performance(ensemble_df)
-    district_performance = calculate_district_metrics(ensemble_df, REPORT_DIR)
+    district_performance = calculate_district_metrics(ensemble_df, report_dir)
 
-    plot_national_average_timeline(ensemble_df, REPORT_DIR)
-    plot_best_worst_district_timelines(district_performance, ensemble_df, REPORT_DIR)
-    plot_performance_map(district_performance, gdf_districts, REPORT_DIR)
-    plot_r2_vs_data_count(district_performance, REPORT_DIR)
+    plot_national_average_timeline(ensemble_df, report_dir)
+    plot_best_worst_district_timelines(district_performance, ensemble_df, report_dir)
+    plot_performance_map(district_performance, gdf_districts, report_dir)
+    plot_r2_vs_data_count(district_performance, report_dir)
 
     print("\n--- Overall Performance Summary (All Districts, Median Prediction) ---")
     r2_total = r2_score(ensemble_df['kreisYield'], ensemble_df['predicted_yield_median'])
@@ -196,18 +192,18 @@ def main():
     print(f"  R-squared (R²): {r2_total:.4f}")
     print(f"  Mean Absolute Error (MAE): {mae_total:.2f} dt/ha")
 
-    reliable_districts = district_performance[district_performance['data_point_count'] >= LOW_DATA_THRESHOLD]
+    reliable_districts = district_performance[district_performance['data_point_count'] >= CONFIG['LOW_DATA_THRESHOLD']]
     if not reliable_districts.empty:
         reliable_results = ensemble_df[ensemble_df['district_no'].isin(reliable_districts['district_no'])]
         r2_reliable = r2_score(reliable_results['kreisYield'], reliable_results['predicted_yield_median'])
         mae_reliable = reliable_results['abs_error'].mean()
-        print(f"\n--- Performance Summary for Reliable Districts (>={LOW_DATA_THRESHOLD} data points) ---")
+        print(f"\n--- Performance Summary for Reliable Districts (>={CONFIG['LOW_DATA_THRESHOLD']} data points) ---")
         print(f"  Number of Reliable Districts: {len(reliable_districts)}")
         print(f"  R-squared (R²): {r2_reliable:.4f}")
         print(f"  Mean Absolute Error (MAE): {mae_reliable:.2f} dt/ha")
 
     print("\n--- Champion Ensemble Evaluation Complete ---")
-    print(f"All reports and plots saved in: {REPORT_DIR}")
+    print(f"All reports and plots saved in: {report_dir}")
 
 
 if __name__ == "__main__":

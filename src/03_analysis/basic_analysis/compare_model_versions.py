@@ -1,7 +1,6 @@
 # File: src/03_analysis/compare_model_versions.py
 # Description: Generates final comparison plots for all models, including the champion ensemble.
-#
-# REVISED VERSION v13.2: Final version with all syntax and logic corrections.
+# Refactored to use central configuration from src.config
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -12,19 +11,21 @@ from sklearn.metrics import r2_score
 import numpy as np
 import sys
 
+# Ensure the project root is in the Python path
+project_root = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(project_root))
+
+from src import config
+
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-NOMINAL_COVERAGE_PERCENT = 95.0
+CONFIG = config.MODEL_COMPARISON_CONFIG
+
+NOMINAL_COVERAGE_PERCENT = CONFIG['NOMINAL_COVERAGE_PERCENT']
 ALPHA = 1 - (NOMINAL_COVERAGE_PERCENT / 100.0)
 
-# --- Input Files ---
-FINAL_ENSEMBLE_PREDICTIONS_FILE = 'reports/figures/district_level_diagnostics/final_ensemble_champion/full_backtest_predictions.csv'
-NGBOOST_PREDICTIONS_FILE = 'reports/figures/district_level_diagnostics/final_ngboost_champion/full_backtest_predictions.csv'
-ADAPTIVE_CQR_PREDICTIONS_FILE = 'reports/figures/district_level_diagnostics/adaptive_cqr_champion/full_backtest_predictions.csv'
-HYBRID_XGB_PREDICTIONS_FILE = 'reports/figures/district_level_diagnostics/final_quantile_champion/full_backtest_predictions.csv'
-
-OUTPUT_DIR = Path('reports/figures/final_model_comparison')
+OUTPUT_DIR = CONFIG['OUTPUT_DIR']
 
 
 # --- Function Definitions ---
@@ -109,10 +110,10 @@ def main():
     logging.info("--- Loading Final Model Predictions for Comparison ---")
 
     try:
-        df_ensemble = pd.read_csv(FINAL_ENSEMBLE_PREDICTIONS_FILE)
-        df_xgb = pd.read_csv(HYBRID_XGB_PREDICTIONS_FILE)
-        df_cqr = pd.read_csv(ADAPTIVE_CQR_PREDICTIONS_FILE)
-        df_ngb = pd.read_csv(NGBOOST_PREDICTIONS_FILE)
+        df_ensemble = pd.read_csv(CONFIG['FINAL_ENSEMBLE_PREDICTIONS_FILE'])
+        df_xgb = pd.read_csv(CONFIG['HYBRID_XGB_PREDICTIONS_FILE'])
+        df_cqr = pd.read_csv(CONFIG['ADAPTIVE_CQR_PREDICTIONS_FILE'])
+        df_ngb = pd.read_csv(CONFIG['NGBOOST_PREDICTIONS_FILE'])
     except FileNotFoundError as e:
         logging.error(f"❌ FATAL: Input file not found. Ensure all backtests have been run. Details: {e}")
         sys.exit(1)
@@ -164,7 +165,6 @@ def main():
         df_merged[f'{name}_score'] = calculate_interval_score(df_merged['kreisYield'], df_merged[f'{name}_lower'],
                                                               df_merged[f'{name}_upper'], ALPHA)
 
-    # CORRECT SYNTAX: Use .agg() with a dictionary to only calculate mean on numeric columns
     agg_dict = {f'{name}_mae': 'mean' for name in models_point}
     agg_dict.update({f'{name}_width': 'mean' for name in models_quantile})
     agg_dict.update({f'{name}_score': 'mean' for name in models_quantile})

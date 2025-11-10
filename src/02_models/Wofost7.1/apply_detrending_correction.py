@@ -1,8 +1,6 @@
 # File: run_forecasting_pipeline_walkforward.py
 # Description: A definitive, consolidated script to perform a leak-free forecast.
-#
-# REVISED VERSION v4: Adds a detailed year-by-year performance analysis and visualization
-# to better understand the model's behavior over time.
+# Refactored to use central configuration from src.config
 
 import pandas as pd
 import os
@@ -15,22 +13,19 @@ from statsmodels.tsa.arima.model import ARIMA
 from pygam import LinearGAM, s
 from tqdm import tqdm
 import warnings
+from pathlib import Path
 
 # --- Configuration & Setup ---
 warnings.filterwarnings("ignore")
 
-# ==============================================================================
-# === G L O B A L   C O N F I G U R A T I O N ===
-# ==============================================================================
-CONFIG = {
-    'FILE_PATHS': {
-        'INPUT_YIELD_CSV': 'data/02_intermediate/sugarbeet_yield.csv',
-        'OUTPUT_DIR': 'data/05_model_input/wofost_walkforward',
-    },
-    'ARIMA_ORDER': (1, 0, 0),
-    'GAM_SPLINES': 10,
-    'MIN_TRAIN_SIZE': 10
-}
+# Ensure the project root is in the Python path
+project_root = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(project_root))
+
+from src import config
+
+# Use the DETRENDING_CONFIG dictionary from the central config file
+CONFIG = config.DETRENDING_CONFIG
 
 # ==============================================================================
 # === S C R I P T   S T A R T S   H E R E ===

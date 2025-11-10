@@ -1,5 +1,5 @@
 # File: run_wofost_pipeline.py
-# Reverted to original state with only the data loading logic changed as per user instruction.
+# Refactored to use central configuration from src.config
 
 import datetime
 from pathlib import Path
@@ -19,41 +19,14 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_error, r2_score
 from joblib import Parallel, delayed
 
-# ==============================================================================
-# === G L O B A L   C O N F I G U R A T I O N ===
-# ==============================================================================
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+# Ensure the project root is in the Python path
+project_root = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(project_root))
 
-CONFIG = {
-    # max range 1982 - 2024 and None to run all districts (data is available for 1981 but the weather generator doesnt have earlier data to learn from
-    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': None,
-    'FILE_PATHS': {
-        'HISTORICAL_DAILY_WEATHER_DIR': PROJECT_ROOT / 'data/02_intermediate/daily_weather',
-        'YIELD_DATA': PROJECT_ROOT / 'data/02_intermediate/sugarbeet_yield.csv',
-        'STATIC_SOIL_FEATURES': PROJECT_ROOT / 'data/03_processed/static_features_districts.csv',
-        'SEAS5_MEMBER_FEATURES': PROJECT_ROOT / 'data/02_intermediate/ecmwf51_forecast_features_BY_MEMBER.csv',
-        'CROP_YAML': PROJECT_ROOT / 'data/01_raw/sugarbeet.yaml',
-        'OUTPUT_DIR': PROJECT_ROOT / 'data/06_model_output/multi_year_final',
-        'EXTREME_WEATHER_METRICS_OUTPUT': PROJECT_ROOT / 'data/06_model_output/ensemble_extreme_weather_metrics.csv'
-    },
-    'WEATHER_DEFAULTS': {'WIND_SPEED': 2.0, 'VAPOR_PRESSURE': 1.0},
-    'WEATHER_GENERATOR': {'PRECIP_THRESHOLD_MM': 0.3, 'MIN_SRAD': 1.0},
-    'AGROMANAGEMENT': {
-        'CROP_START_DATE': datetime.date(2018, 3, 22), 'CROP_END_DATE': datetime.date(2018, 11, 15),
-        'MAX_DURATION': 250,
-    },
-    'CONSTANTS': {
-        'DMC_SUGARBEET': 0.25, 'INITIAL_ROOTING_DEPTH_CM': 10.0, 'SOIL_PARTICLE_DENSITY': 2.65,
-    },
-    'SOIL_COLUMN_MAPPING': {
-        'sand': 'avg_sand_0_100cm', 'clay': 'avg_clay_0_100cm', 'som': 'avg_som_0_100cm', 'bdod': 'avg_bdod_0_100cm',
-    },
-    'SOIL_DEFAULTS_AND_CONSTANTS': {
-        'RDMSOL': 150.0, 'KSUB': 10.0, 'SOPE': 10.0
-    },
-    'GENERIC_SITE': {'LATITUDE': 52.0, 'LONGITUDE': 10.0, 'ELEVATION': 50.0},
-    'ANALOG_YEAR_CONFIG': {'NUM_ANALOGS': 5, 'MIN_YEARS_FOR_FIT': 10, }
-}
+from src import config
+
+# Use the WOFOST_CONFIG dictionary from the central config file
+CONFIG = config.WOFOST_CONFIG
 
 # ==============================================================================
 # === SCRIPT STARTS HERE ===

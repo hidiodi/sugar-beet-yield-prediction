@@ -1,6 +1,7 @@
 # File: src/features/build_static_features.py
 # Description: V3 - CORRECTED VERSION. Builds a comprehensive set of static soil and topography features.
 # - Fixes KeyError by robustly handling band names from GEE's toBands() function.
+# - Refactored to use central configuration.
 
 import ee
 import geemap
@@ -9,32 +10,37 @@ import geopandas as gpd
 import logging
 from pathlib import Path
 import time
+import sys
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Ensure the project root is in the Python path to allow for `src` imports
+project_root = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(project_root))
+
+from src import config
+
+logging.basicConfig(level=logging.INFO, format='%(asctime=)s - %(levelname)s - %(message)s')
 
 
 def build_static_features_v3():
     """
     Generates a CSV of V3 static features for each German district using GEE.
     Features include masked elevation, slope, and multi-layered, depth-weighted
-    soil properties from SoilGrids.
+    soil properties from SoilGrids. All parameters are now sourced from src.config.
     """
-    logging.info("--- Starting V3 Static Feature Generation using GEE ---")
+    logging.info("--- Starting V3 Static Feature Generation using GEE (Config-driven) ---")
 
     # --- 1. Initialize GEE ---
     try:
-        project_id = 'augmented-audio-471809-h3'
-        geemap.ee.Initialize(project=project_id, opt_url='https://earthengine-highvolume.googleapis.com')
-        logging.info(f"GEE initialized for project '{project_id}'. Using high-volume endpoint.")
+        geemap.ee.Initialize(project=config.GEE_PROJECT_ID, opt_url=config.GEE_HIGH_VOLUME_ENDPOINT)
+        logging.info(f"GEE initialized for project '{config.GEE_PROJECT_ID}'. Using high-volume endpoint.")
     except Exception as e:
         logging.error(f"FATAL: Could not initialize GEE. Error: {e}")
         return
 
-    # --- 2. Define Paths and Configuration ---
-    path_districts_geo = Path("data/01_raw/districts_official.geojson")
-    output_dir = Path("data/03_processed")
+    # --- 2. Define Paths and Configuration from src.config ---
+    output_dir = config.PROCESSED_DATA_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_filepath = output_dir / "static_features_districts.csv"
+    output_filepath = config.STATIC_FEATURES_OUTPUT_PATH
 
     if output_filepath.exists():
         logging.info(f"V3 static features file at '{output_filepath}' already exists. Skipping.")
@@ -42,48 +48,37 @@ def build_static_features_v3():
 
     # --- 3. Load Geometries and Mask ---
     logging.info("Loading district geometries...")
-    gdf_districts = gpd.read_file(path_districts_geo)
+    gdf_districts = gpd.read_file(config.DISTRICTS_GEOJSON_PATH)
     gdf_districts.rename(columns={'id': 'district_no'}, inplace=True)
     gdf_districts['district_no'] = gdf_districts['district_no'].astype(str).str.zfill(5)
     districts_ee = geemap.geopandas_to_ee(gdf_districts)
 
-    mask_asset_id = 'projects/augmented-audio-471809-h3/assets/farmland_mask_germany'
     try:
-        logging.info(f"Loading farmland mask from GEE asset: {mask_asset_id}")
-        farmland_mask_image = ee.Image(mask_asset_id)
+        logging.info(f"Loading farmland mask from GEE asset: {config.FARMLAND_MASK_ASSET_ID}")
+        farmland_mask_image = ee.Image(config.FARMLAND_MASK_ASSET_ID)
     except ee.ee_exception.EEException:
-        logging.error(f"FATAL: GEE Asset not found at '{mask_asset_id}'.")
+        logging.error(f"FATAL: GEE Asset not found at '{config.FARMLAND_MASK_ASSET_ID}'.")
         return
 
     # --- 4. Load GEE Datasets ---
     logging.info("Loading base topography and SoilGrids datasets from GEE...")
-    dem_image = ee.Image('USGS/SRTMGL1_003').select('elevation')
+    dem_image = ee.Image(config.DEM_IMAGE).select('elevation')
     slope_image = ee.Terrain.slope(dem_image)
-
-    soil_properties = ['bdod', 'clay', 'sand', 'soc', 'phh2o']
-    depths = ['0-5cm', '5-15cm', '15-30cm', '30-60cm', '60-100cm']
 
     # --- 5. Extract Multi-Layer Soil Data with Masking ---
     logging.info("Extracting multi-layer soil properties with farmland mask...")
 
     image_list = [dem_image.rename('avg_elevation'), slope_image.rename('avg_slope')]
 
-    for prop in soil_properties:
-        for depth in depths:
+    for prop in config.SOIL_PROPERTIES:
+        for depth in config.SOIL_DEPTHS:
             image_id = f"projects/soilgrids-isric/{prop}_mean"
             band_name = f"{prop}_{depth}_mean"
             image = ee.Image(image_id).select(band_name)
-            # Create a clean, predictable name
             clean_name = f"{prop}_{depth.replace('-', '_')}"
             image_list.append(image.rename(clean_name))
 
-    # ============================ THE FIX - Part 1 ============================
-    # Instead of converting to bands immediately, we create a list of images
-    # We will combine them into a single image but control the band names explicitly.
-    # The `ee.Image.cat()` function is more reliable for this.
     combined_images = ee.Image.cat(image_list)
-    # ==========================================================================
-
     masked_data = combined_images.updateMask(farmland_mask_image)
 
     # --- 6. Run Zonal Statistics ---
@@ -108,13 +103,8 @@ def build_static_features_v3():
     logging.info("Engineering depth-weighted average soil features...")
 
     # Unit Conversions
-    for depth in depths:
-        # ============================ THE FIX - Part 2 ============================
-        # Use the correct, full column name format we created.
-        d_str = depth.replace('-', '_')  # e.g., '0_5cm'
-        # ==========================================================================
-
-        # Check if the column exists before trying to convert it (robustness)
+    for depth in config.SOIL_DEPTHS:
+        d_str = depth.replace('-', '_')
         if f'bdod_{d_str}' in stats_df.columns:
             stats_df[f'bdod_{d_str}'] /= 100
         if f'clay_{d_str}' in stats_df.columns:
@@ -127,34 +117,24 @@ def build_static_features_v3():
             stats_df[f'soc_{d_str}'] = (stats_df[f'soc_{d_str}'] / 100) * 1.724
             stats_df.rename(columns={f'soc_{d_str}': f'som_{d_str}'}, inplace=True)
 
-    layer_thickness = {'0_5cm': 5, '5_15cm': 10, '15_30cm': 15, '30_60cm': 30, '60_100cm': 40}
-
     # Calculate weighted average for topsoil (0-30cm)
     logging.info(" -> Calculating topsoil (0-30cm) properties...")
-    topsoil_layers = ['0_5cm', '5_15cm', '15_30cm']
-    total_thickness_30 = sum(layer_thickness[d] for d in topsoil_layers)
+    total_thickness_30 = sum(config.LAYER_THICKNESS[d] for d in config.TOPSOIL_LAYERS)
     for prop in ['bdod', 'clay', 'sand', 'som', 'phh2o']:
-        # Use a list comprehension with a check to handle potentially missing columns
-        weighted_sum = sum(stats_df[f'{prop}_{d}'] * layer_thickness[d]
-                           for d in topsoil_layers if f'{prop}_{d}' in stats_df.columns)
+        weighted_sum = sum(stats_df[f'{prop}_{d}'] * config.LAYER_THICKNESS[d]
+                           for d in config.TOPSOIL_LAYERS if f'{prop}_{d}' in stats_df.columns)
         stats_df[f'avg_{prop}_0_30cm'] = weighted_sum / total_thickness_30
 
     # Calculate weighted average for the full root zone (0-100cm)
     logging.info(" -> Calculating full root zone (0-100cm) properties...")
-    rootzone_layers = ['0_5cm', '5_15cm', '15_30cm', '30_60cm', '60_100cm']
-    total_thickness_100 = sum(layer_thickness[d] for d in rootzone_layers)
+    total_thickness_100 = sum(config.LAYER_THICKNESS[d] for d in config.ROOTZONE_LAYERS)
     for prop in ['bdod', 'clay', 'sand', 'som', 'phh2o']:
-        weighted_sum = sum(stats_df[f'{prop}_{d}'] * layer_thickness[d]
-                           for d in rootzone_layers if f'{prop}_{d}' in stats_df.columns)
+        weighted_sum = sum(stats_df[f'{prop}_{d}'] * config.LAYER_THICKNESS[d]
+                           for d in config.ROOTZONE_LAYERS if f'{prop}_{d}' in stats_df.columns)
         stats_df[f'avg_{prop}_0_100cm'] = weighted_sum / total_thickness_100
 
     # --- 9. Finalize and Save ---
-    final_feature_columns = [
-        'district_no', 'avg_elevation', 'avg_slope',
-        'avg_bdod_0_30cm', 'avg_clay_0_30cm', 'avg_sand_0_30cm', 'avg_som_0_30cm', 'avg_phh2o_0_30cm',
-        'avg_bdod_0_100cm', 'avg_clay_0_100cm', 'avg_sand_0_100cm', 'avg_som_0_100cm', 'avg_phh2o_0_100cm'
-    ]
-    final_feature_columns_exist = [col for col in final_feature_columns if col in stats_df.columns]
+    final_feature_columns_exist = [col for col in config.FINAL_FEATURE_COLUMNS if col in stats_df.columns]
     final_df = stats_df[final_feature_columns_exist]
 
     logging.info(f"Saving final V3 static features to '{output_filepath}'")
@@ -163,7 +143,6 @@ def build_static_features_v3():
     logging.info("--- SUCCESS: V3 static features file created! ---")
     print("\n--- V3 Static Features Preview ---")
     print(final_df.head())
-
 
 if __name__ == "__main__":
     build_static_features_v3()
