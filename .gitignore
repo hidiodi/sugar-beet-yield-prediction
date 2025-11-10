@@ -77,7 +77,7 @@ src/models/*.pkl
 
 # Data files (optional, but recommended for large files)
 data/04_feature/
-data/02_intermediate/ecmwf51_forecast_features_BY_MEMBER.csv
+data/02_intermediate/
 # OS-specific files
 .DS_Store
 Thumbs.dbdata/02_intermediate/ecmwf51_forecast_features_BY_MEMBER.csv
