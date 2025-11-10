@@ -206,7 +206,7 @@ def main():
         # --- Original Interaction & Polynomial Features ---
         'gdd_x_fertilizer_price', 'spring_temp_x_spring_precip', 'summer_heat_x_profit_margin',
         'summer_precip_x_input_costs',
-        # 'hot_dry_interaction',
+        'hot_dry_interaction',
         'lat_x_summer_temp', 'sandy_soil_x_drought',
         'antecedent_gdd_sum_anomaly_sq', 'spring_temp_prob_warm_forecast_sq',
         'summer_temp_prob_warm_forecast_sq', 'spring_precip_prob_wet_forecast_sq',
@@ -217,7 +217,7 @@ def main():
         'NMSD_Phase2_Count',  # Nighttime Metabolic Stress Days
         'OSAW_Phase2_Count',  # Optimal Sugar Accumulation Window
         'ECES_Phase1_Cumulative',  # Early Canopy Establishment Stress
-        # 'summer_days_tmax_gt_30c'  # Retained as a simple, direct measure of heat
+        'summer_days_tmax_gt_30c'  # Retained as a simple, direct measure of heat
     ]
 
     backtest_results = run_backtest_with_cqr(df, feature_cols, model_lower, model_median, model_upper)
