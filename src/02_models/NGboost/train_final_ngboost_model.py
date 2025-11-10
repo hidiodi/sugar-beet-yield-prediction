@@ -1,7 +1,7 @@
 # File: src/models/train_final_ngboost_model.py
 # Description: Trains a definitive NGBoost model by fitting it on the RESIDUALS
-#              of the primary time-series forecast. This version includes
-#              proper data handling and a validation set for stable training.
+#              of the primary time-series forecast. This version is refactored
+#              to use the central config file and a robust, leak-proof feature set.
 
 import pandas as pd
 from ngboost import NGBRegressor
@@ -9,44 +9,24 @@ from ngboost.distns import Normal
 import os
 import joblib
 import warnings
+from pathlib import Path
+import sys
+
+# --- START OF REFACTOR ---
+
+# Ensure the project root is in the Python path
+project_root = Path(__file__).resolve().parents[3]  # Adjust path depth as needed
+sys.path.insert(0, str(project_root))
+
+from src import config
 
 warnings.filterwarnings("ignore")
 
-# --- Configuration ---
-DATA_PATH = os.path.join('data', '05_model_input', 'stage1_preseason_features.csv')
-MODEL_OUTPUT_PATH = os.path.join('src/models', 'final_ngboost_model.joblib')
+# Use the XGBOOST_TRAINING_CONFIG dictionary from the central config file
+# NGBoost will use the same data path and feature list as XGBoost.
+CONFIG = config.XGBOOST_TRAINING_CONFIG
 
-FEATURE_COLS = [
-    'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly', 'antecedent_gdd_sum_anomaly',
-    'spring_temp_anomaly_forecast',
-    'spring_precip_anomaly_forecast', 'spring_solar_rad_anomaly_forecast', 'spring_evaporation_anomaly_forecast',
-    'spring_runoff_anomaly_forecast',
-    'spring_soil_temp_l1_anomaly_forecast', 'spring_snowfall_anomaly_forecast', 'summer_temp_anomaly_forecast',
-    'summer_precip_anomaly_forecast',
-    'summer_solar_rad_anomaly_forecast', 'summer_evaporation_anomaly_forecast', 'summer_runoff_anomaly_forecast',
-    'summer_soil_temp_l1_anomaly_forecast',
-    'summer_snowfall_anomaly_forecast', 'spring_temp_prob_warm_forecast', 'spring_precip_prob_wet_forecast',
-    'summer_temp_prob_warm_forecast',
-    'summer_precip_prob_wet_forecast', 'lat', 'lon', 'avg_elevation', 'avg_slope', 'avg_bdod_0_30cm', 'avg_clay_0_30cm',
-    'avg_sand_0_30cm',
-    'avg_som_0_30cm', 'avg_phh2o_0_30cm', 'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly',
-    'winter_cropland_LST_mean',
-    'winter_cropland_LST_anomaly', 'winter_cropland_snow_cover_days', 'profit_margin_proxy_lag1', 'cost_of_inputs_lag1',
-    'producer_price_index_lag1_anomaly', 'seed_price_index_lag1_anomaly', 'energy_price_index_lag1_anomaly',
-    'fertilizer_price_index_lag1_anomaly',
-    'plant_protection_price_index_lag1_anomaly', 'fertilizer_price_index_lag1_anomaly_capped',
-    'is_fertilizer_price_extreme',
-    'gdd_x_fertilizer_price', 'spring_temp_x_spring_precip', 'summer_heat_x_profit_margin',
-    'summer_precip_x_input_costs',
-    'hot_dry_interaction', 'lat_x_summer_temp', 'sandy_soil_x_drought', 'antecedent_gdd_sum_anomaly_sq',
-    'spring_temp_prob_warm_forecast_sq',
-    'summer_temp_prob_warm_forecast_sq', 'spring_precip_prob_wet_forecast_sq', 'summer_precip_prob_wet_forecast_sq',
-    'wofost_forecast_x_profit_margin', 'has_wofost_data', 'state_encoded', 'summer_precip_anomaly_forecast_sq',
-    'summer_days_precip_gt_20mm',
-    'summer_days_tmax_gt_30c', 'is_drought_high_clay_in_state_11', 'state6_precip_interaction', 'nao_winter_avg',
-    'sca_winter_avg', 'enso_mei_winter_avg',
-    'stage1_forecast'
-]
+MODEL_OUTPUT_PATH = CONFIG['MODEL_OUTPUT_DIR'] / 'final_ngboost_model.joblib'
 
 
 def train_and_save_ngboost_model():
@@ -54,26 +34,42 @@ def train_and_save_ngboost_model():
     print("--- Starting NGBoost Residual Fitting Pipeline ---")
 
     try:
-        df = pd.read_csv(DATA_PATH)
+        df = pd.read_csv(CONFIG['DATA_PATH'])
     except FileNotFoundError:
-        print(f"❌ Error: Dataset not found at {DATA_PATH}.")
+        print(f"❌ Error: Dataset not found at {CONFIG['DATA_PATH']}.")
         return
 
     print("\n--- Calculating Forecast Residuals ---")
-    df.rename(columns={'wofost_forecast_yield_fresh_dt': 'stage1_forecast'}, inplace=True)
-    df['forecast_residual'] = df['kreisYield'] - df['stage1_forecast']
+    # Use the consistent WOFOST column name
+    wofost_col = 'wofost_forecast_yield_fresh_dt'
+    df['forecast_residual'] = df['kreisYield'] - df[wofost_col]
 
-    # CRITICAL FIX: Only drop rows where essential data for the target is missing.
-    # NGBoost can handle NaNs in other feature columns. This prevents massive data loss.
-    df.dropna(subset=['stage1_forecast', 'forecast_residual', 'kreisYield'], inplace=True)
+    # Drop rows where essential data for the target is missing.
+    df.dropna(subset=[wofost_col, 'forecast_residual', 'kreisYield'], inplace=True)
     print(" -> Target variable (forecast_residual) created.")
 
-    X = df[FEATURE_COLS]
+    # --- START OF FIX: Leak-proof feature selection ---
+    # Dynamically create a clean list of predictors to prevent target leakage.
+    cols_to_exclude = [wofost_col, 'stage1_forecast', 'kreisYield']
+
+    actual_training_features = [
+        col for col in CONFIG['FEATURE_COLS']
+        if col in df.columns and col not in cols_to_exclude
+    ]
+
+    missing_features = [col for col in CONFIG['FEATURE_COLS'] if col not in df.columns]
+    if missing_features:
+        print(
+            f"WARNING: The following features from config were not found in the dataset and will be ignored: {missing_features}")
+
+    # NGBoost can handle NaNs in features, so we don't drop them from X.
+    X = df[actual_training_features]
     y = df['forecast_residual']
+    # --- END OF FIX ---
+
     print(f"\nTotal samples available: {len(X)}")
 
-    # CRITICAL FIX: Create a time-series-aware validation set for early stopping.
-    # This prevents overfitting and stabilizes training.
+    # Create a time-series-aware validation set for early stopping.
     train_end_idx = int(len(X) * 0.85)
     X_train, y_train = X[:train_end_idx], y[:train_end_idx]
     X_val, y_val = X[train_end_idx:], y[train_end_idx:]
@@ -86,7 +82,7 @@ def train_and_save_ngboost_model():
         learning_rate=0.05,
         verbose=True,
         random_state=42,
-        minibatch_frac=0.8  # Add regularization
+        minibatch_frac=0.8
     )
 
     print("\n--- Training NGBoost Model with Validation Set ---")

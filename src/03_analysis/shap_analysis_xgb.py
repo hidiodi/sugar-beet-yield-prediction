@@ -1,8 +1,13 @@
-# File: src/models/run_shap_analysis.py
+# FILE: src/03_analysis/shap_analysis_xgb.py
 # DESCRIPTION:
 # This script loads the three final quantile models (lower, median, upper)
 # and performs a SHAP (SHapley Additive exPlanations) analysis on each.
-# Refactored to use central configuration from src.config
+#
+# --- FIXED ---
+# 1. Solved "feature_names mismatch" ValueError by extracting the
+#    feature list *directly from the loaded model* and using it to
+#    order the input DataFrame. This ensures a perfect match.
+# 2. Kept the feature engineering logic to create the required columns.
 
 import pandas as pd
 import os
@@ -27,17 +32,62 @@ warnings.filterwarnings("ignore")
 XGB_CONFIG = config.XGBOOST_TRAINING_CONFIG
 SHAP_CONFIG = config.SHAP_ANALYSIS_CONFIG
 
-def load_and_prep_data():
-    """Loads and prepares the training data exactly as in the training script."""
+
+def load_and_prep_data(model_feature_names):
+    """
+    Loads and prepares the training data, ensuring the final DataFrame
+    has columns in the exact order specified by model_feature_names.
+    """
     print(f"Loading data from {XGB_CONFIG['DATA_PATH']}...")
     df = pd.read_csv(XGB_CONFIG['DATA_PATH'])
 
+    # 1. Perform the rename (the model expects 'stage1_forecast')
     df.rename(columns={'wofost_forecast_yield_fresh_dt': 'stage1_forecast'}, inplace=True)
+
+    # 2. Calculate the residual target (needed for .dropna)
     df['forecast_residual'] = df['kreisYield'] - df['stage1_forecast']
     df.dropna(subset=['stage1_forecast', 'forecast_residual'], inplace=True)
 
-    X_train = df[XGB_CONFIG['FEATURE_COLS']]
-    print(f"Data loaded. Found {len(X_train)} samples (NaNs in features are kept).")
+    # --- RE-CREATE MISSING INTERACTION FEATURES ---
+    # We must create any features the model expects that aren't in the CSV.
+    print("Engineering interaction features...")
+    try:
+        if 'lat_x_summer_temp' in model_feature_names and 'lat_x_summer_temp' not in df.columns:
+            df['lat_x_summer_temp'] = df['lat'] * df['summer_temp_anomaly_mean']
+
+        if 'sandy_soil_x_drought' in model_feature_names and 'sandy_soil_x_drought' not in df.columns:
+            df['sandy_soil_x_drought'] = df['avg_sand_0_30cm'] * df['summer_precip_anomaly_mean']
+
+        if 'gdd_x_fertilizer_price' in model_feature_names and 'gdd_x_fertilizer_price' not in df.columns:
+            df['gdd_x_fertilizer_price'] = df['antecedent_gdd_sum_anomaly'] * df[
+                'fertilizer_price_index_lag1_anomaly_capped']
+
+        if 'hot_dry_interaction' in model_feature_names and 'hot_dry_interaction' not in df.columns:
+            df['hot_dry_interaction'] = df['summer_temp_anomaly_mean'] * df['summer_precip_anomaly_mean']
+
+        if 'forecast_hot_dry_risk_p90' in model_feature_names and 'forecast_hot_dry_risk_p90' not in df.columns:
+            df['forecast_hot_dry_risk_p90'] = df['summer_temp_anomaly_p90'] * df['summer_precip_anomaly_p10']
+
+        if 'wofost_forecast_x_profit_margin' in model_feature_names and 'wofost_forecast_x_profit_margin' not in df.columns:
+            # Use the RENAMED column 'stage1_forecast'
+            df['wofost_forecast_x_profit_margin'] = df['stage1_forecast'] * df['profit_margin_proxy_lag1']
+
+    except KeyError as e:
+        print(f"WARNING: Could not create interaction features. Base column missing: {e}")
+        pass
+
+    # --- FINAL STEP: Select features using the model's exact list ---
+    try:
+        # This guarantees the columns and their order match the model
+        X_train = df[model_feature_names]
+    except KeyError as e:
+        print(f"--- FATAL ERROR ---")
+        print(f"Still missing columns: {e}")
+        missing_cols = [col for col in model_feature_names if col not in df.columns]
+        print(f"Columns in model but NOT in DataFrame after engineering: {missing_cols}")
+        raise e
+
+    print(f"Data loaded and features engineered. Found {len(X_train)} samples.")
     return X_train
 
 
@@ -49,14 +99,8 @@ def run_analysis():
     os.makedirs(shap_output_dir, exist_ok=True)
     print(f"SHAP plots will be saved to: {shap_output_dir}")
 
-    X_train = load_and_prep_data()
-
-    shap_sample_size = SHAP_CONFIG['SHAP_SAMPLE_SIZE']
-    if len(X_train) > shap_sample_size:
-        print(f"Dataset is large ({len(X_train)} samples). Subsampling to {shap_sample_size} for SHAP analysis.")
-        X_train_shap = shap.sample(X_train, shap_sample_size, random_state=42)
-    else:
-        X_train_shap = X_train
+    # --- LOOP MOVED UP ---
+    # We must load the model *first* to get its feature list
 
     for name, alpha in XGB_CONFIG['QUANTILES'].items():
         print(f"\n--- Analyzing {name.upper()} Model (Quantile: {alpha}) ---")
@@ -69,8 +113,13 @@ def run_analysis():
         print(f"Loading model: {model_path}")
         model = joblib.load(model_path)
 
+        # --- Base Score Patch ---
         try:
             booster = model.get_booster()
+
+            # --- CRITICAL FIX: Get feature names FROM THE MODEL ---
+            model_feature_names = booster.feature_names
+
             config_str = booster.save_config()
             config_json = json.loads(config_str)
             base_score_val = config_json.get('learner', {}).get('learner_model_param', {}).get('base_score')
@@ -88,9 +137,22 @@ def run_analysis():
                     model.base_score = float(model.base_score.strip('[]'))
                 except:
                     pass
+        # --- End of Patch ---
+
+        # --- Load data *after* getting feature names ---
+        # Pass the model's feature list to the load function
+        X_train = load_and_prep_data(model_feature_names)
+
+        shap_sample_size = SHAP_CONFIG['SHAP_SAMPLE_SIZE']
+        if len(X_train) > shap_sample_size:
+            print(f"Dataset is large ({len(X_train)} samples). Subsampling to {shap_sample_size} for SHAP analysis.")
+            X_train_shap = shap.sample(X_train, shap_sample_size, random_state=42)
+        else:
+            X_train_shap = X_train
 
         print("Initializing SHAP Explainer...")
         explainer = shap.Explainer(model.predict, X_train_shap)
+
         print(f"Calculating SHAP values for {len(X_train_shap)} samples... (This may take a moment)")
         shap_values = explainer(X_train_shap)
         print("SHAP values calculated.")

@@ -16,18 +16,20 @@ PROCESSED_DATA_DIR = DATA_DIR / "03_processed"
 PIPELINE_NAME = "Main Hybrid Model Pipeline"
 
 SCRIPTS_TO_RUN = [
-    "src/01_data/download_all_data_pipeline.py",
-    "src/01_data/process_input_data_pipeline.py",
-    "src/02_models/Wofost7.1/04_create_daily_weather_file.py",
-    "src/02_models/Wofost7.1/run_wofost_pipeline.py",
-    "src/02_models/Wofost7.1/apply_detrending_correction.py",
-    "src/01_data/FeatureEngineering/build_stage1_features.py",
+    #"src/01_data/download_all_data_pipeline.py",
+    #"src/01_data/process_input_data_pipeline.py",
+    #"src/02_models/Wofost7.1/04_create_daily_weather_file.py",
+    #"src/02_models/Wofost7.1/run_wofost_pipeline.py",
+    #"src/02_models/Wofost7.1/apply_detrending_correction.py",
+    #"src/01_data/FeatureEngineering/build_stage1_features.py",
     "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py",
     "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",
-    "src/02_models/FinalEnsemble/backtest_final_ensemble.py",
+    #"src/02_models/NGboost/train_final_ngboost_model.py",
+    #"src/02_models/NGboost/backtest_final_ngboost_model.py",
+    #"src/02_models/FinalEnsemble/backtest_final_ensemble.py",
     "src/03_analysis/basic_analysis/compare_model_versions.py",
     "src/03_analysis/shap_analysis_xgb.py",
-    "src/03_analysis/run_hybrid_analysis_pipeline.py",
+    #"src/03_analysis/run_hybrid_analysis_pipeline.py",
 ]
 
 DOWNLOAD_PIPELINE_NAME = "Main Data Downloading Pipeline"
@@ -114,6 +116,7 @@ FEATURE_ENGINEERING_CONFIG = {
         'INPUT_PRICE_CSV': DATA_DIR / '01_raw/Bundesdatenbank/61221-0003_de.csv',
         'SATELLITE_FEATURES_CSV': DATA_DIR / '03_processed/satellite_features_districts_2001-2024.csv',
         'GEOJSON_DISTRICTS': DATA_DIR / '01_raw/districts_official.geojson',
+        'ECMWF_FORECAST_FEATURES_CSV': DATA_DIR / '02_intermediate/ecmwf51_forecast_features_BY_MEMBER.csv',
         'DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
         'WALKFORWARD_FORECAST_CSV': DATA_DIR / '05_model_input/wofost_walkforward/final_honest_forecasts.csv',
         'OUTPUT_DIR': DATA_DIR / '05_model_input/',
@@ -139,60 +142,71 @@ XGBOOST_TRAINING_CONFIG = {
     'DATA_PATH': DATA_DIR / '05_model_input/stage1_preseason_features.csv',
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models',
     'FEATURE_COLS': [
-        # --- Original SEAS5 Weather Anomaly Features (Antecedent & Seasonal) ---
-        'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly', 'antecedent_gdd_sum_anomaly',
-        'spring_temp_anomaly_forecast', 'spring_precip_anomaly_forecast', 'spring_solar_rad_anomaly_forecast',
-        'spring_evaporation_anomaly_forecast', 'spring_runoff_anomaly_forecast', 'spring_soil_temp_l1_anomaly_forecast',
-        'spring_snowfall_anomaly_forecast', 'summer_temp_anomaly_forecast', 'summer_precip_anomaly_forecast',
-        'summer_solar_rad_anomaly_forecast', 'summer_evaporation_anomaly_forecast', 'summer_runoff_anomaly_forecast',
-        'summer_soil_temp_l1_anomaly_forecast', 'summer_snowfall_anomaly_forecast',
+        # --- Antecedent Weather Features (Observed by March) ---
+        'antecedent_precip_sum',
+        'antecedent_frost_days',
+        'antecedent_heavy_precip_days',
+        'antecedent_gdd_sum_anomaly',
 
-        # --- Original SEAS5 Weather Probability Features ---
-        'spring_temp_prob_warm_forecast', 'spring_precip_prob_wet_forecast', 'summer_temp_prob_warm_forecast',
-        'summer_precip_prob_wet_forecast',
+        # --- Seasonal Forecast - Central Tendency (Ensemble Mean) ---
+        'spring_temp_anomaly_mean',
+        'spring_precip_anomaly_mean',
+        'summer_temp_anomaly_mean',
+        'summer_precip_anomaly_mean',
 
-        # --- Static Geographic & Soil Features ---
-        'lat', 'lon', 'avg_elevation', 'avg_slope', 'avg_bdod_0_30cm', 'avg_clay_0_30cm',
-        'avg_sand_0_30cm', 'avg_som_0_30cm', 'avg_phh2o_0_30cm',
+        # --- Seasonal Forecast - Uncertainty & Spread (Ensemble Std Dev) ---
+        'spring_temp_anomaly_std',
+        'summer_temp_anomaly_std',
+        'spring_precip_anomaly_std',
+        'summer_precip_anomaly_std',
+        'forecast_uncertainty_summer_temp',  # (Duplicate of summer_temp_anomaly_std, but explicit)
 
-        # --- Satellite Features (Early Season Condition) ---
-        'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly', 'winter_cropland_LST_mean',
-        'winter_cropland_LST_anomaly', 'winter_cropland_snow_cover_days',
+        # --- Seasonal Forecast - Tail Risk (Ensemble Quantiles) ---
+        'spring_temp_anomaly_p10',
+        'spring_temp_anomaly_p90',
+        'summer_temp_anomaly_p10',
+        'summer_temp_anomaly_p90',
+        'summer_precip_anomaly_p10',
+        'summer_precip_anomaly_p90',
 
-        # --- Teleconnection Indices ---
+        # --- Seasonal Forecast - Probabilistic Risk Features ---
+        'prob_hot_summer',  # Probability of summer temp anomaly > +1.5C
+        'prob_dry_summer',  # Probability of summer precip anomaly < -0.5 mm/day
+
+        # --- Static Geographic & Soil Features (Unchanged) ---
+        'lat', 'lon', 'avg_elevation', 'avg_slope',
+        'avg_bdod_0_30cm', 'avg_clay_0_30cm', 'avg_sand_0_30cm',
+        'avg_som_0_30cm', 'avg_phh2o_0_30cm',
+
+        # --- Satellite Features (Unchanged) ---
+        'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly',
+        'winter_cropland_LST_mean', 'winter_cropland_LST_anomaly',
+        'winter_cropland_snow_cover_days',
+
+        # --- Teleconnection Indices (Unchanged) ---
         'nao_winter_avg', 'sca_winter_avg', 'enso_mei_winter_avg',
 
-        # --- Lagged Economic Features & Anomalies ---
-        'profit_margin_proxy_lag1', 'cost_of_inputs_lag1', 'producer_price_index_lag1_anomaly',
-        'seed_price_index_lag1_anomaly', 'energy_price_index_lag1_anomaly',
-        #'fertilizer_price_index_lag1_anomaly',
-        'plant_protection_price_index_lag1_anomaly',
+        # --- Lagged Economic Features & Anomalies (Unchanged) ---
+        'profit_margin_proxy_lag1', 'cost_of_inputs_lag1',
+        'producer_price_index_lag1_anomaly', 'seed_price_index_lag1_anomaly',
+        'energy_price_index_lag1_anomaly', 'plant_protection_price_index_lag1_anomaly',
         'fertilizer_price_index_lag1_anomaly_capped', 'is_fertilizer_price_extreme',
 
         # --- Stage 1 Model & Hybrid Features ---
-        'stage1_forecast',  # Note: This is the column name from the file, used as 'stage1_forecast'
+        'wofost_forecast_yield_fresh_dt',  # Renamed from 'stage1_forecast' to match CSV
         'wofost_forecast_x_profit_margin',
         'has_wofost_data',
 
-        # --- General Regional & Temporal Features ---
+        # --- General Regional & Temporal Features (Unchanged) ---
         'state_encoded',
         'year_trend',
 
-        # --- Original Interaction & Polynomial Features ---
-        'gdd_x_fertilizer_price', 'spring_temp_x_spring_precip', 'summer_heat_x_profit_margin',
-        'summer_precip_x_input_costs',
-        'hot_dry_interaction',
-        'lat_x_summer_temp', 'sandy_soil_x_drought',
-        'antecedent_gdd_sum_anomaly_sq', 'spring_temp_prob_warm_forecast_sq',
-        'summer_temp_prob_warm_forecast_sq', 'spring_precip_prob_wet_forecast_sq',
-        'summer_precip_prob_wet_forecast_sq', 'summer_precip_anomaly_forecast_sq',
-
-        # --- NEW Physiologically-Grounded Features for Extremes ---
-        'CASDI_Phase2_Count',  # Compounded Abiotic Stress (Heat & Drought)
-        'NMSD_Phase2_Count',  # Nighttime Metabolic Stress Days
-        'OSAW_Phase2_Count',  # Optimal Sugar Accumulation Window
-        'ECES_Phase1_Cumulative',  # Early Canopy Establishment Stress
-        'summer_days_tmax_gt_30c'  # Retained as a simple, direct measure of heat
+        # --- Interaction & Risk Features (Updated to use new, robust inputs) ---
+        'gdd_x_fertilizer_price',  # Interaction of antecedent heat and input cost
+        'hot_dry_interaction',  # Interaction of mean summer heat and mean dryness forecast
+        'forecast_hot_dry_risk_p90',  # Advanced Risk: Pessimistic heat (p90) x Pessimistic dryness (p10)
+        'lat_x_summer_temp',  # Interaction of geography and mean summer heat forecast
+        'sandy_soil_x_drought',  # Interaction of soil type and mean summer dryness forecast
     ],
     'BEST_PARAMS': {
         'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,
