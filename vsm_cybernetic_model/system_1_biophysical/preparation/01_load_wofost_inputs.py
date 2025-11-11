@@ -2,36 +2,38 @@
 
 def prepare_wofost_inputs():
     """
-    Prepares the static biophysical inputs for the VSM System 1 module.
+    Prepares the static biophysical inputs and defines the VSM 1 calibration
+    data requirements.
 
-    This script should be implemented by the user to load and process
-    the necessary soil and other static environmental data for each
-    NUTS 3 district.
+    This script's primary role is to prepare static data. However, it also
+    documents the critical dependency of the VSM 1 RPP simulation on the
+    dynamic VSM 2 data.
+
+    ---
+    Part 1: Static Feature Preparation (User Implementation Required)
+    ---
+    This section should load and process static soil and environmental data.
 
     Expected Output:
-    ----------------
-    A pandas DataFrame saved to `vsm_cybernetic_model.configs.main_config.FOUNDATIONAL_FEATURES_STATIC_BIO`.
+        - A pandas DataFrame saved to `cfg.FOUNDATIONAL_FEATURES_STATIC_BIO`.
+        - Schema:
+            - district_no: int
+            - Soil_Water_Battery: float
+            - ... (other static features)
 
-    DataFrame Schema:
-    -----------------
-    - district_no: int
-        NUTS 3 district code.
-    - Soil_Water_Battery: float
-        A pre-calculated index representing the soil's water holding capacity.
-        Higher values mean a larger buffer.
-    - ... (any other static biophysical features required)
+    ---
+    Part 2: Dynamic Calibration Data (Documentation)
+    ---
+    The `system_1_biophysical/model/01_run_rpp_simulations.py` script requires
+    foundational features from VSM 2 for calibration. The preparation for
+    these features is handled in the `system_2_coordination` module.
+
+    Required Foundational Feature for RPP Calibration:
+        - sowing_date_doy_nuts3: int (from DWD raster grids)
     """
     print("--- Preparing VSM System 1 (Biophysical) Static Inputs ---")
-    print("NOTE: This is a placeholder. User must implement data loading logic.")
-    # Example:
-    # import pandas as pd
-    # from vsm_cybernetic_model.configs import main_config as cfg
-    #
-    # df = pd.read_csv(cfg.RAW_DATA_DIR / "soil_data.csv")
-    # df_processed = df[['district_no', 'sand_percentage', 'clay_percentage']]
-    # df_processed['Soil_Water_Battery'] = (df_processed['clay_percentage'] * 2.0) - df_processed['sand_percentage']
-    #
-    # df_processed.to_csv(cfg.FOUNDATIONAL_FEATURES_STATIC_BIO, index=False)
+    print("NOTE: This is a placeholder. User must implement static data loading.")
+    print("This module has a dependency on 'sowing_date_doy_nuts3' from VSM 2.")
     print("--- Finished VSM System 1 Preparation ---")
 
 if __name__ == "__main__":
