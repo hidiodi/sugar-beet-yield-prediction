@@ -22,45 +22,37 @@ def define_schema():
     - district_no: int
         The NUTS 3 district code.
 
-    --- VSM System 2 (Coordination) ---
-    - avg_sowing_date_doy: int
-        Average day-of-year for sugar beet sowing.
-    - avg_harvest_date_doy: int
-        Average day-of-year for sugar beet harvesting.
-    - crop_competition_ratio: float
-        Ratio of sugar beet area to major competing crops.
-    - sugar_beet_specialization: float
-        Ratio of sugar beet area to total arable land.
+    --- VSM System 2 (Coordination / Management) ---
+    - sowing_date_doy_nuts3: int
+        Mean Day of Year for sowing, from DWD raster data.
+    - harvest_date_doy_nuts3: int
+        Mean Day of Year for harvesting, from DWD raster data.
+    - irrigation_pct_nuts2: float
+        Percentage of irrigable area, applied from NUTS 2 level.
+    - crop_area_variance_nuts3: float
+        Year-over-year variance in sugar beet hectares as a proxy for rotation.
 
     --- VSM System 3 (Control / Economic Battery) ---
-    - avg_farm_size_ha: float
-        Average farm size in hectares.
-    - land_tenure_ratio: float
-        Ratio of rented land to owned land.
-    - avg_land_price_eur_ha: float
-        Average price of agricultural land in EUR per hectare.
-    - total_SO_NUTS3: float
-        Total Standard Output for the district (monetary value).
-    - cost_pressure_index: float
-        Engineered proxy for regional economic pressure.
-    - family_labor_ratio: float
-        Ratio of family workers to total farm labor.
+    - avg_farm_size_n3: float
+        Average farm size in hectares (from Destatis 41251).
+    - so_per_ha_n3: float
+        Disaggregated Standard Output per hectare (income proxy).
+    - input_cost_index_n1: float
+        National-level index for input costs (e.g., fertilizer).
+    - producer_price_index_n1: float
+        National-level index for producer prices (e.g., root crops).
+    - land_tenure_ratio_n2: float
+        Ratio of rented to owned land, applied from NUTS 2 level.
 
     --- VSM System 4 (Strategy / Market) ---
-    - dist_to_processor_km: float
+    - distance_to_processor_km_nuts3: float
         Road network distance to the nearest sugar processing plant.
-    - national_price_sugar_beet: float
-        National average producer price for sugar beet.
-    - national_price_wheat: float
-        National average producer price for wheat (competing crop).
-    - national_price_maize: float
-        National average producer price for maize (competing crop).
 
     --- VSM System 5 (Policy) ---
-    - percent_UAA_in_NVZ: float
-        Percentage of utilized agricultural area within a Nitrate Vulnerable Zone.
-    - CAP_Euros_per_Hectare_UAA: float
-        Average CAP subsidy payment in EUR per hectare of UAA.
+    - total_cap_subsidy_nuts3: float
+        Total aggregated CAP subsidy payments for the district.
+    - pct_area_rote_gebiete_nuts3: float
+        Percentage of UAA within a "Rote Gebiete" (Nitrate Vulnerable Zone).
     """
     pass
 
