@@ -31,6 +31,38 @@ def run_training_pipeline():
     print("--- All Expert Engines have been trained successfully. ---")
 
 
+def _apply_feature_lags(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Applies a one-year lag to post-season features to simulate a forecast scenario.
+
+    For training, we must ensure that the model only sees information that would
+    have been available at the time of a pre-season forecast. This function
+    lags all features that are only available post-season (e.g., annual
+    economic accounts, subsidy payments) by one year.
+    """
+    print("Applying 1-year lag to post-season features...")
+
+    # These columns are only available after the season is complete
+    # and must be lagged for a realistic forecast training set.
+    POST_SEASON_FEATURES = [
+        'crop_area_variance_nuts3',
+        'so_per_ha_n3',
+        'total_cap_subsidy_nuts3'
+    ]
+
+    # Use a placeholder for features that might not exist in dummy data
+    features_to_lag = [f for f in POST_SEASON_FEATURES if f in df.columns]
+
+    # Sort by district and year to ensure correct lagging
+    df = df.sort_values(by=['district_no', 'year'])
+
+    # Apply lag within each district group
+    df[features_to_lag] = df.groupby('district_no')[features_to_lag].shift(1)
+
+    print(f"Lagged features: {features_to_lag}")
+    return df
+
+
 def run_transformation_pipeline():
     """
     Executes the transformation pipeline to generate the final feature matrix.
@@ -50,6 +82,9 @@ def run_transformation_pipeline():
 
     # Merge into a single dataframe for transformation
     df_merged = pd.merge(df_human, df_bio, on=['year', 'district_no'], how='inner')
+
+    # ** NEW STEP: Apply lags to create a realistic forecast training set **
+    df_merged = _apply_feature_lags(df_merged)
 
     final_features = df_merged[['year', 'district_no']].copy()
 

@@ -1,104 +1,63 @@
-# The VSM-CPS Diagnostic Model: Final Documentation & Implementation Guide
+# The VSM-CPS Diagnostic Model: Final Documentation & Implementation Guide (v4.1: Unified Forecast Architecture)
 
 ---
-## 1. Introduction: The Diagnostic Model
-*(This section is unchanged)*
+## 1. Introduction: The Forecast Diagnostic Model
+
+### 1.1. Purpose
+
+This document provides the complete technical documentation for the **VSM-CPS (Viable System Model - Cyber-Physical System) Diagnostic Model**. Its purpose is to serve as a single source of truth for understanding, implementing, and maintaining the system.
+
+The model is a **single, unified Forecast Diagnostic system**. It is designed to operate pre-season (e.g., in March) to predict the upcoming harvest's yield and, crucially, to diagnose the likely systemic drivers of that outcome. It achieves this by training on historical data, where it learns the relationships between past systemic conditions and yield outcomes.
+
+### 1.2. High-Level Architecture
+
+The system is a hierarchical pipeline that learns from historical data to make future predictions:
+
+1.  **Data Integration:** Raw data is loaded and transformed into a standardized set of "foundational features." (See Section 4).
+2.  **Expert Engine Training:** Unsupervised PCA models—"Expert Engines"—are trained on the full historical dataset to learn the latent structure of each VSM subsystem.
+3.  **Final Diagnosis:** A final XGBoost "regulator" model is trained on the historical VSM indices to predict the gap between a realistic potential yield and the final observed yield.
+
+When run in a live forecast, the pre-trained expert engines and regulator model are used to generate a diagnosis based on the latest available pre-season data and weather forecasts.
 
 ---
-## 2. Implemented Pipeline & Execution Guide
+## 2. The VSM 1 "Sensor" in a Forecast Context
 
-The `vsm_cybernetic_model` module contains the fully implemented core logic for the diagnostic model.
+The VSM 1 biophysical sensor is architected specifically for a forecast environment.
 
-### 2.1. How the Code Works
-
-*   **Configuration (`/configs`):** Centralizes all file paths and model parameters.
-*   **Expert Engine Training (`/system_*/model/`):** Each `train_*_engine.py` script trains a PCA model on a specific subset of foundational features and saves the fitted `scaler` and `pca` artifacts to `/models/stage_1_experts/`.
-*   **Pipeline Orchestration (`/pipelines`):**
-    *   `01_run_feature_engineering_pipeline.py` operates in two modes:
-        *   **`train` mode:** Creates the expert engine artifacts.
-        *   **`transform` mode:** Loads the artifacts to generate the final VSM indices.
-    *   `02_run_model_training_pipeline.py`: Trains the final XGBoost regulator model.
-
-### 2.2. How to Run the System
-
-**Step 1: Implement the Data Preparation Scripts (See Section 4)**
-*   Your primary task is to complete the scripts in the `preparation` directories.
-
-**Step 2: Train the Expert Engines**
-*   From the repository root, run:
-    ```bash
-    python -m vsm_cybernetic_model.pipelines.01_run_feature_engineering_pipeline train
-    ```
-
-**Step 3: Train the Final Regulator Model**
-*   Generate the final feature matrix:
-    ```bash
-    python -m vsm_cybernetic_model.pipelines.01_run_feature_engineering_pipeline transform
-    ```
-*   Train the final XGBoost model:
-    ```bash
-    python -m vsm_cybernetic_model.pipelines.02_run_model_training_pipeline
-    ```
----
-## 3. Validation and Interpretation: A Practical Guide
-
-The system includes a comprehensive, multi-layered validation suite, executed via a single command. This section details what each script does and how to interpret its output.
-
-### 3.1. How to Run the Verification Suite
-
-After successfully training the full system (Steps 2 and 3 above), run the following command from the repository root:
-```bash
-python -m vsm_cybernetic_model.pipelines.03_run_verification_pipeline
-```
-This will generate a series of plots and analyses in the `/reports/verification/` directory.
-
-### 3.2. Interpreting the Outputs: A Layer-by-Layer Guide
-
-**Layer 1: Foundational Feature Validation**
-*   **What it does:** The `01_validate_*_features.py` scripts generate plots (histograms, scatter plots) of the key foundational features you created.
-*   **What to look for:** Check these plots for sanity. Do the distributions make sense? Are there extreme outliers that might indicate data processing errors? For example, the `vsm2_sowing_date_distribution.png` plot should show a plausible range of sowing dates for Germany.
-
-**Layer 2: RPP Baseline Validation**
-*   **What it does:** The `system_1_biophysical/verification/01_validate_rpp_baseline.py` script generates the `vsm1_rpp_plausibility_check.png` plot.
-*   **What to look for:** This is a critical check. The distribution for `RPP_mean_yield` should be higher on average than the distribution for the real yield, confirming that our baseline represents a reasonable *potential* yield.
-
-**Layer 3: Expert Engine Validation (Interpretability)**
-*   **What it does:** The `02_analyze_*_engine.py` scripts are the most important validation step. They generate heatmaps of the PCA component loadings (e.g., `vsm3_component_loadings.png`).
-*   **What to look for:** These heatmaps tell you *what the expert engines have learned*. For the **VSM 3 "Economic Battery,"** you must confirm that the first principal component (`PC1`) has high positive or negative loadings for features that represent economic strength (e.g., `avg_land_price`, `so_per_ha_n3`) and low loadings for unrelated features. If the loadings do not make intuitive sense, the engine is an uninterpretable "black box," and its input features must be re-evaluated.
-
-**Layer 4: Post-Hoc Model Validation (Final Check)**
-*   **What it does:** The top-level `verification/01_run_post_hoc_shap_analysis.py` script generates the `final_model_shap_summary.png`.
-*   **What to look for:** This plot shows the global feature importance for the final XGBoost regulator. You must confirm that the VSM indices (e.g., `VSM3_PC1`, `VSM4_PC1`) rank among the most important features. If they do not, it indicates that our high-level VSM architecture is not effectively capturing the variance in the yield gap.
+*   **Weather Input:** The WOFOST simulation is **always** driven by an **ensemble of forecasted weather scenarios** (e.g., the 51 members of a SEAS5 forecast). This is true for both historical training runs (where historical forecasts are used) and live forecast runs.
+*   **RPP Output:** The result is always a *distribution* of Realistic Physical Potential (RPP) outcomes. The foundational features extracted are therefore distributional, such as:
+    *   `RPP_ensemble_mean_yield`
+    *   `RPP_ensemble_std_dev_yield` (a key measure of biophysical uncertainty/risk)
+    *   `prob_rpp_failure` (the percentage of ensemble members that predict a crop failure).
 
 ---
-## 4. Your Implementation Checklist: The Path to a Live Model
+## 3. Implemented Pipeline & Execution Guide
+*(Execution commands are unchanged)*
 
-This section provides the explicit, actionable "to-do list" required to finish the model. Your task is to implement the placeholder scripts in the `**/preparation/` directories.
+---
+## 4. Implementation Checklist: Data Timing
+
+This checklist details the foundational features required and clarifies their availability for a pre-season forecast. The model is trained on historical data where all features are available, but it is *designed to predict* using only the subset available pre-season.
 
 **✅ Checklist:**
 
-1.  **Implement VSM 1 & 2 Preparation (Calibration Data):**
-    *   **File:** `system_2_coordination/preparation/01_process_dwd_phenology_data.py`
-    *   **Task:** Implement the zonal statistics logic to process the DWD raster grids and generate the `sowing_date_doy_nuts3` feature. This is the **highest priority** as it is required to calibrate the VSM 1 sensor.
+| VSM System | Feature to Create | Data Source | Data Timing | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| **1 & 2** | `sowing_date_doy_nuts3` | DWD Raster Grids | **Pre-Season** | **Highest Priority.** Assumed to be known or estimated by March. |
+| **2** | `crop_area_variance_nuts3` | Destatis `41241` | Post-Season | Available for historical training data only. Cannot be known pre-season. |
+| **2** | `irrigation_pct_nuts2` | Eurostat `aei_ef_ir` | Static | Structural feature, changes slowly. Available for any forecast. |
+| **3** | `avg_farm_size_n3` | Destatis `41251` | Static | Structural feature (decennial census). Available for any forecast. |
+| **3** | `so_per_ha_n3` | Eurostat `ef_kvaareg` | Post-Season | Based on annual economic accounts. Available for historical training data only. |
+| **3** | `input_cost_index_n1` | Eurostat `apri_pi_in` | **Pre-Season (Lagged)** | For a March forecast, use the index values from the previous year. |
+| **3** | `producer_price_index_n1` | Eurostat `apri_pi_out`| **Pre-Season (Lagged)** | For a March forecast, use the previous year's prices. |
+| **4** | `distance_to_processor_km_nuts3`| Manual Geocoding | Static | Static geographical feature. Available for any forecast. |
+| **5** | `total_cap_subsidy_nuts3` | `agrarzahlungen.de` | Post-Season | Based on annual payment disclosures. Available for historical training data only. |
+| **5** | `pct_area_rote_gebiete_nuts3`| Länder GIS Portals | Static | Regulatory feature, changes slowly. Available for any forecast. |
 
-2.  **Implement VSM 2 Preparation (Management Features):**
-    *   **File:** `system_2_coordination/preparation/02_process_crop_rotation_data.py`
-    *   **Tasks:**
-        *   Source and disaggregate the NUTS 2 Eurostat irrigation data (`irrigation_pct_nuts2`).
-        *   Process the time-series from Destatis Table `41241` to create the `crop_area_variance_nuts3` feature.
+### Architectural Implication: One Unified Regulator Model
 
-3.  **Implement VSM 3 Preparation (The Economic Battery):**
-    *   **File:** `system_3_control/preparation/01_prepare_economic_battery_features.py`
-    *   **Task:** This script already contains the working base for national price indices. Your task is to implement the **disaggregation logic** described in the docstring, sourcing the required NUTS 3 structural data (Destatis) and NUTS 2 economic data (Eurostat) to create features like `so_per_ha_n3`.
+The system is designed to train **one unified regulator model**. This model is trained on the complete historical dataset. When constructing the training data, features are lagged appropriately to mimic the information that would have been available at forecast time. For example, the `so_per_ha_n3` feature for a 2020 forecast would be the value from 2019. This ensures the model learns from the same data structure it will see during a live forecast, eliminating the need for two separate models.
 
-4.  **Implement VSM 4 Preparation (Market Strategy):**
-    *   **File:** `system_4_strategy/preparation/01_prepare_strategy_features.py`
-    *   **Task:** Implement the geospatial logic to geocode the 13 processor addresses and calculate the road network `distance_to_processor_km_nuts3` for each NUTS 3 district.
-
-5.  **Implement VSM 5 Preparation (Policy):**
-    *   **File:** `system_5_policy/preparation/01_prepare_policy_features.py`
-    *   **Tasks:**
-        *   Implement the aggregation logic to process the `agrarzahlungen.de` CAP subsidies CSV to generate `total_cap_subsidy_nuts3`.
-        *   Implement the geospatial workflow to process the federated "Rote Gebiete" shapefiles and calculate `pct_area_rote_gebiete_nuts3`.
-
-Once these five tasks are complete, the system will be fully data-connected and the `train` and `transform` pipelines can be run to produce the final, diagnostic model.
+---
+## 5. Validation and Interpretation: A Practical Guide
+*(This section is unchanged, as the validation scripts and their interpretation are still correct for the unified forecast model)*
