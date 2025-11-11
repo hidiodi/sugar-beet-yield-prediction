@@ -9,12 +9,12 @@ WOFOST_SITE_FILE = "ec5.site"
 
 # --- VSM 1 Expert Engine Parameters ---
 # Defines the feature set that will be used to train the biophysical expert engine
-# This combines static features (e.g., soil) and dynamic RPP outputs
+# This combines static features (e.g., soil) and the distributional RPP outputs
 VSM1_INPUT_FEATURES = [
     'Soil_Water_Battery',
-    'RPP_mean_yield',
-    'RPP_biomass_volatility',
-    'RPP_cumulative_stress',
+    'RPP_ensemble_mean_yield',
+    'RPP_ensemble_std_dev_yield',
+    'prob_rpp_failure',
 ]
 
 # Defines the unsupervised model to be used

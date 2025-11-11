@@ -1,22 +1,19 @@
 # 01_run_rpp_simulations.py
 import pandas as pd
+import numpy as np
 
 from vsm_cybernetic_model.configs import main_config as cfg
 from vsm_cybernetic_model.configs import system_1_biophysical as sys_cfg
 
 def run_rpp_simulations():
     """
-    Placeholder for running the calibrated WOFOST simulations.
+    Placeholder for running the calibrated WOFOST simulations in a forecast context.
 
-    This function demonstrates the data flow for the RPP (Realistic Physical
-    Potential) baseline. It loads the VSM 2 (Coordination) data, shows how it
-    would be used to configure WOFOST, and then generates a dummy output file
-    representing the results of the simulations.
-
-    In a real implementation, this script would contain the complex logic for
-    parameterizing and executing the WOFOST model for each NUTS 3 district.
+    This function loads VSM 2 data for calibration and then generates a dummy
+    output file representing the *distributional* results of running an
+    ensemble weather forecast (e.g., 51 SEAS5 members) through WOFOST.
     """
-    print("--- Running VSM System 1 (Biophysical) RPP Simulations (Placeholder) ---")
+    print("--- Running VSM System 1 (Biophysical) RPP Simulations (Forecast Mode) ---")
 
     # 1. Load VSM 2 Data for Calibration
     try:
@@ -27,33 +24,28 @@ def run_rpp_simulations():
         print("Please run the VSM 2 preparation scripts first.")
         return
 
-    # This is the key calibration step: using real management data
     calibration_data = df_human[['year', 'district_no', 'avg_sowing_date_doy']].dropna()
     print(f"Found calibration data for {len(calibration_data)} district-years.")
 
-    # 2. Placeholder for WOFOST Execution Logic
-    # In a real scenario, you would loop through each row of `calibration_data`
-    # and run a WOFOST simulation configured with the `avg_sowing_date_doy`.
-    print("... (Placeholder) Executing calibrated WOFOST ensemble for each district-year ...")
-    print(f"... Using crop file: {sys_cfg.WOFOST_CROP_FILE}")
+    # 2. Placeholder for Ensemble WOFOST Execution
+    print("... (Placeholder) Executing 51-member WOFOST ensemble for each district-year ...")
 
-    # 3. Generate Dummy Output
-    # The output of the real WOFOST runs would be a DataFrame with one row
-    # per district-year, containing the dynamic outputs of the simulation.
-    # Here, we create a dummy DataFrame that mimics this structure.
-    print("Generating dummy RPP output file...")
-    # Assume the simulation was run for the same districts/years as the calibration data
+    # 3. Generate Dummy Distributional Output
+    print("Generating dummy distributional RPP output file...")
     df_rpp_output = calibration_data[['year', 'district_no']].copy()
 
-    # Create dummy columns for the RPP outputs
-    # In a real run, these values would come from the WOFOST results
-    df_rpp_output['RPP_mean_yield'] = 100 + (df_rpp_output['district_no'] % 10) * 0.5
-    df_rpp_output['RPP_biomass_volatility'] = 0.5 + (df_rpp_output['district_no'] % 5) * 0.1
-    df_rpp_output['RPP_cumulative_stress'] = 0.1 + (df_rpp_output['district_no'] % 7) * 0.05
+    # Create dummy columns representing the output of an ensemble run
+    base_yield = 100 + (df_rpp_output['district_no'] % 10) * 0.5
+    ensemble_noise = np.random.normal(0, 15, size=len(df_rpp_output))
+
+    df_rpp_output['RPP_ensemble_mean_yield'] = base_yield + ensemble_noise
+    df_rpp_output['RPP_ensemble_std_dev_yield'] = 8 + np.random.rand(len(df_rpp_output)) * 5
+    df_rpp_output['prob_rpp_failure'] = np.clip(0.05 + (df_rpp_output['district_no'] % 3) * 0.05, 0, 1)
+
 
     # 4. Save Output
     df_rpp_output.to_csv(cfg.FOUNDATIONAL_FEATURES_RPP, index=False)
-    print(f"--- RPP simulation outputs saved to '{cfg.FOUNDATIONAL_FEATURES_RPP}' ---")
+    print(f"--- Distributional RPP simulation outputs saved to '{cfg.FOUNDATIONAL_FEATURES_RPP}' ---")
 
 
 if __name__ == "__main__":
