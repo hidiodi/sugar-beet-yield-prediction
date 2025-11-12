@@ -1,48 +1,51 @@
-# VSM-Cybernetic-Physical System (VSM-CPS) Model (v1.0 - Implemented)
+# VSM-Cybernetic-Physical System (VSM-CPS) Model (v1.1 - Baseline Model)
 
-This module contains the fully implemented blueprint for the Viable System Model (VSM) - Cyber-Physical System (CPS) diagnostic model. The core logic for training the expert engines and the final regulator model is complete.
+This module contains a runnable baseline implementation of the Viable System Model (VSM) diagnostic model. It has been refactored to work **end-to-end** using a single, curated feature set: `data/04_master/master_dataset.csv`.
 
-The system is now ready for data integration. The user's primary task is to implement the data loading and processing logic within the `preparation` subdirectories of each system module.
+The complex data sourcing and preparation pipelines have been temporarily removed to create a stable, verifiable baseline. The focus of this version is on the core VSM architecture and the training of the "Expert Engines" and the final "Regulator" model.
 
-## Architecture Overview (Implemented)
+## Architecture Overview (Baseline)
 
--   **`/system_*`**: Each VSM system module contains the logic for training its "Expert Engine."
--   **`/configs`**: Contains all file paths and model parameters. **This is the main place for user configuration.**
--   **`/models`**: The target directory where all trained model artifacts (`.joblib` files for scalers and engines) will be saved.
+-   **`/system_*`**: Each VSM system module contains the logic for its "Expert Engine".
+-   **`/configs`**: Contains all file paths and model parameters. The feature lists in `configs/vsm*.py` have been mapped to the columns in the `master_dataset.csv`.
 -   **`/pipelines`**: Contains the main entry points for running the system.
+-   **`/verification`**: Contains scripts to validate the model's outputs and internal logic.
 
-## How to Use: Your Data Integration Task
+## How to Run the Baseline Model
 
-Your task is to connect your raw data sources to the system. The implemented model scripts expect specific foundational feature files as inputs. You must implement the scripts in the `preparation` directories to generate these files.
+This model is designed to be run from the root of the repository. The pipeline is broken into sequential steps.
 
-**Step 1: Place Your Raw Data**
--   Place all your raw data files (CSVs, shapefiles, etc.) into the `data/01_raw/` directory at the root of the repository.
+**Prerequisites:**
+-   Ensure you have the required Python packages installed. A `requirements.txt` is not provided, but you will need `pandas`, `xgboost`, `scikit-learn`, `joblib`, `matplotlib`, and `seaborn`.
 
-**Step 2: Define Your Schemas**
--   Open the `pipelines/00_define_human_system_schema.py` and `system_1_biophysical/preparation/01_load_wofoost_inputs.py` files.
--   The docstrings in these files contain the **exact DataFrame schemas** that your preparation scripts need to produce.
+**Step 1: Prepare Foundational Data**
+-   This step is a simple passthrough that copies the master dataset to the location the pipeline expects.
+    ```bash
+    python -m vsm_cybernetic_model.pipelines.prepare_foundational_features
+    ```
 
-**Step 3: Implement the `preparation` Scripts**
--   Go through each `preparation` script in the `system_*` directories.
--   Replace the placeholder logic with your own Python code (using `pandas`, `geopandas`, etc.) to load your raw data and transform it into the required foundational feature tables.
--   Ensure your scripts save their final outputs to the paths defined in `configs/main_config.py` (e.g., `FOUNDATIONAL_FEATURES_HUMAN`).
-
-**Step 4: Run the Training Pipeline**
--   Once your preparation scripts are implemented and can successfully generate the foundational feature files, you can run the main training pipeline.
--   From your terminal, at the root of the repository, execute the following command:
+**Step 2: Train the Stage 1 "Expert Engines"**
+-   This command trains the five VSM expert engines (PCA models) and saves them to the `vsm_cybernetic_model/models/stage_1_experts/` directory.
     ```bash
     python -m vsm_cybernetic_model.pipelines.01_run_feature_engineering_pipeline train
     ```
--   This will train all the Stage 1 "Expert Engine" models and save them to the `vsm_cybernetic_model/models/stage_1_experts/` directory.
 
-**Step 5: Run the Transformation and Final Model Training**
--   After the expert engines are trained, you can generate the final feature matrix and train the main XGBoost regulator.
+**Step 3: Transform Data and Create Final Features**
+-   This command uses the trained expert engines to transform the foundational data into the final feature matrix for the regulator model.
     ```bash
-    # Generate the final features using the trained engines
     python -m vsm_cybernetic_model.pipelines.01_run_feature_engineering_pipeline transform
+    ```
 
-    # Train the final XGBoost model
+**Step 4: Train the Final Stage 2 "Regulator" Model**
+-   Finally, this command trains the XGBoost model on the final features.
+    ```bash
     python -m vsm_cybernetic_model.pipelines.02_run_model_training_pipeline
     ```
 
-Your system is now fully trained and ready for analysis.
+**Step 5: Run Verification**
+-   After training, you can run the verification scripts to perform plausibility checks and analysis.
+    ```bash
+    python -m vsm_cybernetic_model.pipelines.03_run_verification_pipeline
+    ```
+
+The system is now fully trained and verified. You can find model artifacts in `vsm_cybernetic_model/models/` and verification plots in `vsm_cybernetic_model/verification/`.
