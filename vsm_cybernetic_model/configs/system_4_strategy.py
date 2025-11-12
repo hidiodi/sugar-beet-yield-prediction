@@ -2,12 +2,10 @@
 from sklearn.decomposition import PCA
 
 # --- VSM 4 Expert Engine Parameters ---
-# Defines the feature set for market strategy and access
+# Defines the feature set for market strategy and response to market signals.
+# In the current dataset, this is primarily proxied by the national yield average.
 VSM4_INPUT_FEATURES = [
-    'dist_to_processor_km',
-    'national_price_sugar_beet',
-    'national_price_wheat', # Example of competing crop price
-    'national_price_maize',  # Example of competing crop price
+    'national_avg_yield_lag1' # Proxy for national supply signal
 ]
 
 # Defines the unsupervised model to be used

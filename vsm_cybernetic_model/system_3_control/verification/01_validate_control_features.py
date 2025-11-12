@@ -11,11 +11,11 @@ def validate_control_features():
         print("Error: Foundational features file not found.")
         return
     plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=df, x='avg_land_price_eur_ha', y='cost_pressure_index')
-    plt.title('Land Price vs. Cost Pressure Index')
-    output_path = cfg.VERIFICATION_DIR / "vsm3_land_price_vs_cost_pressure.png"
+    sns.scatterplot(data=df, x='producer_price_index_lag1', y='cost_of_inputs_lag1')
+    plt.title('VSM 3: Producer Price vs. Cost of Inputs')
+    output_path = cfg.VERIFICATION_DIR / "vsm3_price_vs_costs.png"
     plt.savefig(output_path)
-    print(f"Saved land price plot to '{output_path}'")
+    print(f"Saved price vs. costs plot to '{output_path}'")
     plt.close()
     print("--- VSM 3 Feature validation complete ---")
 

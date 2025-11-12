@@ -11,11 +11,11 @@ def validate_coordination_features():
         print("Error: Foundational features file not found.")
         return
     plt.figure(figsize=(10, 6))
-    sns.histplot(df['avg_sowing_date_doy'], bins=30, kde=True)
-    plt.title('Distribution of Average Sowing Date')
-    output_path = cfg.VERIFICATION_DIR / "vsm2_sowing_date_distribution.png"
+    sns.histplot(df['zuckerrben'], bins=30, kde=True)
+    plt.title('VSM 2: Distribution of Sugar Beet Cultivation Area (zuckerrben)')
+    output_path = cfg.VERIFICATION_DIR / "vsm2_zuckerruben_distribution.png"
     plt.savefig(output_path)
-    print(f"Saved sowing date distribution to '{output_path}'")
+    print(f"Saved zuckerruben distribution plot to '{output_path}'")
     plt.close()
     print("--- VSM 2 Feature validation complete ---")
 

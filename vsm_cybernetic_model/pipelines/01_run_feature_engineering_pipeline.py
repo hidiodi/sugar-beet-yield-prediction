@@ -1,4 +1,5 @@
 # 01_run_feature_engineering_pipeline.py
+from vsm_cybernetic_model.pipelines import 00_prepare_foundational_features
 import argparse
 import pandas as pd
 import joblib
@@ -17,12 +18,13 @@ from vsm_cybernetic_model.system_5_policy.model import train_policy_engine
 def run_training_pipeline():
     """Executes the full training pipeline for all Stage 1 Expert Engines."""
     print("--- Starting Stage 1 Expert Engine Training Pipeline ---")
+    00_prepare_foundational_features.prepare_all_foundational_features()
     # Note: In a real-world scenario, you would run the preparation scripts first.
     # For this blueprint, we assume they have been run and the foundational
     # features exist.
 
-    # VSM 1 depends on VSM 2 for calibration, so we must respect the order.
-    run_rpp_simulations.run_rpp_simulations()
+    # In the baseline model, all expert engines are trained on the same foundational
+    # feature set, so the order does not matter. The RPP simulation is bypassed.
     train_biophysical_engine.train_biophysical_engine()
     train_coordination_engine.train_coordination_engine()
     train_economic_battery_engine.train_economic_battery_engine()
@@ -73,17 +75,18 @@ def run_transformation_pipeline():
     """
     print("--- Starting Final Feature Matrix Transformation Pipeline ---")
 
-    # Load all necessary foundational feature sets
-    df_human = pd.read_csv(cfg.FOUNDATIONAL_FEATURES_HUMAN)
-    df_rpp = pd.read_csv(cfg.FOUNDATIONAL_FEATURES_RPP)
-    # df_static_bio = pd.read_csv(cfg.FOUNDATIONAL_FEATURES_STATIC_BIO)
-    df_rpp['Soil_Water_Battery'] = 200 - (df_rpp['district_no'] % 20) * 2.5 # Dummy
-    df_bio = df_rpp
+    # ** CORRECTED DATA LOADING **
+    # In the baseline model, all features for all systems are loaded from
+    # a single source of truth.
+    try:
+        df_merged = pd.read_csv(cfg.FOUNDATIONAL_FEATURES_HUMAN)
+        print(f"Loaded unified foundational features from '{cfg.FOUNDATIONAL_FEATURES_HUMAN}'")
+    except FileNotFoundError:
+        print(f"Error: Foundational features file not found at '{cfg.FOUNDATIONAL_FEATURES_HUMAN}'.")
+        print("Please run the preparation pipeline first.")
+        return
 
-    # Merge into a single dataframe for transformation
-    df_merged = pd.merge(df_human, df_bio, on=['year', 'district_no'], how='inner')
-
-    # ** NEW STEP: Apply lags to create a realistic forecast training set **
+    # Apply lags to create a realistic forecast training set
     df_merged = _apply_feature_lags(df_merged)
 
     final_features = df_merged[['year', 'district_no']].copy()
