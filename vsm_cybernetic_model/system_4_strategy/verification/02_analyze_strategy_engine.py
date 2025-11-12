@@ -16,8 +16,8 @@ def analyze_strategy_engine():
     feature_names = sys_cfg.VSM4_INPUT_FEATURES
     df_loadings = pd.DataFrame(loadings.T, columns=[f'PC{i+1}' for i in range(loadings.shape[0])], index=feature_names)
     print("\nComponent Loadings:\n", df_loadings)
-    plt.figure(figsize=(10, 6))
-    sns.heatmap(df_loadings, annot=True, cmap='viridis')
+    plt.figure(figsize=(8, 5))
+    sns.heatmap(df_loadings, annot=True, cmap='coolwarm')
     plt.title('VSM 4 Engine: Feature Loadings')
     output_path = cfg.VERIFICATION_DIR / "vsm4_component_loadings.png"
     plt.savefig(output_path)

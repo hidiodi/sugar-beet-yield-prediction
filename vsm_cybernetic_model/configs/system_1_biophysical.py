@@ -1,20 +1,25 @@
 # system_1_biophysical.py
-import numpy as np
 from sklearn.decomposition import PCA
 
-# --- RPP Simulation Parameters ---
-# Placeholder for WOFOST configurations. In a real scenario, this would be more complex.
-WOFOST_CROP_FILE = "sugarbeet.cab"
-WOFOST_SITE_FILE = "ec5.site"
-
 # --- VSM 1 Expert Engine Parameters ---
-# Defines the feature set that will be used to train the biophysical expert engine
-# This combines static features (e.g., soil) and the distributional RPP outputs
+# Defines the feature set representing the biophysical environment and forecast.
+# This combines static soil/geo features, antecedent conditions, and weather forecasts.
 VSM1_INPUT_FEATURES = [
-    'Soil_Water_Battery',
-    'RPP_ensemble_mean_yield',
-    'RPP_ensemble_std_dev_yield',
-    'prob_rpp_failure',
+    # Static Environment
+    'lat', 'lon', 'avg_elevation', 'avg_slope', 'avg_clay_0_30cm',
+    'avg_sand_0_30cm', 'avg_som_0_30cm', 'avg_phh2o_0_30cm',
+
+    # Antecedent & Early Season Satellite
+    'antecedent_frost_days_anomaly', 'antecedent_gdd_sum_anomaly',
+    'winter_cropland_snow_cover_days', 'winter_cropland_ndvi_mean',
+
+    # In-Season Forecast
+    'spring_temp_anomaly_forecast', 'spring_precip_anomaly_forecast',
+    'summer_temp_anomaly_forecast', 'summer_precip_anomaly_forecast',
+    'summer_solar_rad_anomaly_forecast',
+
+    # Probabilistic Forecasts
+    'summer_temp_prob_warm_forecast', 'summer_precip_prob_wet_forecast'
 ]
 
 # Defines the unsupervised model to be used
@@ -22,11 +27,10 @@ VSM1_EXPERT_ENGINE = PCA
 
 # Defines the parameters for the unsupervised model
 VSM1_EXPERT_ENGINE_PARAMS = {
-    'n_components': 2,
+    'n_components': 5,  # Increased components for a richer system
     'random_state': 42
 }
 
 # --- Artifact Naming ---
-# Standardized naming for the saved model files
 VSM1_SCALER_NAME = "scaler_vsm1_biophysical.joblib"
 VSM1_ENGINE_NAME = "engine_vsm1_biophysical.joblib"

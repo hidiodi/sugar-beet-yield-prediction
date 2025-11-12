@@ -1,59 +1,77 @@
-# The VSM-CPS Diagnostic Model: Final Documentation (v4.1 Aligned)
+# The VSM-CPS Diagnostic Model: Documentation for the Baseline Model (v6.0)
 
 ---
-## 1. Introduction: The Forecast Diagnostic Model
+## 1. Introduction: The Baseline Forecast Diagnostic Model
 
 ### 1.1. Purpose
 
-This document provides the complete technical documentation for the **VSM-CPS (Viable System Model - Cyber-Physical System) Diagnostic Model**.
+This document provides the complete technical documentation for the **Baseline VSM-CPS Diagnostic Model**. This version of the model is designed to be **runnable end-to-end using only the existing, curated feature set**.
 
-The model is a **single, unified Forecast Diagnostic system**. It is designed to operate pre-season (e.g., in March) to predict the upcoming harvest's yield and, crucially, to diagnose the likely systemic drivers of that outcome. It achieves this by training on historical data, where it learns the relationships between past systemic conditions and yield outcomes.
+Its purpose is to establish a strong baseline performance for our VSM architecture. It provides a pre-season forecast and a diagnostic explanation for that forecast, based on a mapping of our rich existing features to the VSM framework.
 
-### 1.2. High-Level Architecture
-
-The system is a hierarchical pipeline that learns from historical data to make future predictions:
-
-1.  **Data Integration:** User-implemented scripts transform raw data into "foundational features."
-2.  **Expert Engine Training:** Unsupervised PCA models—"Expert Engines"—are trained on the full historical dataset to learn the latent structure of each VSM subsystem.
-3.  **Final Diagnosis:** A final XGBoost "regulator" model is trained on the historical VSM indices to predict the gap between a realistic potential yield and the final observed yield.
+This document details the feature mapping, the implemented pipeline, and provides a clear roadmap for future improvements by integrating new data sources.
 
 ---
-## 2. Implemented Pipeline & Execution Guide
+## 2. VSM Mapping of Existing Features
 
-### 2.1. How the Code Works
+The core of this baseline model is a new mapping of our extensive existing feature set to the five VSM subsystems. This allows us to build and test the VSM architecture without sourcing any new data.
 
-*   **The VSM 1 "Sensor":** The `system_1_biophysical/model/01_run_rpp_simulations.py` script is designed to be driven by an **ensemble weather forecast**. Its placeholder logic correctly generates distributional outputs, including `RPP_ensemble_mean_yield` and `RPP_ensemble_std_dev_yield`, which are used as inputs for the VSM 1 expert engine.
-*   **Feature Lagging for Forecasting:** The `pipelines/01_run_feature_engineering_pipeline.py` contains a critical function, `_apply_feature_lags`. This function is called in `transform` mode and automatically applies a one-year lag to all "Post-Season" features (e.g., `so_per_ha_n3`, `total_cap_subsidy_nuts3`). This ensures the model is always trained on data that mimics the information available at the time of a pre-season forecast.
-*   **Expert Engine Training (`/system_*/model/`):** Each `train_*_engine.py` script trains a PCA model and saves the fitted `scaler` and `pca` artifacts.
-*   **Pipeline Orchestration (`/pipelines`):**
-    *   The main pipeline has two modes: **`train`** (to create the expert engines) and **`transform`** (to apply the lagging and generate the final VSM indices).
-
-### 2.2. How to Run the System
-
-**(This section is unchanged)**
+| VSM System | Feature Category | Example Existing Features |
+| :--- | :--- | :--- |
+| **System 1 (Biophysical)** | Environment & Forecast | `avg_sand_0_30cm`, `antecedent_gdd_sum_anomaly`, `winter_cropland_snow_cover_days`, `summer_temp_anomaly_forecast` |
+| **System 2 (Coordination)** | Management Proxy | `zuckerrben` (area of sugar beet cultivation) |
+| **System 3 (Control)** | Economic Battery | `dngemittel` (fertilizer costs), `profit_margin_proxy_lag1`, `cost_of_inputs_momentum` |
+| **System 4 (Strategy)** | Market Signals | `national_avg_yield_lag1` (national supply proxy) |
+| **System 5 (Policy)** | **DATA GAP** | *(No features in the current dataset directly map to this system)* |
 
 ---
-## 3. Validation and Interpretation: A Practical Guide
-**(This section is unchanged)**
+## 3. Implemented Pipeline & Execution Guide
+
+The `vsm_cybernetic_model` module is a fully implemented, runnable system that works with the existing `master_dataset.csv`.
+
+### 3.1. How the Code Works
+
+*   **Unified Data Preparation:** The placeholder `preparation` scripts have been replaced by a single, functional script: `pipelines/00_prepare_foundational_features.py`. This script loads your `data/04_master/master_dataset.csv`, handles any necessary preprocessing, and saves the clean data in the format the rest of the pipeline expects.
+*   **Data-Driven Configurations:** The `configs/*.py` files have been refactored. The `INPUT_FEATURES` lists now contain the actual feature names from your master dataset, mapped to the correct VSM system.
+*   **End-to-End Execution:** The system is fully runnable. The pipelines will load your data, train the five "Expert Engines" (PCA models), generate the VSM indices, and train the final XGBoost "Regulator" model.
+
+### 3.2. How to Run the System
+
+**Step 1: Verify Your Data**
+*   Ensure your complete, curated feature set is located at `data/04_master/master_dataset.csv`.
+
+**Step 2: Train the Expert Engines**
+*   From the repository root, run:
+    ```bash
+    python -m vsm_cybernetic_model.pipelines.01_run_feature_engineering_pipeline train
+    ```
+
+**Step 3: Train the Final Regulator Model**
+*   Generate the final feature matrix:
+    ```bash
+    python -m vsm_cybernetic_model.pipelines.01_run_feature_engineering_pipeline transform
+    ```
+*   Train the final XGBoost model:
+    ```bash
+    python -m vsm_cybernetic_model.pipelines.02_run_model_training_pipeline
+    ```
 
 ---
-## 4. Implementation Checklist: Data Timing
+## 4. Future Work: A Roadmap for New Data Integration
 
-This checklist details the foundational features required and clarifies their availability for a pre-season forecast.
+This baseline model is powerful, but its diagnostic capabilities can be significantly enhanced by integrating new, targeted data sources. The research and planning for this next phase is complete and is summarized here. This roadmap replaces the previous, more complex "to-do list."
 
-**✅ Checklist:**
+**Priority 1: Calibrate the VSM 1 "Sensor"**
+*   **Task:** Implement the `system_2_coordination/preparation/01_process_dwd_phenology_data.py` placeholder.
+*   **Data Source:** DWD "Annual grids of phenological plant stages."
+*   **Goal:** Replace the simple weather forecast features with a true, calibrated "Realistic Physical Potential" (RPP) baseline from WOFOST. This will provide a much cleaner signal for the final regulator.
 
-| VSM System | Feature to Create | Data Source | Data Timing | Notes |
-| :--- | :--- | :--- | :--- | :--- |
-| **1 & 2** | `sowing_date_doy_nuts3` | DWD Raster Grids | **Pre-Season** | **Highest Priority.** Needed for both modes. Assumed to be known or estimated by March. |
-| **2** | `crop_area_variance_nuts3` | Destatis `41241` | Post-Season | **Will be lagged by the pipeline.** |
-| **2** | `irrigation_pct_nuts2` | Eurostat `aei_ef_ir` | Static | Structural feature, changes slowly. Available for any forecast. |
-| **3** | `avg_farm_size_n3` | Destatis `41251` | Static | Structural feature (decennial census). Available for any forecast. |
-| **3** | `so_per_ha_n3` | Eurostat `ef_kvaareg` | Post-Season | **Will be lagged by the pipeline.** |
-| **3** | `input_cost_index_n1` | Eurostat `apri_pi_in` | **Pre-Season (Lagged)** | For a March forecast, use the index values from the previous year. |
-| **3** | `producer_price_index_n1` | Eurostat `apri_pi_out`| **Pre-Season (Lagged)** | For a March forecast, use the previous year's prices. |
-| **4** | `distance_to_processor_km_nuts3`| Manual Geocoding | Static | Static geographical feature. Available for any forecast. |
-| **5** | `total_cap_subsidy_nuts3` | `agrarzahlungen.de` | Post-Season | **Will be lagged by the pipeline.** |
-| **5** | `pct_area_rote_gebiete_nuts3`| Länder GIS Portals | Static | Regulatory feature, changes slowly. Available for any forecast. |
+**Priority 2: Enhance the VSM 3 "Economic Battery"**
+*   **Task:** Implement the disaggregation logic in `system_3_control/preparation/01_prepare_economic_battery_features.py`.
+*   **Data Sources:** Destatis structural data (e.g., `41251`) and Eurostat NUTS 2 economic data (e.g., `ef_kvaareg`).
+*   **Goal:** Move beyond national price indices to a more granular, regional measure of economic health, which will dramatically improve the model's ability to diagnose economic failures.
 
-This confirms the system uses a single, unified regulator model, trained on a dataset that correctly simulates the data available at the time of a pre-season forecast.
+**Priority 3: Fill the VSM 5 "Policy" Gap**
+*   **Task:** Implement the `system_5_policy/preparation/01_prepare_policy_features.py` placeholder.
+*   **Data Sources:** `agrarzahlungen.de` for CAP subsidies and Länder GIS portals for "Rote Gebiete."
+*   **Goal:** Introduce the policy and regulatory dimension into the model, allowing it to diagnose failures driven by these external constraints for the first time.

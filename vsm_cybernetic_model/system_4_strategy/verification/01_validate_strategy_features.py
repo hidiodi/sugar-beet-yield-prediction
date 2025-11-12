@@ -11,11 +11,11 @@ def validate_strategy_features():
         print("Error: Foundational features file not found.")
         return
     plt.figure(figsize=(10, 6))
-    sns.histplot(df['dist_to_processor_km'], bins=30, kde=True)
-    plt.title('Distribution of Distance to Nearest Processor')
-    output_path = cfg.VERIFICATION_DIR / "vsm4_processor_distance_distribution.png"
+    sns.histplot(df['national_avg_yield_lag1'], bins=30, kde=True)
+    plt.title('VSM 4: Distribution of Lagged National Average Yield')
+    output_path = cfg.VERIFICATION_DIR / "vsm4_nat_yield_distribution.png"
     plt.savefig(output_path)
-    print(f"Saved processor distance plot to '{output_path}'")
+    print(f"Saved national yield distribution plot to '{output_path}'")
     plt.close()
     print("--- VSM 4 Feature validation complete ---")
 

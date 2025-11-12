@@ -2,7 +2,6 @@ import pandas as pd
 import joblib
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy as np
 from vsm_cybernetic_model.configs import main_config as cfg
 from vsm_cybernetic_model.configs import system_1_biophysical as sys_cfg
 
@@ -17,9 +16,9 @@ def analyze_biophysical_engine():
     feature_names = sys_cfg.VSM1_INPUT_FEATURES
     df_loadings = pd.DataFrame(loadings.T, columns=[f'PC{i+1}' for i in range(loadings.shape[0])], index=feature_names)
     print("\nComponent Loadings:\n", df_loadings)
-    plt.figure(figsize=(10, 6))
-    sns.heatmap(df_loadings, annot=True, cmap='viridis')
-    plt.title('VSM 1 Engine: Feature Loadings')
+    plt.figure(figsize=(12, 8))
+    sns.heatmap(df_loadings, annot=True, cmap='coolwarm')
+    plt.title('VSM 1 Engine: Feature Loadings on Principal Components')
     output_path = cfg.VERIFICATION_DIR / "vsm1_component_loadings.png"
     plt.savefig(output_path)
     print(f"Saved component loadings heatmap to '{output_path}'")

@@ -16,8 +16,8 @@ def analyze_control_engine():
     feature_names = sys_cfg.VSM3_INPUT_FEATURES
     df_loadings = pd.DataFrame(loadings.T, columns=[f'PC{i+1}' for i in range(loadings.shape[0])], index=feature_names)
     print("\nComponent Loadings:\n", df_loadings)
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(df_loadings, annot=True, cmap='viridis')
+    plt.figure(figsize=(12, 8))
+    sns.heatmap(df_loadings, annot=True, cmap='coolwarm')
     plt.title('VSM 3 Engine: Feature Loadings (Economic Battery)')
     output_path = cfg.VERIFICATION_DIR / "vsm3_component_loadings.png"
     plt.savefig(output_path)

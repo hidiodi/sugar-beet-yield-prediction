@@ -19,17 +19,14 @@ def train_biophysical_engine():
 
     # 1. Load Data
     try:
-        df_rpp = pd.read_csv(cfg.FOUNDATIONAL_FEATURES_RPP)
-        print(f"Loaded RPP simulation outputs from '{cfg.FOUNDATIONAL_FEATURES_RPP}'")
-        # In a real scenario, you would also load a static biophysical feature file
-        # df_static = pd.read_csv(cfg.FOUNDATIONAL_FEATURES_STATIC_BIO)
-        # For now, we'll create a dummy static feature column.
-        df_rpp['Soil_Water_Battery'] = 200 - (df_rpp['district_no'] % 20) * 2.5
-        df = df_rpp
-        print("Merged RPP outputs with static biophysical features.")
+        # ** CORRECTED **
+        # In this baseline model, all features, including biophysical ones,
+        # come from the single master foundational feature file.
+        df = pd.read_csv(cfg.FOUNDATIONAL_FEATURES_HUMAN)
+        print(f"Loaded foundational features from '{cfg.FOUNDATIONAL_FEATURES_HUMAN}'")
     except FileNotFoundError:
-        print(f"Error: RPP output file not found at '{cfg.FOUNDATIONAL_FEATURES_RPP}'.")
-        print("Please run the RPP simulation script (01_run_rpp_simulations.py) first.")
+        print(f"Error: Foundational features file not found at '{cfg.FOUNDATIONAL_FEATURES_HUMAN}'.")
+        print("Please run the preparation pipeline first.")
         return
 
     # 2. Select and Preprocess Features
