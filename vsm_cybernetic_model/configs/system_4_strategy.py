@@ -5,7 +5,19 @@ from sklearn.decomposition import PCA
 # Defines the feature set for market strategy and response to market signals.
 # In the current dataset, this is primarily proxied by the national yield average.
 VSM4_INPUT_FEATURES = [
-    'national_avg_yield_lag1' # Proxy for national supply signal
+    # --- National Market Signal ---
+    'national_avg_yield_lag1',
+
+    # --- Economic Price Anomalies (Deviations from Trend) ---
+    'producer_price_index_lag1_anomaly',
+    'seed_price_index_lag1_anomaly',
+    'energy_price_index_lag1_anomaly',
+    'fertilizer_price_index_lag1_anomaly',
+    'plant_protection_price_index_lag1_anomaly',
+
+    # --- Capped Anomaly & Extreme Signal ---
+    'fertilizer_price_index_lag1_anomaly_capped',
+    'is_fertilizer_price_extreme',
 ]
 
 # Defines the unsupervised model to be used

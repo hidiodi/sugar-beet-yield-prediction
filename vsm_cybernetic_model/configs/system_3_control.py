@@ -5,19 +5,21 @@ from sklearn.decomposition import PCA
 # Defines the feature set for the Economic Battery: the farm's economic
 # health, cost structure, and ability to afford inputs.
 VSM3_INPUT_FEATURES = [
-    # Direct Input Costs (from original data)
-    'dngemittel',                # Fertilizer costs
-    'energie_und_schmierstoffe', # Energy costs
-    'pflanzenschutzmittel',        # Pesticide costs
-    'saat_und_pflanzgut',        # Seed costs
-
-    # Engineered Economic Features (from pre-processing)
+    # --- Lagged Economic State ---
     'producer_price_index_lag1',
-    'profit_margin_proxy_lag1',
     'cost_of_inputs_lag1',
+    'profit_margin_proxy_lag1',
+
+    # --- Economic Momentum ---
     'profit_margin_momentum',
-    'cost_of_inputs_momentum'
+    'cost_of_inputs_momentum',
+
+    # --- Engineered Interactions: How Economics Modulate Weather Response ---
+    'gdd_x_fertilizer_price',
+    'summer_heat_x_profit_margin',
+    'summer_precip_x_input_costs',
 ]
+
 
 # Defines the unsupervised model to be used
 VSM3_EXPERT_ENGINE = PCA

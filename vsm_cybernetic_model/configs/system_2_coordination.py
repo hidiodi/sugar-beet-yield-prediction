@@ -5,7 +5,11 @@ from sklearn.decomposition import PCA
 # Defines the feature set representing farmer coordination and management.
 # With the current data, this is limited to the area of sugar beet cultivation.
 VSM2_INPUT_FEATURES = [
-    'zuckerrben'  # Area cultivated with sugar beets in ha
+    'zuckerrben',                 # Area cultivated (scale of operation)
+    'dngemittel',                 # Fertilizer costs (intensity)
+    'energie_und_schmierstoffe',  # Energy costs (intensity)
+    'pflanzenschutzmittel',         # Pesticide costs (intensity)
+    'saat_und_pflanzgut',         # Seed costs (intensity)
 ]
 
 # Defines the unsupervised model to be used
