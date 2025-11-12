@@ -21,11 +21,12 @@ def run_training_pipeline():
 
     # In the baseline model, all expert engines are trained on the same foundational
     # feature set, so the order does not matter. The RPP simulation is bypassed.
-    train_biophysical_engine.train_biophysical_engine()
-    train_coordination_engine.train_coordination_engine()
-    train_economic_battery_engine.train_economic_battery_engine()
-    train_strategy_engine.train_strategy_engine()
-    train_policy_engine.train_policy_engine()
+    train_biophysical_engine()
+    train_coordination_engine()
+    train_economic_battery_engine()
+    train_strategy_engine()
+    train_policy_engine()
+
     print("--- All Expert Engines have been trained successfully. ---")
 
 
@@ -64,16 +65,10 @@ def _apply_feature_lags(df: pd.DataFrame) -> pd.DataFrame:
 def run_transformation_pipeline():
     """
     Executes the transformation pipeline to generate the final feature matrix.
-
-    This function loads all pre-trained Stage 1 Expert Engine artifacts and
-    uses them to transform the foundational features into the final VSM indices
-    that will be fed into the Stage 2 XGBoost regulator.
+    ...
     """
     print("--- Starting Final Feature Matrix Transformation Pipeline ---")
 
-    # ** CORRECTED DATA LOADING **
-    # In the baseline model, all features for all systems are loaded from
-    # a single source of truth.
     try:
         df_merged = pd.read_csv(cfg.FOUNDATIONAL_FEATURES_HUMAN)
         print(f"Loaded unified foundational features from '{cfg.FOUNDATIONAL_FEATURES_HUMAN}'")
@@ -82,31 +77,46 @@ def run_transformation_pipeline():
         print("Please run the preparation pipeline first.")
         return
 
-    # Apply lags to create a realistic forecast training set
     df_merged = _apply_feature_lags(df_merged)
-
     final_features = df_merged[['year', 'district_no']].copy()
 
-    # Loop through all VSM systems to transform data
     all_systems = [
-        ('vsm1_biophysical', 'VSM1'),
-        ('vsm2_coordination', 'VSM2'),
-        ('vsm3_control', 'VSM3'),
-        ('vsm4_strategy', 'VSM4'),
-        ('vsm5_policy', 'VSM5'),
+        ('system_1_biophysical', 'VSM1'),
+        ('system_2_coordination', 'VSM2'),
+        ('system_3_control', 'VSM3'),
+        ('system_4_strategy', 'VSM4'),
+        ('system_5_policy', 'VSM5'),
     ]
 
+
     for sys_name, sys_prefix in all_systems:
-        print(f"Transforming features for {sys_name}...")
+        print(f"--- Processing system: {sys_name} ---")
         sys_cfg = __import__(f"vsm_cybernetic_model.configs.{sys_name}", fromlist=[''])
 
-        # Load artifacts
-        scaler = joblib.load(cfg.STAGE_1_EXPERTS_DIR / getattr(sys_cfg, f"{sys_prefix}_SCALER_NAME"))
-        engine = joblib.load(cfg.STAGE_1_EXPERTS_DIR / getattr(sys_cfg, f"{sys_prefix}_ENGINE_NAME"))
+        # Construct the expected paths for the model artifacts
+        scaler_path = cfg.STAGE_1_EXPERTS_DIR / getattr(sys_cfg, f"{sys_prefix}_SCALER_NAME")
+        engine_path = cfg.STAGE_1_EXPERTS_DIR / getattr(sys_cfg, f"{sys_prefix}_ENGINE_NAME")
+
+        # Check if the required artifact files exist before proceeding
+        if not scaler_path.exists() or not engine_path.exists():
+            print(f"WARNING: Artifacts for {sys_name} not found. Skipping transformation for this system.")
+            continue  # Move to the next system in the loop
+
+        print(f"Transforming features for {sys_name}...")
+
+        # Load artifacts (we know they exist now)
+        scaler = joblib.load(scaler_path)
+        engine = joblib.load(engine_path)
 
         # Select, scale, and transform data
         features = getattr(sys_cfg, f"{sys_prefix}_INPUT_FEATURES")
-        X = df_merged[features].dropna() # Important to handle NaNs consistently
+
+        # Also check if there are any features to process
+        if not features:
+            print(f"No features defined for {sys_name}. Skipping.")
+            continue
+
+        X = df_merged[features].dropna()
 
         if not X.empty:
             X_scaled = scaler.transform(X)
@@ -114,11 +124,7 @@ def run_transformation_pipeline():
 
             # Add transformed components as new features
             for i in range(X_transformed.shape[1]):
-                final_features.loc[X.index, f'{sys_prefix}_PC{i+1}'] = X_transformed[:, i]
-
-    # Add the target variable (assuming it's in one of the foundational files)
-    # In a real scenario, you would load the master dataset.
-    # final_features['yield_gap'] = df_merged['real_yield'] - df_merged['RPP_mean_yield']
+                final_features.loc[X.index, f'{sys_prefix}_PC{i + 1}'] = X_transformed[:, i]
 
     # Save final feature matrix
     final_features.to_csv(cfg.FINAL_FEATURES_PATH, index=False)
