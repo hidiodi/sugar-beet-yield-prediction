@@ -1,14 +1,11 @@
 # 01_run_feature_engineering_pipeline.py
-from vsm_cybernetic_model.pipelines import 00_prepare_foundational_features
 import argparse
 import pandas as pd
 import joblib
 
 from vsm_cybernetic_model.configs import main_config as cfg
-from vsm_cybernetic_model.system_1_biophysical.model import (
-    run_rpp_simulations,
-    train_biophysical_engine
-)
+from vsm_cybernetic_model.pipelines import prepare_foundational_features
+from vsm_cybernetic_model.system_1_biophysical.model import train_biophysical_engine
 from vsm_cybernetic_model.system_2_coordination.model import train_coordination_engine
 from vsm_cybernetic_model.system_3_control.model import train_economic_battery_engine
 from vsm_cybernetic_model.system_4_strategy.model import train_strategy_engine
@@ -18,10 +15,9 @@ from vsm_cybernetic_model.system_5_policy.model import train_policy_engine
 def run_training_pipeline():
     """Executes the full training pipeline for all Stage 1 Expert Engines."""
     print("--- Starting Stage 1 Expert Engine Training Pipeline ---")
-    00_prepare_foundational_features.prepare_all_foundational_features()
-    # Note: In a real-world scenario, you would run the preparation scripts first.
-    # For this blueprint, we assume they have been run and the foundational
-    # features exist.
+
+    # First, run the unified preparation script to ensure data is ready.
+    prepare_foundational_features.prepare_all_foundational_features()
 
     # In the baseline model, all expert engines are trained on the same foundational
     # feature set, so the order does not matter. The RPP simulation is bypassed.
