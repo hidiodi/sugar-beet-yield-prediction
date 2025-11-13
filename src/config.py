@@ -71,16 +71,18 @@ WEATHER_END_YEAR = 2024
 # --- WOFOST Model Configuration ---
 WOFOST_CONFIG = {
     # max range 1982 - 2024 and None to run all districts
-    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': None,
+    'START_YEAR': 2023, 'END_YEAR': 2024, 'DISTRICT_LIMIT': 4,
     'FILE_PATHS': {
         'HISTORICAL_DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
         'YIELD_DATA': DATA_DIR / '02_intermediate/sugarbeet_yield.csv',
         'STATIC_SOIL_FEATURES': DATA_DIR / '03_processed/static_features_districts.csv',
+        'INITIAL_CONDITIONS': DATA_DIR / '03_processed/initial_conditions_wav.csv',
         'SEAS5_MEMBER_FEATURES': DATA_DIR / '02_intermediate/ecmwf51_forecast_features_BY_MEMBER.csv',
         'CROP_YAML': DATA_DIR / '01_raw/sugarbeet.yaml',
         'OUTPUT_DIR': DATA_DIR / '06_model_output/multi_year_final',
         'EXTREME_WEATHER_METRICS_OUTPUT': DATA_DIR / '06_model_output/ensemble_extreme_weather_metrics.csv'
     },
+
     'WEATHER_DEFAULTS': {'WIND_SPEED': 2.0, 'VAPOR_PRESSURE': 1.0},
     'WEATHER_GENERATOR': {'PRECIP_THRESHOLD_MM': 0.3, 'MIN_SRAD': 1.0},
     'AGROMANAGEMENT': {
