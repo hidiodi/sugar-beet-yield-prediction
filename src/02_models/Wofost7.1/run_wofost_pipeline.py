@@ -11,20 +11,17 @@ import yaml
 import geopandas as gpd
 from tqdm import tqdm
 
-# Ensure the project root is in the Python path
-project_root = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(project_root))
 
 from src import config
-from .wofost_modeling.analysis import (
+from src.02_models.Wofost7.1.wofost_modeling.analysis import (
     analyze_v2_model_inputs,
     analyze_and_plot_ensemble_results,
     aggregate_and_save_extreme_weather_metrics
 )
-from .wofost_modeling.parameters import ParameterDict
-from .wofost_modeling.sowing import DynamicSowingManager
-from .wofost_modeling.weather import WeatherGenerator
-from .wofost_modeling.simulation import (
+from src.02_models.Wofost7.1.wofost_modeling.parameters import ParameterDict
+from src.02_models.Wofost7.1.wofost_modeling.sowing import DynamicSowingManager
+from src.02_models.Wofost7.1.wofost_modeling.weather import WeatherGenerator
+from src.02_models.Wofost7.1.wofost_modeling.simulation import (
     run_historical_simulation,
     run_forecast_simulation
 )
