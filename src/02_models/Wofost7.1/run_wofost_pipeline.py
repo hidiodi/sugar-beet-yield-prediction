@@ -229,7 +229,67 @@ class WeatherGenerator:
         return synthetic_df[['date', 'tmin', 'tmax', 'precip', 'srad', 'vap', 'wind']]
 
 
-# === NEW VALIDATION FUNCTION ===================================================
+class DynamicSowingManager:
+    """
+    Determines a dynamic sowing date based on weather conditions.
+    """
+    def __init__(self, sowing_window_start_month=3, sowing_window_start_day=15,
+                 sowing_window_end_month=4, sowing_window_end_day=30,
+                 temp_threshold_c=7.0, temp_avg_period_days=7):
+        """
+        Initializes the rules for finding the sowing date.
+
+        :param sowing_window_start_month: Earliest month for sowing.
+        :param sowing_window_start_day: Earliest day for sowing.
+        :param sowing_window_end_month: Latest month for sowing.
+        :param sowing_window_end_day: Latest day for sowing.
+        :param temp_threshold_c: The moving average temperature that must be exceeded.
+        :param temp_avg_period_days: The number of days for the temperature moving average.
+        """
+        self.start_month = sowing_window_start_month
+        self.start_day = sowing_window_start_day
+        self.end_month = sowing_window_end_month
+        self.end_day = sowing_window_end_day
+        self.threshold = temp_threshold_c
+        self.period = temp_avg_period_days
+
+    def find_sowing_date(self, weather_df_year: pd.DataFrame) -> datetime.date:
+        """
+        Finds the first suitable sowing date within the year's weather data.
+
+        :param weather_df_year: DataFrame with daily weather for the entire year.
+                                Must contain 'date', 'tmin', 'tmax'.
+        :return: The calculated sowing date as a datetime.date object.
+        """
+        df = weather_df_year.copy()
+        df['mean_temp'] = (df['tmin'] + df['tmax']) / 2
+        df['temp_ma'] = df['mean_temp'].rolling(window=self.period, min_periods=self.period).mean()
+
+        try:
+            year = df['date'].dt.year.iloc[0]
+            window_start = datetime.date(year, self.start_month, self.start_day)
+            window_end = datetime.date(year, self.end_month, self.end_day)
+        except IndexError:
+            logging.error("DynamicSowingManager: weather_df_year is empty. Cannot determine year.")
+            return datetime.date(2000, self.start_month, self.start_day) # Return a fallback
+
+        # Filter for days within the window that meet the temperature criteria
+        sow_mask = (
+            (df['date'].dt.date >= window_start) &
+            (df['date'].dt.date <= window_end) &
+            (df['temp_ma'] >= self.threshold)
+        )
+        potential_sow_days = df[sow_mask]
+
+        if not potential_sow_days.empty:
+            sowing_date = potential_sow_days['date'].dt.date.iloc[0]
+            logging.debug(f"Dynamic sowing date found: {sowing_date} (Threshold {self.threshold}C met).")
+            return sowing_date
+        else:
+            # Fallback: if no day meets the criteria, sow on the last day of the window.
+            logging.debug(f"No suitable day found. Sowing on fallback date: {window_end}.")
+            return window_end
+
 def analyze_v2_model_inputs(df_static_all, cropdata):
     """
     V2: Performs a diagnostic analysis on the ACTUAL model-ready inputs.
@@ -303,8 +363,6 @@ def analyze_v2_model_inputs(df_static_all, cropdata):
     logging.info("=" * 80)
     return analysis_passed
 
-
-# === REFACTORED PARAMETER LOADER =================================================
 def _create_district_specific_parameters(static_row, cropdata):
     """
     V3: Loads pre-calculated physics AND dynamic initial conditions directly from the data row.
@@ -349,35 +407,57 @@ def _create_district_specific_parameters(static_row, cropdata):
     return ParameterProvider(cropdata=cropdata, soildata=soildata, sitedata=sitedata), sitedata
 
 
-# === SIMULATION & ANALYSIS FUNCTIONS (Logic unchanged, now use correct inputs) =====
-def run_historical_simulation(df_static_year, df_daily_hist_year, cropdata, year, cfg):
+def run_historical_simulation(df_static_year, df_daily_hist_year, cropdata, year, cfg, dynamic_sowing_dates):
+    """
+    V2 - CORRECTED: Runs historical simulation using dynamic sowing dates and the COMPLETE agromanagement structure.
+    """
     results = []
+    crop_end_date_template = cfg['AGROMANAGEMENT']['CROP_END_DATE']
+
     for _, row in tqdm(df_static_year.iterrows(), total=len(df_static_year), desc=f"Historical Sim {year}"):
         district_no = row['district_no']
         weather_df = df_daily_hist_year[df_daily_hist_year['district_no'] == district_no].copy()
         if weather_df.empty: continue
+
         try:
             parameters, site_data = _create_district_specific_parameters(row, cropdata)
             weather_provider = SimpleWeatherDataProvider(weather_df, site_data)
-            crop_start = cfg['AGROMANAGEMENT']['CROP_START_DATE'].replace(year=year)
-            crop_end = cfg['AGROMANAGEMENT']['CROP_END_DATE'].replace(year=year)
-            agromanagement = [{crop_start: ParameterDict({'CropCalendar': ParameterDict(
-                {'crop_start_date': crop_start, 'crop_start_type': 'emergence', 'crop_end_date': crop_end,
-                 'crop_end_type': 'harvest', 'max_duration': cfg['AGROMANAGEMENT']['MAX_DURATION']}),
-                'TimedEvents': None, 'StateEvents': None})}]
+
+            crop_start = dynamic_sowing_dates.get(district_no)
+            if crop_start is None:
+                logging.warning(f"No dynamic sowing date for {district_no} in {year}. Falling back to static date.")
+                crop_start = cfg['AGROMANAGEMENT']['CROP_START_DATE'].replace(year=year)
+
+            crop_end = crop_end_date_template.replace(year=year)
+
+            # --- THE FIX IS HERE: Restore the missing keys ---
+            agromanagement = [{
+                crop_start: ParameterDict({
+                    'CropCalendar': ParameterDict({
+                        'crop_start_date': crop_start, 'crop_start_type': 'emergence',
+                        'crop_end_date': crop_end, 'crop_end_type': 'harvest',
+                        'max_duration': cfg['AGROMANAGEMENT']['MAX_DURATION']
+                    }),
+                    'TimedEvents': None,  # This key is REQUIRED, even if None
+                    'StateEvents': None  # This key is REQUIRED, even if None
+                })
+            }]
+
             model = Wofost72_WLP_FD(parameters, weather_provider, agromanagement)
             model.run_till_terminate()
             output = model.get_output()
             simulated_yield = output[-1]['TWSO'] if output else np.nan
+
         except Exception as e:
             logging.error(f"[HISTORICAL] ERROR for district {district_no} in {year}: {e}", exc_info=True)
             simulated_yield = np.nan
+
         results.append({'year': year, 'district_no': district_no, 'actual_yield': row['kreisYield'],
                         'lintul_yield_perfect_weather': simulated_yield})
+
     return pd.DataFrame(results)
 
-
-def _run_single_forecast_member(member_row, district_no, year, wg, parameters, site_data, cfg, apply_anomalies=True):
+def _run_single_forecast_member(member_row, district_no, year, wg, parameters, site_data, cfg,sowing_manager, apply_anomalies=True):
     try:
         spring_temp_anomaly = member_row.get('spring_temp_anomaly_forecast', 0)
         summer_temp_anomaly = member_row.get('summer_temp_anomaly_forecast', 0)
@@ -411,12 +491,20 @@ def _run_single_forecast_member(member_row, district_no, year, wg, parameters, s
                     'cumulative_water_stress': np.nan}
 
         weather_provider = SimpleWeatherDataProvider(synth_weather, site_data)
-        crop_start = cfg['AGROMANAGEMENT']['CROP_START_DATE'].replace(year=year)
+        crop_start = sowing_manager.find_sowing_date(synth_weather)
         crop_end = cfg['AGROMANAGEMENT']['CROP_END_DATE'].replace(year=year)
-        agromanagement = [{crop_start: ParameterDict({'CropCalendar': ParameterDict(
-            {'crop_start_date': crop_start, 'crop_start_type': 'emergence', 'crop_end_date': crop_end,
-             'crop_end_type': 'harvest', 'max_duration': cfg['AGROMANAGEMENT']['MAX_DURATION']}), 'TimedEvents': None,
-            'StateEvents': None})}]
+
+        agromanagement = [{
+            crop_start: ParameterDict({
+                'CropCalendar': ParameterDict({
+                    'crop_start_date': crop_start, 'crop_start_type': 'emergence',
+                    'crop_end_date': crop_end, 'crop_end_type': 'harvest',
+                    'max_duration': cfg['AGROMANAGEMENT']['MAX_DURATION']
+                }),
+                'TimedEvents': None,  # This key is REQUIRED
+                'StateEvents': None   # This key is REQUIRED
+            })
+        }]
 
         model_wlp = Wofost72_WLP_FD(parameters, weather_provider, agromanagement)
         model_wlp.run_till_terminate()
@@ -463,15 +551,12 @@ def _run_single_forecast_member(member_row, district_no, year, wg, parameters, s
                 'simulation_failed': True, 'days_to_anthesis': np.nan, 'max_lai_achieved': 0.0,
                 'cumulative_water_stress': np.nan}
 
-
-def run_forecast_simulation(df_static_year, df_seas5_year, district_wgs, cropdata, year, cfg, expert_districts):
+def run_forecast_simulation(df_static_year, df_seas5_year, district_wgs, cropdata, year, cfg, expert_districts, sowing_manager):
+    """
+    MODIFIED: Accepts and passes the sowing_manager to the parallel workers.
+    """
     full_ensemble_results = []
-    # Temporarily disable INFO logging from the main thread for cleaner progress bar
-    # Re-enable after this loop if needed, but forecast workers will log their own issues
-    logging.disable(logging.INFO)
-    district_params = {row['district_no']: _create_district_specific_parameters(row, cropdata) for _, row in
-                       df_static_year.iterrows()}
-    logging.disable(logging.NOTSET)  # Re-enable logging
+    district_params = {row['district_no']: _create_district_specific_parameters(row, cropdata) for _, row in df_static_year.iterrows()}
 
     for district_no, group in tqdm(df_seas5_year.groupby('district_no'), desc=f"Forecast Sim {year}"):
         if district_no not in district_params: continue
@@ -479,9 +564,10 @@ def run_forecast_simulation(df_static_year, df_seas5_year, district_wgs, cropdat
         wg = district_wgs.get(district_no, WeatherGenerator())
         apply_anomalies = district_no not in expert_districts
 
-        tasks = [delayed(_run_single_forecast_member)(member_row, district_no, year, wg, parameters, site_data, cfg,
-                                                      apply_anomalies) for
-                 _, member_row in group.iterrows()]
+        tasks = [delayed(_run_single_forecast_member)(
+            member_row, district_no, year, wg, parameters, site_data, cfg, sowing_manager, apply_anomalies
+        ) for _, member_row in group.iterrows()]
+
         ensemble_outputs = Parallel(n_jobs=-1, backend='loky')(tasks)
         for result in ensemble_outputs:
             if result is not None: full_ensemble_results.append(
@@ -495,7 +581,6 @@ def run_forecast_simulation(df_static_year, df_seas5_year, district_wgs, cropdat
                  'max_lai_achieved': result['max_lai_achieved'],
                  'cumulative_water_stress': result['cumulative_water_stress']})
     return pd.DataFrame(full_ensemble_results)
-
 
 def analyze_and_plot_ensemble_results(df_hist, df_fcst_ensemble, output_dir, start_year, end_year):
     """
@@ -635,7 +720,6 @@ def analyze_and_plot_ensemble_results(df_hist, df_fcst_ensemble, output_dir, sta
     logging.info(f"[ANALYSIS] ✓ Diagnostic plot (with potential yield) saved to {plot_path}")
     plt.show()
 
-
 def aggregate_and_save_extreme_weather_metrics(df_fcst_ensemble, output_path):
     """
     Calculates and saves the distributional features for the new extreme weather and drought stress metrics.
@@ -686,7 +770,6 @@ def aggregate_and_save_extreme_weather_metrics(df_fcst_ensemble, output_path):
     df_extreme_metrics.to_csv(output_path, index=False)
     logging.info(f"[ANALYSIS] ✓ All risk features saved to {output_path}")
     pass
-
 
 if __name__ == "__main__":
     # --- 1. SETUP LOGGING & PATHS ---
@@ -805,6 +888,7 @@ if __name__ == "__main__":
     if not analyze_v2_model_inputs(df_static_all, cropdata):
         logging.error("Input data analysis failed. Aborting pipeline.")
         sys.exit(1)
+    sowing_manager = DynamicSowingManager()
 
     # --- 5. MAIN SIMULATION LOOP ---
     all_hist_results = []
@@ -907,9 +991,16 @@ if __name__ == "__main__":
                 district_weather_generators[district_no] = wg_expert
         # --- End Weather Generator fitting ---
 
-        df_hist = run_historical_simulation(df_static_year, df_daily_hist_year, cropdata, year, CONFIG)
-        df_fcst = run_forecast_simulation(df_static_year, df_seas5_year, district_weather_generators, cropdata, year,
-                                          CONFIG, expert_districts)
+        dynamic_sowing_dates = {}
+        for district_no in df_static_year['district_no'].unique():
+            district_weather_for_sowing = df_daily_hist_year[df_daily_hist_year['district_no'] == district_no]
+            if not district_weather_for_sowing.empty:
+                sowing_date = sowing_manager.find_sowing_date(district_weather_for_sowing)
+                dynamic_sowing_dates[district_no] = sowing_date
+
+        df_hist = run_historical_simulation(df_static_year, df_daily_hist_year, cropdata, year, CONFIG, dynamic_sowing_dates)
+        df_fcst = run_forecast_simulation(df_static_year, df_seas5_year, district_weather_generators, cropdata, year, CONFIG, expert_districts, sowing_manager)
+
 
         if not df_hist.empty: all_hist_results.append(df_hist)
         if not df_fcst.empty: all_fcst_results.append(df_fcst)
