@@ -20,13 +20,16 @@ SCRIPTS_TO_RUN = [
     #"src/01_data/download_all_data_pipeline.py",
     #"src/01_data/process_input_data_pipeline.py",
     #"src/02_models/Wofost7.1/04_create_daily_weather_file.py",
-    #"src/02_models/Wofost7.1/run_wofost_pipeline.py",
+    "src/02_models/Wofost7.1/calculate_initial_conditions.py",
+    "src/02_models/Wofost7.1/calibrate_crop_file.py",
+    "src/02_models/Wofost7.1/run_wofost_pipeline.py",
     #"src/02_models/Wofost7.1/apply_detrending_correction.py",
     "src/01_data/FeatureEngineering/build_stage1_features.py",
-    "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
-    "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
-    #"src/02_models/XGBoost/regression_model/ModelScripts/train_standalone_xgb_model.py", # uses wofost as a simple input and trains with detrended yield as target
-    #"src/02_models/XGBoost/regression_model/Testing/backtest_standalone_xgb_model.py", # uses wofost as a simple input and trains with detrended yield as target
+    #"src/03_analysis/basic_analysis/analyze_stage1_features.py",
+    #"src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
+    #"src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
+    "src/02_models/XGBoost/regression_model/ModelScripts/train_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
+    "src/02_models/XGBoost/regression_model/Testing/backtest_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
     #"src/02_models/NGboost/train_final_ngboost_model.py",
     #"src/02_models/NGboost/backtest_final_ngboost_model.py",
     #"src/02_models/FinalEnsemble/backtest_final_ensemble.py",
@@ -78,7 +81,7 @@ WEATHER_END_YEAR = 2024
 # --- WOFOST Model Configuration ---
 WOFOST_CONFIG = {
     # max range 1982 - 2024 and None to run all districts
-    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': 3,
+    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': None,
     'FILE_PATHS': {
         'HISTORICAL_DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
         'CORRECT_WEATHER_DIR': DATA_DIR / '04_feature/weather_district_daily',
@@ -88,7 +91,7 @@ WOFOST_CONFIG = {
         'SEAS5_MEMBER_FEATURES': DATA_DIR / '02_intermediate/ecmwf51_forecast_features_BY_MEMBER.csv',
         'CROP_YAML': DATA_DIR / '01_raw/sugarbeet.yaml',
         'OUTPUT_DIR': DATA_DIR / '06_model_output/multi_year_final',
-        'EXTREME_WEATHER_METRICS_OUTPUT': DATA_DIR / '06_model_output/ensemble_extreme_weather_metrics.csv'
+        'EXTREME_WEATHER_METRICS_OUTPUT': DATA_DIR / '06_model_output/ensemble_extreme_weather_metrics.csv',
     },
 
     'WEATHER_DEFAULTS': {'WIND_SPEED': 2.0, 'VAPOR_PRESSURE': 1.0},
@@ -140,7 +143,8 @@ FEATURE_ENGINEERING_CONFIG = {
         'GEOJSON_DISTRICTS': DATA_DIR / '01_raw/districts_official.geojson',
         'ECMWF_FORECAST_FEATURES_CSV': DATA_DIR / '02_intermediate/ecmwf51_forecast_features_BY_MEMBER.csv',
         'DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
-        'WALKFORWARD_FORECAST_CSV': DATA_DIR / '05_model_input/wofost_walkforward/final_honest_forecasts.csv',
+        'WALKFORWARD_FORECAST_CSV': DATA_DIR / '05_model_input/wofost_walkforward/final_honest_forecasts.csv', #technical trend model
+        'WOFOST_ENSEMBLE_CSV': DATA_DIR / '06_model_output/multi_year_final/forecast_ensemble_1982-2024.csv', #actual wofost output
         'OUTPUT_DIR': DATA_DIR / '05_model_input/',
         'OUTPUT_FILE': DATA_DIR / '05_model_input/stage1_preseason_features.csv'
     },
@@ -159,15 +163,14 @@ FEATURE_ENGINEERING_CONFIG = {
     }
 }
 
-# --- XGBoost Model Training Configuration ---
-# --- XGBoost Model Training Configuration ---
-# --- XGBoost Model Training Configuration ---
 XGBOOST_TRAINING_CONFIG = {
     'DATA_PATH': DATA_DIR / '05_model_input/stage1_preseason_features.csv',
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models',
     'FEATURE_COLS': [
         # --- Trend & Technology Proxy ---
         'national_avg_yield_lag1',
+        'stat_trend_forecast', # Champion trend feature
+        'wofost_forecast_yield_fresh_dt', # Champion physics feature
 
         # --- Antecedent Weather Features (Observed by March) ---
         'antecedent_precip_sum',
@@ -212,30 +215,35 @@ XGBOOST_TRAINING_CONFIG = {
 
         # --- Static Geographic & Soil Features ---
         'lat', 'lon', 'avg_elevation', 'avg_slope',
-        'avg_bdod_0_30cm', 'avg_clay_0_30cm', 'avg_sand_0_30cm',
+        'avg_bdod_0_30cm', 'avg_clay_0_30cm',
+        # 'avg_sand_0_30cm', # REMOVED: Redundant with clay
         'avg_som_0_30cm', 'avg_phh2o_0_30cm',
 
         # --- Satellite Features ---
-        'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly',
-        'winter_cropland_LST_mean', 'winter_cropland_LST_anomaly',
+        # 'winter_cropland_ndvi_mean', # REMOVED: Redundant with anomaly
+        'winter_cropland_ndvi_anomaly',
+        # 'winter_cropland_LST_mean', # REMOVED: Redundant with anomaly
+        'winter_cropland_LST_anomaly',
         'winter_cropland_snow_cover_days',
 
         # --- Teleconnection Indices ---
         'nao_winter_avg', 'sca_winter_avg', 'enso_mei_winter_avg',
 
         # --- Lagged Economic Features & Anomalies ---
-        'profit_margin_proxy_lag1', 'cost_of_inputs_lag1',
+        'profit_margin_proxy_lag1',
+        # 'cost_of_inputs_lag1', # REMOVED: Redundant, prefer anomalies
         'producer_price_index_lag1_anomaly', 'seed_price_index_lag1_anomaly',
         'energy_price_index_lag1_anomaly', 'plant_protection_price_index_lag1_anomaly',
         'fertilizer_price_index_lag1_anomaly_capped', 'is_fertilizer_price_extreme',
 
-        # --- WOFOST-Related Hybrid Features (but NOT the forecast itself) ---
+        # --- WOFOST-Related Hybrid Features ---
         'wofost_forecast_x_profit_margin',
         'has_wofost_data',
 
         # --- General Regional & Temporal Features ---
-        'state_encoded',
-        'year_trend',
+        # 'state_encoded', # REMOVED: Redundant with lat/lon
+        'year', # Keep 'year' as the primary time feature
+        # 'year_trend', # REMOVED: Redundant with 'year'
 
         # --- Interaction & Risk Features ---
         'gdd_x_fertilizer_price',
@@ -361,11 +369,14 @@ STANDALONE_BACKTESTING_CONFIG = {
 # --- Model Comparison Configuration ---
 MODEL_COMPARISON_CONFIG = {
     'NOMINAL_COVERAGE_PERCENT': 95.0,
-    'FINAL_ENSEMBLE_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/final_ensemble_champion/full_backtest_predictions.csv',
-    'NGBOOST_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/final_ngboost_champion/full_backtest_predictions.csv',
-    'ADAPTIVE_CQR_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/adaptive_cqr_champion/full_backtest_predictions.csv',
+
+    # --- Paths to Model Predictions ---
     'HYBRID_XGB_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/final_quantile_champion/full_backtest_predictions.csv',
     'STANDALONE_XGB_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/standalone_xgb_champion/full_backtest_predictions.csv',
+    'ADAPTIVE_CQR_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/adaptive_cqr_champion/full_backtest_predictions.csv',
+    'NGBOOST_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/final_ngboost_champion/full_backtest_predictions.csv',
+    'STATISTICAL_TREND_FILE': DATA_DIR / '05_model_input/wofost_walkforward/final_honest_forecasts.csv',
+    'PURE_WOFOST_ENSEMBLE_FILE': DATA_DIR / '06_model_output/multi_year_final/forecast_ensemble_1982-2024.csv',
     'OUTPUT_DIR': BASE_DIR / 'reports/figures/final_model_comparison'
 }
 

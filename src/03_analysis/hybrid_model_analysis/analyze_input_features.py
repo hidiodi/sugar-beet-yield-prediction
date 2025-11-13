@@ -83,13 +83,13 @@ def part_2_analyze_timeseries_forecast(df, output_dir):
     Hypothesis: The historical trend is the single best predictor of future yield.
     """
     logging.info("--- 2. Analyzing the Time-Series Heartbeat Feature ---")
-    df_plot = df.dropna(subset=['wofost_forecast_yield_fresh_dt', 'kreisYield'])
+    df_plot = df.dropna(subset=['stat_trend_forecast', 'kreisYield'])  # <-- FIX 1
 
     plt.figure()
-    sns.regplot(x='kreisYield', y='wofost_forecast_yield_fresh_dt', data=df_plot,
+    sns.regplot(x='kreisYield', y='stat_trend_forecast', data=df_plot,  # <-- FIX 2
                 scatter_kws={'alpha': 0.2, 's': 10}, line_kws={'color': 'red'})
 
-    r2 = df_plot[['kreisYield', 'wofost_forecast_yield_fresh_dt']].corr().iloc[0, 1] ** 2
+    r2 = df_plot[['kreisYield', 'stat_trend_forecast']].corr().iloc[0, 1] ** 2  # <-- FIX 3
     plt.title(f"Predictive Power of the Time-Series Forecast Feature\n(Raw Out-of-Sample R² ≈ {r2:.3f})")
     plt.xlabel("Actual Yield (dt/ha)")
     plt.ylabel("Time-Series Forecast Feature (dt/ha)")
@@ -109,35 +109,43 @@ def part_3_analyze_weather_features(df, output_dir):
     """
     logging.info("--- 3. Analyzing Key Weather Features ---")
 
+    # --- FIX 1: Use the new '_mean' column ---
     # Binning to see the trend: How does yield change with summer temperature anomaly?
-    df['temp_bin'] = pd.qcut(df['summer_temp_anomaly_forecast'], q=10, labels=False, duplicates='drop')
+
+    # Use the correct column name: 'summer_temp_anomaly_forecast_mean'
+    df['temp_bin'] = pd.qcut(df['summer_temp_anomaly_forecast_mean'], q=10, labels=False, duplicates='drop')
     df_binned_temp = df.groupby('temp_bin')['kreisYield'].mean().reset_index()
     # Get the average anomaly for each bin for a meaningful x-axis
-    bin_labels = df.groupby('temp_bin')['summer_temp_anomaly_forecast'].mean()
+    bin_labels = df.groupby('temp_bin')['summer_temp_anomaly_forecast_mean'].mean()
 
     plt.figure()
     sns.barplot(x=df_binned_temp['temp_bin'], y=df_binned_temp['kreisYield'], color='coral')
     plt.title("Impact of Summer Temperature Anomaly on Average Yield")
-    plt.xlabel("Summer Temperature Anomaly Forecast (°C)")
+    plt.xlabel("Summer Temperature Anomaly Forecast (Mean, °C)")
     plt.ylabel("Average Actual Yield (dt/ha)")
     plt.xticks(ticks=df_binned_temp['temp_bin'], labels=bin_labels.round(2), rotation=45)
     plt.savefig(output_dir / '3a_temp_anomaly_impact.png', dpi=300, bbox_inches='tight');
     plt.close()
 
-    # Extreme Events: How does the number of heatwave days relate to yield?
-    df_extreme = df.groupby('summer_days_tmax_gt_30c')['kreisYield'].mean().reset_index()
-    df_extreme = df_extreme[df_extreme['summer_days_tmax_gt_30c'] <= 30]  # Filter for plausible range
+    # --- FIX 2: Use the new 'prob_hot_summer' feature ---
+    # Extreme Events: How does the *probability* of a hot summer relate to yield?
+
+    # Use the correct column name: 'prob_hot_summer'
+    df['hot_prob_bin'] = pd.qcut(df['prob_hot_summer'], q=10, labels=False, duplicates='drop')
+    df_extreme = df.groupby('hot_prob_bin')['kreisYield'].mean().reset_index()
+    # Get the average probability for each bin
+    bin_labels_prob = df.groupby('hot_prob_bin')['prob_hot_summer'].mean()
+
     plt.figure()
-    sns.lineplot(data=df_extreme, x='summer_days_tmax_gt_30c', y='kreisYield', marker='o')
-    plt.title("Impact of Extreme Heatwave Days on Average Yield")
-    plt.xlabel("Number of Summer Days with Temperature > 30°C")
+    sns.barplot(x=df_extreme['hot_prob_bin'], y=df_extreme['kreisYield'], color='firebrick')
+    plt.title("Impact of High Heat Probability on Average Yield")
+    plt.xlabel("Forecast Probability of Hot Summer (Prob. > 1.5°C Anomaly)")
     plt.ylabel("Average Actual Yield (dt/ha)")
+    plt.xticks(ticks=df_extreme['hot_prob_bin'], labels=bin_labels_prob.round(2), rotation=45)
     plt.savefig(output_dir / '3b_heatwave_impact.png', dpi=300, bbox_inches='tight');
     plt.close()
 
     logging.info("✓ Part 3 complete.")
-
-
 # ==============================================================================
 # === PART 4: INTERACTION HYPOTHESIS (TESTING SYNERGY IN THE DATA) ===
 # ==============================================================================
@@ -151,7 +159,7 @@ def part_4_analyze_interaction_hypothesis(df, output_dir):
     # Create categories for soil type and precipitation
     df['sand_category'] = pd.qcut(df['avg_sand_0_30cm'], q=3,
                                   labels=['Low Sand (Clayey)', 'Medium Sand', 'High Sand (Sandy)'])
-    df['precip_category'] = pd.qcut(df['summer_precip_anomaly_forecast'], q=3,
+    df['precip_category'] = pd.qcut(df['summer_precip_anomaly_forecast_mean'], q=3,
                                     labels=['Dry Summer', 'Normal Summer', 'Wet Summer'])
 
     plt.figure()

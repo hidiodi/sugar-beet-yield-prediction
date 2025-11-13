@@ -1,7 +1,6 @@
 # File: src/01_data/FeatureEngineering/build_stage1_features.py
-# MODIFIED (v4.0): Overhauled feature generation to incorporate monthly forecast
-#                  granularity, solar radiation, national yield trends, and
-#                  new interaction terms.
+# MODIFIED (v4.1): Removed constant, redundant, and duplicate columns
+#                  to resolve VIF(inf) issues identified in analysis.
 
 import numpy as np
 import pandas as pd
@@ -163,7 +162,7 @@ def load_and_process_economic_data(producer_price_file, input_price_file):
 
 def main():
     """Main function to build the definitive, augmented feature set."""
-    logging.info("--- Starting Definitive Hybrid Feature Engineering Pipeline (v4.0) ---")
+    logging.info("--- Starting Definitive Hybrid Feature Engineering Pipeline (v4.1) ---")
 
     file_paths = CONFIG['FILE_PATHS']
     output_path = file_paths['OUTPUT_DIR']
@@ -172,7 +171,12 @@ def main():
 
     walkforward_forecast_file = file_paths['WALKFORWARD_FORECAST_CSV']
     if not walkforward_forecast_file.exists():
-        logging.error(f"FATAL: Required WOFOST file not found at {walkforward_forecast_file}. Cannot proceed.")
+        logging.error(f"FATAL: Required STAT-TREND file not found at {walkforward_forecast_file}. Cannot proceed.")
+        sys.exit(1)
+
+    wofost_ensemble_file = file_paths['WOFOST_ENSEMBLE_CSV']
+    if not wofost_ensemble_file.exists():
+        logging.error(f"FATAL: Required WOFOST file not found at {wofost_ensemble_file}. Cannot proceed.")
         sys.exit(1)
 
     logging.info("STAGE 1: Loading and Merging Base Data")
@@ -219,20 +223,44 @@ def main():
     df_satellite['district_no'] = df_satellite['district_no'].astype(str).str.zfill(5)
     merged_df = pd.merge(merged_df, df_satellite, on=['district_no', 'year'], how='left')
 
-    df_forecast = pd.read_csv(walkforward_forecast_file)
-    df_forecast['district_no'] = df_forecast['district_no'].astype(str).str.zfill(5)
-    merged_df = pd.merge(merged_df, df_forecast[['year', 'district_no', 'final_corrected_forecast']],
-                         on=['year', 'district_no'], how='left')
+    # --- 3. (FIX) Load STATISTICAL TREND features (from Script 2) ---
+    df_stat_trend = pd.read_csv(file_paths['WALKFORWARD_FORECAST_CSV'])
+    df_stat_trend['district_no'] = df_stat_trend['district_no'].astype(str).str.zfill(5)
+    df_stat_trend = df_stat_trend[['year', 'district_no', 'final_corrected_forecast']]
+    # Give it a new, correct name
+    df_stat_trend.rename(columns={'final_corrected_forecast': 'stat_trend_forecast'}, inplace=True)
+    merged_df = pd.merge(merged_df, df_stat_trend, on=['year', 'district_no'], how='left')
 
+    # --- 4. (NEW) Load WOFOST YIELD features (from Script 1) ---
+    df_wofost_yield_raw = pd.read_csv(file_paths['WOFOST_ENSEMBLE_CSV'])
+    df_wofost_yield_raw['district_no'] = df_wofost_yield_raw['district_no'].astype(str).str.zfill(5)
+
+    # Aggregate the mean yield from the raw ensemble file
+    df_wofost_yield_agg = df_wofost_yield_raw.groupby(['year', 'district_no']).agg(
+        wofost_forecast_yield_fresh_dt=('yield_water_limited_dry_kgha', 'mean')
+    ).reset_index()
+
+    # Get DMC from the central config file
+    DMC_SUGARBEET = config.WOFOST_CONFIG['CONSTANTS']['DMC_SUGARBEET']
+
+    # Convert this mean value from kg/ha (dry) to dt/ha (fresh)
+    df_wofost_yield_agg['wofost_forecast_yield_fresh_dt'] = (df_wofost_yield_agg[
+                                                                 'wofost_forecast_yield_fresh_dt'] / DMC_SUGARBEET) / 100.0
+
+    # Now merge the correctly named and scaled feature
+    merged_df = pd.merge(merged_df, df_wofost_yield_agg, on=['year', 'district_no'], how='left')
+
+    logging.info("STAGE 3: Engineering the Complete Hybrid Feature Set")
     gdf = gpd.read_file(file_paths['GEOJSON_DISTRICTS'])
     gdf_states = gdf[['id', 'state']].rename(columns={'id': 'district_no'})
     gdf_states['district_no'] = gdf_states['district_no'].astype(str).str.zfill(5)
     merged_df = pd.merge(merged_df, gdf_states, on='district_no', how='left')
     merged_df['state_encoded'], _ = pd.factorize(merged_df['state'])
 
-    logging.info("STAGE 3: Engineering the Complete Hybrid Feature Set")
     merged_df.rename(columns={'latitude': 'lat', 'longitude': 'lon'}, inplace=True)
-    merged_df['year_trend'] = merged_df['year'] - merged_df['year'].min()
+
+    # --- FIX (v4.1): Removed redundant 'year_trend' creation ---
+
     merged_df = merged_df.sort_values(by=['district_no', 'year'])
     lagged_cols = {
         'producer_price_index': 'producer_price_index_lag1', 'seed_price_index': 'seed_price_index_lag1',
@@ -245,7 +273,7 @@ def main():
             merged_df['fertilizer_price_index_lag1'] + 1e-6)
     merged_df['cost_of_inputs_lag1'] = merged_df['fertilizer_price_index_lag1'] + merged_df[
         'plant_protection_price_index_lag1'] + merged_df['seed_price_index_lag1']
-    merged_df.rename(columns={'final_corrected_forecast': 'wofost_forecast_yield_fresh_dt'}, inplace=True)
+
     merged_df['wofost_forecast_x_profit_margin'] = merged_df['wofost_forecast_yield_fresh_dt'] * merged_df[
         'profit_margin_proxy_lag1']
     merged_df['has_wofost_data'] = merged_df['wofost_forecast_yield_fresh_dt'].notna().astype(int)
@@ -283,15 +311,81 @@ def main():
     merged_df['antecedent_precip_sum_x_spring_temp_anomaly_mean'] = merged_df['antecedent_precip_sum'] * \
                                                                     merged_df['spring_temp_anomaly_forecast_mean']
 
-    merged_df['summer_temp_forecast_range'] = merged_df['summer_temp_anomaly_forecast_p90'] - merged_df['summer_temp_anomaly_forecast_p10']
-    merged_df['summer_precip_forecast_range'] = merged_df['summer_precip_anomaly_forecast_p90'] - merged_df['summer_precip_anomaly_forecast_p10']
+    merged_df['summer_temp_forecast_range'] = merged_df['summer_temp_anomaly_forecast_p90'] - merged_df[
+        'summer_temp_anomaly_forecast_p10']
+    merged_df['summer_precip_forecast_range'] = merged_df['summer_precip_anomaly_forecast_p90'] - merged_df[
+        'summer_precip_anomaly_forecast_p10']
 
     print("Created new features: 'summer_temp_forecast_range', 'summer_precip_forecast_range'")
 
-    merged_df['enso_x_spring_temp_forecast'] = merged_df['enso_mei_winter_avg'] * merged_df['spring_temp_anomaly_forecast_mean']
-    merged_df['sca_x_spring_temp_forecast'] = merged_df['sca_winter_avg'] * merged_df['spring_temp_anomaly_forecast_mean']
+    merged_df['enso_x_spring_temp_forecast'] = merged_df['enso_mei_winter_avg'] * merged_df[
+        'spring_temp_anomaly_forecast_mean']
+    merged_df['sca_x_spring_temp_forecast'] = merged_df['sca_winter_avg'] * merged_df[
+        'spring_temp_anomaly_forecast_mean']
 
     print("Created new features: 'enso_x_spring_temp_forecast', 'sca_x_spring_temp_forecast'")
+
+    # --- FIX (v4.1): Drop constant and redundant columns to fix VIF(inf) ---
+    logging.info("Dropping constant and redundant columns to prevent VIF issues...")
+
+    # These columns were identified by VIF analysis as redundant or constant
+    COLUMNS_TO_DROP = [
+        # Constant Column
+        'crs_anomaly',
+
+        # Redundant Economic Columns (German names)
+        'zuckerrben',
+        'dngemittel',
+        'energie_und_schmierstoffe',
+        'pflanzenschutzmittel',
+        'saat_und_pflanzgut',
+
+        # Redundant/Stale Weather Columns (replaced by `create_hybrid_...` function)
+        'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly',
+        'antecedent_gdd_sum_anomaly', 'spring_temp_anomaly_forecast',
+        'spring_precip_anomaly_forecast', 'spring_solar_rad_anomaly_forecast',
+        'spring_evaporation_anomaly_forecast', 'spring_runoff_anomaly_forecast',
+        'spring_soil_temp_l1_anomaly_forecast', 'spring_snowfall_anomaly_forecast',
+        'summer_temp_anomaly_forecast', 'summer_precip_anomaly_forecast',
+        'summer_solar_rad_anomaly_forecast', 'summer_evaporation_anomaly_forecast',
+        'summer_runoff_anomaly_forecast', 'summer_soil_temp_l1_anomaly_forecast',
+        'summer_snowfall_anomaly_forecast', 'spring_temp_prob_warm_forecast',
+        'spring_precip_prob_wet_forecast', 'spring_solar_rad_prob_wet_forecast',
+        'spring_evaporation_prob_wet_forecast', 'spring_runoff_prob_wet_forecast',
+        'spring_soil_temp_l1_prob_warm_forecast', 'spring_snowfall_prob_wet_forecast',
+        'summer_temp_prob_warm_forecast', 'summer_precip_prob_wet_forecast',
+        'summer_solar_rad_prob_wet_forecast', 'summer_evaporation_prob_wet_forecast',
+        'summer_runoff_prob_wet_forecast', 'summer_soil_temp_l1_prob_warm_forecast',
+        'summer_snowfall_prob_wet_forecast',
+
+        # Redundant features identified in VIF analysis (from user_17/18)
+        'avg_sand_0_30cm',
+        'avg_sand_0_100cm',
+        'winter_cropland_LST_mean',
+        'winter_cropland_ndvi_mean',
+        'state_encoded',
+        'year_trend',
+
+        # --- DATA LEAKAGE FIX ---
+        # Drop all non-lagged economic data (it's unknown in March)
+        'producer_price_index',
+        'seed_price_index',
+        'energy_price_index',
+        'fertilizer_price_index',
+        'plant_protection_price_index',
+
+        # --- VIF(inf) FIX ---
+        # Drop the components of 'cost_of_inputs_lag1'
+        'fertilizer_price_index_lag1',
+        'plant_protection_price_index_lag1',
+        'seed_price_index_lag1',
+    ]
+
+    # Drop only columns that actually exist in the dataframe
+    existing_cols_to_drop = [col for col in COLUMNS_TO_DROP if col in merged_df.columns]
+    merged_df = merged_df.drop(columns=existing_cols_to_drop)
+    logging.info(f"Dropped {len(existing_cols_to_drop)} columns.")
+
 
     output_file = file_paths['OUTPUT_FILE']
     merged_df.to_csv(output_file, index=False, float_format='%.6f')
