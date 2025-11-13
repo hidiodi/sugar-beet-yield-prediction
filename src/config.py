@@ -22,11 +22,11 @@ SCRIPTS_TO_RUN = [
     #"src/02_models/Wofost7.1/04_create_daily_weather_file.py",
     #"src/02_models/Wofost7.1/run_wofost_pipeline.py",
     #"src/02_models/Wofost7.1/apply_detrending_correction.py",
-    #"src/01_data/FeatureEngineering/build_stage1_features.py",
-    #"src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
-    #"src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
-    "src/02_models/XGBoost/regression_model/ModelScripts/train_standalone_xgb_model.py", # uses wofost as a simple input and trains with detrended yield as target
-    "src/02_models/XGBoost/regression_model/Testing/backtest_standalone_xgb_model.py", # uses wofost as a simple input and trains with detrended yield as target
+    "src/01_data/FeatureEngineering/build_stage1_features.py",
+    "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
+    "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
+    #"src/02_models/XGBoost/regression_model/ModelScripts/train_standalone_xgb_model.py", # uses wofost as a simple input and trains with detrended yield as target
+    #"src/02_models/XGBoost/regression_model/Testing/backtest_standalone_xgb_model.py", # uses wofost as a simple input and trains with detrended yield as target
     #"src/02_models/NGboost/train_final_ngboost_model.py",
     #"src/02_models/NGboost/backtest_final_ngboost_model.py",
     #"src/02_models/FinalEnsemble/backtest_final_ensemble.py",
@@ -78,7 +78,7 @@ WEATHER_END_YEAR = 2024
 # --- WOFOST Model Configuration ---
 WOFOST_CONFIG = {
     # max range 1982 - 2024 and None to run all districts
-    'START_YEAR': 2023, 'END_YEAR': 2024, 'DISTRICT_LIMIT': None,
+    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': 3,
     'FILE_PATHS': {
         'HISTORICAL_DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
         'CORRECT_WEATHER_DIR': DATA_DIR / '04_feature/weather_district_daily',
@@ -107,7 +107,16 @@ WOFOST_CONFIG = {
         'RDMSOL': 150.0, 'KSUB': 10.0, 'SOPE': 10.0
     },
     'GENERIC_SITE': {'LATITUDE': 52.0, 'LONGITUDE': 10.0, 'ELEVATION': 50.0},
-    'ANALOG_YEAR_CONFIG': {'NUM_ANALOGS': 5, 'MIN_YEARS_FOR_FIT': 10, }
+    'ANALOG_YEAR_CONFIG': {'NUM_ANALOGS': 5, 'MIN_YEARS_FOR_FIT': 10, },
+    'GENETIC_GAIN_PARAMS': {
+        'START_YEAR': 1982,
+        'RUE': {'base': 2.1490474373960033, 'gain_rate': 0.002011218931031112},
+        'TSUM1': {'base': 641.6532388868698, 'gain_rate': -1.2321526223116248},
+        'AMAX': {'base': 38.48131409753632, 'gain_rate': 0.08517541431170078},
+    },
+    'OPTIMIZATION': {
+            'N_TRIALS': 500  # Start with 500, increase to 2000+ for a real run
+        }
 }
 
 # --- Detrending Configuration ---
