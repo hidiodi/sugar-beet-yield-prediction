@@ -1,142 +1,141 @@
-# File: src/features/calculate_initial_conditions.py
-# Description: V1 - Calculates the dynamic, year-specific Initial Available Water (WAV)
-# for each district by running a simple winter fallow-season water balance model.
+# File: src/02_models/Wofost7.1/calculate_initial_conditions.py
+# Description: V2.3 - Calculates WAV from ERA5-Land data.
+#              FIX: Implements a robust fallback using nearest-neighbor selection for
+#              small districts where the primary clip-and-mean method fails.
 
 import pandas as pd
+import geopandas as gpd
+import xarray as xr
+import rioxarray
 from pathlib import Path
 import sys
 import logging
 from tqdm import tqdm
-from pcse.util import penman_monteith
-import datetime
-import geopandas as gpd
+import re
+import zipfile
+import tempfile
 
 # --- Setup Project Root ---
-project_root = Path(__file__).resolve().parents[3]  # Adjusted for src/features/
+project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 
 from src import config
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-WINTER_START_MONTH = 11
-WINTER_START_DAY = 1
-SIMULATION_START_MONTH = 3
-SIMULATION_START_DAY = 20
+ERA5_SOIL_DATA_DIR = Path("data/01_raw/era5_land_monthly_soil")
 
 
-# --- Main Calculation Function ---
-def run_winter_balance_for_district(district_weather, site_and_soil_props):
-    """Runs a daily water balance for a single district over one winter period."""
-    # These are read from the V4 static features file
-    rdmsol = site_and_soil_props['RDMSOL']
-    smw_frac = site_and_soil_props['SMW']
-    smfcf_frac = site_and_soil_props['SMFCF']
+def calculate_initial_wav_from_era5():
+    """
+    Main function to calculate WAV for all districts and years using ERA5-Land data.
+    """
+    logging.info("--- Starting V2.3 Initial Available Water (WAV) Calculation (with Fallback) ---")
 
-    wilting_point_cm = rdmsol * smw_frac
-    field_capacity_cm = rdmsol * smfcf_frac
-
-    # Assumption: Soil profile is at Field Capacity at the start of the winter period.
-    current_water_cm = field_capacity_cm
-
-    for _, day in district_weather.iterrows():
-        precip_cm = day['precip'] / 10.0
-
-        # Penman-Monteith inputs
-        date = day['date'].to_pydatetime().date()
-        lat = site_and_soil_props['latitude']
-        elev = site_and_soil_props['avg_elevation']
-        tmin, tmax = day['tmin'], day['tmax']
-        srad_kj = day['srad'] * 1000.0
-        vap_hpa = day.get('vap', config.WOFOST_CONFIG['WEATHER_DEFAULTS']['VAPOR_PRESSURE']) * 10.0
-        wind = day.get('wind', config.WOFOST_CONFIG['WEATHER_DEFAULTS']['WIND_SPEED'])
-
-        et0_mm = penman_monteith(date, lat, elev, tmin, tmax, srad_kj, vap_hpa, wind)
-        es0_cm = et0_mm / 10.0
-
-        current_water_cm = current_water_cm + precip_cm - es0_cm
-        current_water_cm = max(wilting_point_cm, min(current_water_cm, field_capacity_cm))
-
-    wav_final = current_water_cm - wilting_point_cm
-    return wav_final
-
-
-def calculate_initial_wav():
-    """Main function to orchestrate the calculation of WAV for all districts and years."""
-    logging.info("--- Starting V1 Initial Available Water (WAV) Calculation ---")
-
-    # Uses the path you just added to config.py
     output_path = config.WOFOST_CONFIG['FILE_PATHS']['INITIAL_CONDITIONS']
     if output_path.exists():
         logging.info(f"Initial conditions file already exists at '{output_path}'. Skipping.")
         return
 
-    logging.info("Loading static soil & site data...")
+    logging.info("Loading static soil features and district geometries...")
     try:
-        # Reads the output from your V4 build_static_features.py script
-        static_df = pd.read_csv(config.WOFOST_CONFIG['FILE_PATHS']['STATIC_SOIL_FEATURES'], dtype={'district_no': str})
+        static_df = pd.read_csv(
+            config.WOFOST_CONFIG['FILE_PATHS']['STATIC_SOIL_FEATURES'],
+            dtype={'district_no': str}
+        )
+        if static_df['RDMSOL'].mean() < 10:
+            static_df['RDMSOL'] = static_df['RDMSOL'] * 100
 
-        # Adds latitude needed for Penman-Monteith
         gdf_districts = gpd.read_file(config.DISTRICTS_GEOJSON_PATH)
-        gdf_districts['latitude'] = gdf_districts.geometry.centroid.y
         gdf_districts.rename(columns={'id': 'district_no'}, inplace=True)
         gdf_districts['district_no'] = gdf_districts['district_no'].astype(str).str.zfill(5)
-        static_df = pd.merge(static_df, gdf_districts[['district_no', 'latitude']], on='district_no')
+        gdf_districts = gdf_districts.to_crs("EPSG:4326")
     except FileNotFoundError as e:
         logging.error(f"FATAL: Required data file not found. Error: {e}");
         sys.exit(1)
 
-    logging.info("Loading all historical weather data...")
-    all_weather_dfs = []
-    # Reads all weather files from the directory defined in your config
-    weather_dir = config.WOFOST_CONFIG['FILE_PATHS']['HISTORICAL_DAILY_WEATHER_DIR']
-    for fpath in weather_dir.glob("*.csv"):
-        df = pd.read_csv(fpath, parse_dates=['date'], dtype={'district_no': str})
-        all_weather_dfs.append(df)
-    if not all_weather_dfs:
-        logging.error("FATAL: No historical weather files found.");
+    era5_files = sorted(list(ERA5_SOIL_DATA_DIR.glob("*_FEBRUARY.nc")))
+    if not era5_files:
+        logging.error(f"FATAL: No ERA5-Land NetCDF files found in '{ERA5_SOIL_DATA_DIR}'.");
         sys.exit(1)
-    full_weather_df = pd.concat(all_weather_dfs, ignore_index=True)
 
-    results = []
-    start_year = config.WOFOST_CONFIG['START_YEAR']
-    end_year = config.WOFOST_CONFIG['END_YEAR']
+    all_years_results = []
+    pbar = tqdm(era5_files, desc="Processing ERA5-Land Files")
+    for nc_file in pbar:
+        year_match = re.search(r'_(\d{4})_FEBRUARY', nc_file.name)
+        if not year_match:
+            logging.warning(f"Could not parse year from filename: {nc_file.name}. Skipping.");
+            continue
+        year = int(year_match.group(1))
+        pbar.set_postfix_str(f"Year: {year}")
 
-    pbar_outer = tqdm(static_df.iterrows(), total=len(static_df), desc="Processing Districts")
-    for _, district_row in pbar_outer:
-        district_no = district_row['district_no']
-        pbar_outer.set_postfix_str(f"District: {district_no}")
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                actual_nc_path = nc_file
+                if zipfile.is_zipfile(nc_file):
+                    with zipfile.ZipFile(nc_file, 'r') as zip_ref:
+                        zip_ref.extractall(temp_dir)
+                    extracted_files = list(Path(temp_dir).glob('*.nc'))
+                    if not extracted_files:
+                        logging.warning(f"No .nc file found inside zip {nc_file.name}. Skipping.");
+                        continue
+                    actual_nc_path = extracted_files[0]
 
-        district_weather_all_years = full_weather_df[full_weather_df['district_no'] == district_no].copy()
-        if district_weather_all_years.empty:
+                with xr.open_dataset(actual_nc_path, engine='netcdf4') as rds_raw:
+                    data_array = rds_raw['swvl1'].squeeze(drop=True)
+                    data_array = data_array.rio.set_spatial_dims(x_dim="longitude", y_dim="latitude")
+                    data_array = data_array.rio.write_crs("EPSG:4326")
+
+                    zonal_stats_results = []
+                    for _, district in gdf_districts.iterrows():
+                        mean_swvl1 = None
+                        try:
+                            # --- METHOD 1: Accurate Clip-and-Mean ---
+                            clipped = data_array.rio.clip([district.geometry], gdf_districts.crs, drop=True)
+                            mean_swvl1 = clipped.mean().item()
+                        except rioxarray.exceptions.NoDataInBounds:
+                            # --- METHOD 2: Robust Nearest-Neighbor Fallback ---
+                            logging.warning(
+                                f"NoDataInBounds for district {district['district_no']} in {year}. Using nearest neighbor fallback.")
+                            centroid = district.geometry.centroid
+                            mean_swvl1 = data_array.sel(longitude=centroid.x, latitude=centroid.y,
+                                                        method='nearest').item()
+
+                        if pd.notna(mean_swvl1):
+                            zonal_stats_results.append({
+                                'district_no': district['district_no'],
+                                'mean_feb_swvl1': mean_swvl1
+                            })
+
+                    if zonal_stats_results:
+                        year_swvl1_df = pd.DataFrame(zonal_stats_results)
+                        year_swvl1_df['year'] = year
+                        all_years_results.append(year_swvl1_df)
+
+        except Exception as e:
+            logging.error(f"CRITICAL FAILURE processing {nc_file.name}. Error: {e}", exc_info=True);
             continue
 
-        for year in range(start_year, end_year + 1):
-            winter_start_date = f"{year - 1}-{WINTER_START_MONTH}-{WINTER_START_DAY}"
-            sim_start_date = f"{year}-{SIMULATION_START_MONTH}-{SIMULATION_START_DAY}"
-
-            mask = (
-                    (district_weather_all_years['date'] >= winter_start_date) &
-                    (district_weather_all_years['date'] < sim_start_date)
-            )
-            winter_weather = district_weather_all_years[mask].sort_values('date')
-
-            if winter_weather.empty: continue
-
-            wav = run_winter_balance_for_district(winter_weather, district_row)
-            results.append({'year': year, 'district_no': district_no, 'WAV': wav})
-
-    if not results:
-        logging.error("No WAV results generated. Check weather data.");
+    if not all_years_results:
+        logging.error("FATAL: No soil moisture data could be processed. Aborting.");
         return
 
-    results_df = pd.DataFrame(results)
-    logging.info(f"Saving {len(results_df)} calculated WAV records to '{output_path}'")
-    results_df.to_csv(output_path, index=False, float_format='%.4f')
+    logging.info("Aggregating yearly results and calculating final WAV...")
+    full_swvl1_df = pd.concat(all_years_results, ignore_index=True)
+    final_df = pd.merge(full_swvl1_df, static_df[['district_no', 'SMW', 'RDMSOL']], on='district_no')
+    final_df['WAV'] = (final_df['mean_feb_swvl1'] - final_df['SMW']) * final_df['RDMSOL']
+    final_df['WAV'] = final_df['WAV'].clip(lower=0)
 
-    logging.info("--- SUCCESS: Initial conditions (WAV) file created! ---")
+    output_df = final_df[['year', 'district_no', 'WAV']]
+    logging.info(f"Saving {len(output_df)} calculated WAV records to '{output_path}'")
+    output_df.to_csv(output_path, index=False, float_format='%.4f')
+
+    logging.info("--- SUCCESS: V2.3 Initial conditions (WAV) file created from ERA5-Land data! ---")
+    print("\n--- Final WAV Data Preview ---");
+    print(output_df.head())
+    print("\n--- Summary Statistics for Calculated WAV (cm) ---");
+    print(output_df['WAV'].describe())
 
 
 if __name__ == "__main__":
-    calculate_initial_wav()
+    calculate_initial_wav_from_era5()
