@@ -1,7 +1,10 @@
 # File: src/02_models/XGBoost/regression_model/Testing/backtest_standalone_xgb_model.py
-# Description: (FINAL, CORRECTED VERSION 2) Backtests the detrended standalone model.
-#              Fixes the KeyError from the complex .transform() call by using a
-#              simpler and more robust .apply() method for detrending.
+# Description: (HYBRID MODEL V3.1) Backtests the final hybrid model strategy.
+#              This version performs a walk-forward validation by re-training
+#              on the *actual yield* (kreisYield) in each loop.
+#              All detrending logic has been REMOVED.
+#              FIX 3.1: Corrected .UPPER() typo to .upper()
+import logging
 
 import pandas as pd
 import geopandas as gpd
@@ -14,7 +17,6 @@ import matplotlib.patches as mpatches
 import seaborn as sns
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.base import clone
-from sklearn.linear_model import LinearRegression
 from tqdm import tqdm
 import numpy as np
 from pathlib import Path
@@ -29,12 +31,14 @@ warnings.filterwarnings("ignore")
 sns.set_theme(style="whitegrid")
 
 # --- Configuration ---
-XGB_CONFIG = config.STANDALONE_XGB_CONFIG
-BACKTEST_CONFIG = config.STANDALONE_BACKTESTING_CONFIG
+# Use the main XGB config
+XGB_CONFIG = config.XGBOOST_TRAINING_CONFIG
+BACKTEST_CONFIG = config.BACKTESTING_CONFIG
 
 
 # ==============================================================================
 # SELF-CONTAINED ANALYSIS AND PLOTTING FUNCTIONS
+# (No changes needed here - all plotting functions are preserved)
 # ==============================================================================
 
 def analyze_interval_performance(results_df: pd.DataFrame):
@@ -82,7 +86,7 @@ def plot_national_average_timeline(backtest_results: pd.DataFrame, report_dir: s
              zorder=4)
     plt.fill_between(yearly_avg['year'], yearly_avg['avg_pred_lower'], yearly_avg['avg_pred_upper'], color='red',
                      alpha=0.2, label='95% Prediction Interval', zorder=2)
-    plt.title("National Average Yield vs. Predicted Interval (Detrended Standalone XGB)", fontsize=16)
+    plt.title("National Average Yield vs. Predicted Interval (Hybrid XGB)", fontsize=16)
     plt.xlabel("Year")
     plt.ylabel("Yield (dt/ha)")
     plt.legend()
@@ -93,7 +97,6 @@ def plot_national_average_timeline(backtest_results: pd.DataFrame, report_dir: s
 
 def plot_best_worst_district_timelines(district_performance: pd.DataFrame, backtest_results: pd.DataFrame,
                                        report_dir: str):
-    # This function and the others below are identical to the previous version and remain correct.
     print("-> Generating Best vs. Worst District Timelines...")
     reliable_perf = district_performance[
         district_performance['data_point_count'] >= BACKTEST_CONFIG['MIN_DATAPOINTS_FOR_PLOT']]
@@ -115,7 +118,7 @@ def plot_best_worst_district_timelines(district_performance: pd.DataFrame, backt
         ax.set_title(f"{'Best' if i < 3 else 'Worst'}: {district_info['name']}\n(R² = {district_info['r2']:.2f})")
         ax.legend()
         ax.grid(True, linestyle=':')
-    plt.suptitle("Prediction Timelines for Best & Worst Districts (Detrended Standalone XGB)", fontsize=18)
+    plt.suptitle("Prediction Timelines for Best & Worst Districts (Hybrid XGB)", fontsize=18)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     plt.savefig(os.path.join(report_dir, '02_best_worst_districts.png'), bbox_inches='tight')
     plt.close()
@@ -134,7 +137,7 @@ def plot_performance_map(district_performance: pd.DataFrame, gdf_districts: gpd.
     hatch_patch = mpatches.Patch(hatch='//', facecolor='white', edgecolor='black',
                                  label=f'Low Data (< {BACKTEST_CONFIG["LOW_DATA_THRESHOLD"]} years)')
     plt.legend(handles=[hatch_patch], loc='lower left', title='Data Availability')
-    ax.set_title('Model Performance (R²) by District - Detrended Standalone XGB', fontsize=16)
+    ax.set_title('Model Performance (R²) by District - Hybrid XGB', fontsize=16)
     ax.set_axis_off()
     plt.savefig(os.path.join(report_dir, '03_r_squared_map.png'), bbox_inches='tight')
     plt.close()
@@ -147,7 +150,7 @@ def plot_r2_vs_data_count(district_performance: pd.DataFrame, report_dir: str):
                     palette={True: 'red', False: 'blue'}, alpha=0.6)
     plt.ylim(-1.1, 1.1)
     plt.axhline(0, color='grey', linestyle='--')
-    plt.title("Data Availability vs Model Performance - Detrended Standalone XGB")
+    plt.title("Data Availability vs Model Performance - Hybrid XGB")
     plt.xlabel("Number of Years in Backtest per District")
     plt.ylabel("R-squared (R²)")
     plt.legend(title='Is Low Data?')
@@ -156,64 +159,59 @@ def plot_r2_vs_data_count(district_performance: pd.DataFrame, report_dir: str):
 
 
 # ==============================================================================
-# CORE BACKTESTING LOGIC
+# CORE BACKTESTING LOGIC (UPDATED)
 # ==============================================================================
 
-def run_backtest_detrended(df: pd.DataFrame, models: dict, feature_list: list) -> pd.DataFrame:
+def run_backtest_hybrid(df: pd.DataFrame, models: dict, feature_list: list) -> pd.DataFrame:
     """
-    Runs a time-series backtest with on-the-fly detrending.
+    Runs a time-series backtest.
+    In each loop, it trains on all data < year_to_predict (using kreisYield as target).
+    It then predicts on year_to_predict.
     """
-    print(f"\n--- Starting Detrended Standalone Model Backtest ---")
+    print(f"\n--- Starting Hybrid Model Backtest (Target: kreisYield) ---")
     all_predictions = []
 
     for year_to_predict in tqdm(range(BACKTEST_CONFIG['BACKTEST_START_YEAR'], BACKTEST_CONFIG['BACKTEST_END_YEAR'] + 1),
                                 desc="Backtesting Years"):
+
         train_df_full = df[df['year'] < year_to_predict].copy()
         test_df = df[df['year'] == year_to_predict].copy()
-        if test_df.empty or len(train_df_full) < 20:
+
+        # Need enough data to train
+        if test_df.empty or len(train_df_full) < 100:
             continue
 
-        # --- SIMPLIFIED AND CORRECTED DETRENDING LOGIC ---
+        # --- LOGIC CHANGE: Train on kreisYield ---
+        # 1. Define the target
+        target_col = 'kreisYield'
 
-        # 1. Create a function to apply to each district group in the training data
-        def get_detrended_series(group):
-            if len(group) >= 5 and not group['kreisYield'].isnull().any():
-                lr = LinearRegression().fit(group[['year']], group['kreisYield'])
-                trend = lr.predict(group[['year']])
-                return group['kreisYield'] - trend
-            else:
-                return pd.Series(np.nan, index=group.index)
+        # 2. Clean training data
+        # We must drop NaNs for the target AND key features
+        critical_cols = [target_col, 'stat_trend_forecast']
+        train_df_full.dropna(subset=critical_cols, inplace=True)
 
-        # 2. Apply this function to create the detrended target for the entire training set
-        train_df_full['yield_detrended'] = train_df_full.groupby('district_no').apply(get_detrended_series).reset_index(
-            level=0, drop=True)
+        if train_df_full.empty:
+            continue
 
-        # 3. Calculate the trend for the test year separately for each district
-        test_trends = {}
-        for dist_id, group in train_df_full.groupby('district_no'):
-            if len(group) >= 5 and not group['kreisYield'].isnull().any():
-                lr = LinearRegression().fit(group[['year']], group['kreisYield'])
-                test_trends[dist_id] = lr.predict(pd.DataFrame({'year': [year_to_predict]}))[0]
-        test_df['yield_trend_backtest'] = test_df['district_no'].map(test_trends)
-
-        # 4. Clean data for this fold
-        train_df_full.dropna(subset=['yield_detrended'], inplace=True)
-        test_df.dropna(subset=['yield_trend_backtest'], inplace=True)
-        if test_df.empty or train_df_full.empty:
+        # 3. Clean test data (don't need to drop target here, just features)
+        test_df.dropna(subset=['stat_trend_forecast'], inplace=True)
+        if test_df.empty:
             continue
 
         X_train = train_df_full[feature_list]
-        y_train = train_df_full['yield_detrended']
+        y_train = train_df_full[target_col]
         X_test = test_df[feature_list]
 
-        # Fit models, predict, and re-add the trend
+        # 4. Fit models, predict, and store
         fitted_models = {name: clone(model).fit(X_train, y_train) for name, model in models.items()}
         preds = {name: model.predict(X_test) for name, model in fitted_models.items()}
 
         fold_results = test_df[['district_no', 'year', 'kreisYield', 'name']].copy()
-        fold_results['predicted_yield_median'] = preds['median'] + test_df['yield_trend_backtest']
-        fold_results['predicted_yield_lower'] = preds['lower'] + test_df['yield_trend_backtest']
-        fold_results['predicted_yield_upper'] = preds['upper'] + test_df['yield_trend_backtest']
+
+        # --- LOGIC CHANGE: Predictions are final, no re-trending needed ---
+        fold_results['predicted_yield_median'] = preds['median']
+        fold_results['predicted_yield_lower'] = preds['lower']
+        fold_results['predicted_yield_upper'] = preds['upper']
         all_predictions.append(fold_results)
 
     if not all_predictions:
@@ -230,26 +228,51 @@ def main():
     """Main execution function."""
     report_dir = Path(BACKTEST_CONFIG['REPORT_DIR'])
     report_dir.mkdir(parents=True, exist_ok=True)
-    print("--- Starting Detrended Standalone Model Evaluation ---")
+    print("--- Starting Hybrid Model Evaluation ---")
 
     try:
+        # Load the base models (these will be cloned and retrained)
         models = {name: joblib.load(XGB_CONFIG[f'{name.upper()}_MODEL_PATH']) for name in ['lower', 'median', 'upper']}
-        df = pd.read_csv(config.STANDALONE_XGB_CONFIG['DATA_PATH'])
+
+        # Load the main feature set
+        df = pd.read_csv(config.XGBOOST_TRAINING_CONFIG['DATA_PATH'])
+
+        # Load the GeoJSON file
         gdf = gpd.read_file(BACKTEST_CONFIG['GEOJSON_PATH'])
 
-        gdf.rename(columns={'id': 'district_no', 'name': 'name'}, inplace=True)
+        # --- THIS IS THE KEY LOGIC ---
+        # 1. Check for the 'id' column you mentioned.
+        if 'id' not in gdf.columns:
+            raise KeyError("GeoJSON file is missing the required 'id' column.")
+
+        # 2. Check for the 'name' column needed for plotting.
+        if 'name' not in gdf.columns:
+            logging.warning("GeoJSON missing 'name' column. Plotting names will be blank.")
+            gdf['name'] = 'Unknown'
+
+        # 3. Securely rename 'id' to 'district_no' for merging.
+        gdf.rename(columns={'id': 'district_no'}, inplace=True)
+        # --- END KEY LOGIC ---
+
+        # 4. Standardize the keys for a clean merge
         gdf['district_no'] = gdf['district_no'].astype(str).str.zfill(5)
         df['district_no'] = df['district_no'].astype(str).str.zfill(5)
+
+        # 5. Merge ONLY the columns we need (the 'name') for plotting.
         df = pd.merge(df, gdf[['district_no', 'name']], on='district_no', how='left')
+
         print("Models and data loaded successfully.")
+
     except Exception as e:
         print(f"❌ CRITICAL ERROR during loading. Details: {e}")
         return
 
+    # Use the clean feature list from the main config
+    # This list correctly OMITS 'district_no', 'name', 'kreisYield', etc.
     feature_list = [col for col in XGB_CONFIG['FEATURE_COLS'] if
-                    col in df.columns and col not in ['kreisYield', 'yield_detrended', 'yield_trend']]
+                    col in df.columns]
 
-    results = run_backtest_detrended(df, models, feature_list)
+    results = run_backtest_hybrid(df, models, feature_list)
 
     if results.empty:
         print("❌ Backtest did not produce results. Terminating.")
@@ -259,12 +282,13 @@ def main():
     results.to_csv(results_path, index=False)
     print(f"\n✅ Full backtest results saved to {results_path}")
 
+    # Run all analyses and create all plots
     analyze_interval_performance(results)
     perf = calculate_district_metrics(results, str(report_dir))
 
     plot_national_average_timeline(results, str(report_dir))
     plot_best_worst_district_timelines(perf, results, str(report_dir))
-    plot_performance_map(perf, gdf, str(report_dir))
+    plot_performance_map(perf, gdf, str(report_dir))  # 'gdf' is passed here for the map
     plot_r2_vs_data_count(perf, str(report_dir))
 
     print("\n--- Overall Performance Summary ---")
