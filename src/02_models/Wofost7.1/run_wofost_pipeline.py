@@ -109,7 +109,6 @@ class SimpleWeatherDataProvider(WeatherDataProvider):
                     f"CRITICAL: Failed processing weather row for date: {row.get('date')}. Error: {e}")
                 raise e
 
-
 class WeatherGenerator:
     def __init__(self):
         self.stats = defaultdict(dict)

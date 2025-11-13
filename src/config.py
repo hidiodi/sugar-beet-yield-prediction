@@ -10,6 +10,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
 RAW_DATA_DIR = DATA_DIR / "01_raw"
+INTERMEDIATE_DATA_DIR = DATA_DIR / "02_intermediate"
 PROCESSED_DATA_DIR = DATA_DIR / "03_processed"
 
 # --- Pipeline Configuration ---
@@ -63,6 +64,12 @@ WEATHER_VARIABLE_MAP = {
     'wind': ('wind_speed_mean', 'Wind_Speed_10m_Mean_24h'),
     'vap': ('dewpoint_temp_mean', 'Dew_Point_Temperature_2m_Mean_24h'),
 }
+
+# Path to the raw SEAS5 NetCDF files
+SEAS5_RAW_DIR = BASE_DIR / "data" / "01_raw" / "ECMWF51_monthly_germany"
+# Path to the output of the V3 (zonal stats) daily weather script
+DAILY_WEATHER_DIR_V3 = BASE_DIR / "data" / "04_feature" / "weather_district_daily"
+
 import datetime
 
 WEATHER_START_YEAR = 1981
@@ -71,9 +78,10 @@ WEATHER_END_YEAR = 2024
 # --- WOFOST Model Configuration ---
 WOFOST_CONFIG = {
     # max range 1982 - 2024 and None to run all districts
-    'START_YEAR': 2023, 'END_YEAR': 2024, 'DISTRICT_LIMIT': 4,
+    'START_YEAR': 2023, 'END_YEAR': 2024, 'DISTRICT_LIMIT': None,
     'FILE_PATHS': {
         'HISTORICAL_DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
+        'CORRECT_WEATHER_DIR': DATA_DIR / '04_feature/weather_district_daily',
         'YIELD_DATA': DATA_DIR / '02_intermediate/sugarbeet_yield.csv',
         'STATIC_SOIL_FEATURES': DATA_DIR / '03_processed/static_features_districts.csv',
         'INITIAL_CONDITIONS': DATA_DIR / '03_processed/initial_conditions_wav.csv',
