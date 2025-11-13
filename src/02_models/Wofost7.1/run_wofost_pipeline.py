@@ -770,6 +770,39 @@ def aggregate_and_save_extreme_weather_metrics(df_fcst_ensemble, output_path):
     logging.info(f"[ANALYSIS] ✓ All risk features saved to {output_path}")
     pass
 
+
+def load_district_weather_for_year(year: int, weather_dir: Path) -> pd.DataFrame:
+    """
+    Loads all district-level daily weather CSVs for a given year and concatenates them.
+    """
+    year_dir = weather_dir / str(year)
+    if not year_dir.exists():
+        logging.warning(f"Weather directory for year {year} not found at {year_dir}")
+        return pd.DataFrame()
+
+    all_district_files = list(year_dir.glob("*.csv"))
+    if not all_district_files:
+        logging.warning(f"No weather files found for year {year} in {year_dir}")
+        return pd.DataFrame()
+
+    df_list = []
+    for f in all_district_files:
+        try:
+            # The district_no is in the file, so we can just read and concat
+            df = pd.read_csv(f, parse_dates=['date'], dtype={'district_no': str})
+            df_list.append(df)
+        except Exception as e:
+            logging.error(f"Failed to read or process weather file {f}. Error: {e}")
+            continue
+
+    if not df_list:
+        return pd.DataFrame()
+
+    concatenated_df = pd.concat(df_list, ignore_index=True)
+    concatenated_df['year'] = year
+    return concatenated_df
+
+
 if __name__ == "__main__":
     # --- 1. SETUP LOGGING & PATHS ---
     pcse_log_dir = Path.home() / ".pcse" / "logs"
@@ -839,23 +872,18 @@ if __name__ == "__main__":
     logging.info(
         "Loading all available yearly historical weather files into memory for analog search and WG fitting...")
     all_hist_dfs = []
-    # Adjust range for weather loading to cover all analog years correctly
-    weather_load_start_year = CONFIG['START_YEAR'] - config.WOFOST_CONFIG['ANALOG_YEAR_CONFIG']['MIN_YEARS_FOR_FIT'] - \
-                              CONFIG['ANALOG_YEAR_CONFIG']['NUM_ANALOGS']  # Earliest year for analog
-    if weather_load_start_year < 1981: weather_load_start_year = 1981  # Ensure we don't go before 1981
+    weather_load_start_year = 1981  # V3 weather data starts from 1981
 
     for year_to_load in range(weather_load_start_year, CONFIG['END_YEAR'] + 1):
-        hist_weather_path = CONFIG['FILE_PATHS'][
-                                'HISTORICAL_DAILY_WEATHER_DIR'] / f"historical_daily_weather_era5_{year_to_load}.csv"
-        if hist_weather_path.exists():
-            df = pd.read_csv(hist_weather_path, parse_dates=['date'], dtype={'district_no': str})
-            df['year'] = year_to_load
-            all_hist_dfs.append(df)
+        # Use the new, correct directory and the new loading function
+        df_year = load_district_weather_for_year(year_to_load, CONFIG['FILE_PATHS']['CORRECT_WEATHER_DIR'])
+        if not df_year.empty:
+            all_hist_dfs.append(df_year)
         else:
-            logging.warning(f"Historical weather file for {year_to_load} not found at {hist_weather_path}.")
+            logging.warning(f"No V3 historical weather data loaded for year {year_to_load}.")
 
     if not all_hist_dfs:
-        logging.error("FATAL: No historical weather files found to build WeatherGenerator. Aborting.");
+        logging.error("FATAL: No V3 historical weather files found to build WeatherGenerator. Aborting.");
         sys.exit(1)
 
     full_hist_weather_df = pd.concat(all_hist_dfs, ignore_index=True)
@@ -898,13 +926,10 @@ if __name__ == "__main__":
         df_static_year = df_static_all[df_static_all['year'] == year].copy()
         df_seas5_year = df_seas5_all[df_seas5_all['year'] == year].copy()
 
-        hist_weather_path = CONFIG['FILE_PATHS'][
-                                'HISTORICAL_DAILY_WEATHER_DIR'] / f"historical_daily_weather_era5_{year}.csv"
-        try:
-            df_daily_hist_year = pd.read_csv(hist_weather_path, parse_dates=['date'], dtype={'district_no': str})
-            df_daily_hist_year['district_no'] = df_daily_hist_year['district_no'].astype(str).str.zfill(5)
-        except FileNotFoundError:
-            logging.warning(f"Historical weather file for {year} not found at {hist_weather_path}. Skipping year.");
+        # The full_hist_weather_df now contains all years, so we just filter it.
+        df_daily_hist_year = full_hist_weather_df[full_hist_weather_df['year'] == year].copy()
+        if df_daily_hist_year.empty:
+            logging.warning(f"Historical weather data for simulation year {year} not found. Skipping year.")
             continue
 
         if CONFIG['DISTRICT_LIMIT'] is not None:
