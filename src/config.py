@@ -21,7 +21,6 @@ SCRIPTS_TO_RUN = [
     #"src/01_data/process_input_data_pipeline.py",
     #"src/02_models/Wofost7.1/04_create_daily_weather_file.py",
     "src/02_models/Wofost7.1/calculate_initial_conditions.py",
-    "src/02_models/Wofost7.1/calibrate_crop_file.py",
     "src/02_models/Wofost7.1/run_wofost_pipeline.py",
     #"src/02_models/Wofost7.1/apply_detrending_correction.py",
     "src/01_data/FeatureEngineering/build_stage1_features.py",
@@ -81,7 +80,7 @@ WEATHER_END_YEAR = 2024
 # --- WOFOST Model Configuration ---
 WOFOST_CONFIG = {
     # max range 1982 - 2024 and None to run all districts
-    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': None,
+    'START_YEAR': 1981, 'END_YEAR': 2024, 'DISTRICT_LIMIT': 5,
     'FILE_PATHS': {
         'HISTORICAL_DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
         'CORRECT_WEATHER_DIR': DATA_DIR / '04_feature/weather_district_daily',
@@ -111,11 +110,53 @@ WOFOST_CONFIG = {
     },
     'GENERIC_SITE': {'LATITUDE': 52.0, 'LONGITUDE': 10.0, 'ELEVATION': 50.0},
     'ANALOG_YEAR_CONFIG': {'NUM_ANALOGS': 5, 'MIN_YEARS_FOR_FIT': 10, },
+
     'GENETIC_GAIN_PARAMS': {
-        'START_YEAR': 1982,
-        'RUE': {'base': 2.1490474373960033, 'gain_rate': 0.002011218931031112},
-        'TSUM1': {'base': 641.6532388868698, 'gain_rate': -1.2321526223116248},
-        'AMAX': {'base': 38.48131409753632, 'gain_rate': 0.08517541431170078},
+        'REFERENCE_YEAR': 2017,
+        'START_YEAR': 1981,
+
+        'PARAMS_TO_SCALE': {
+
+            # AMAX: New 3-period model with new splits
+            'AMAX': {
+                'base': 45.0,
+                'periods': [
+                    {'until_year': 2004, 'gain_rate': 0.25},  # Period 1: Anchor 1981-2004 (Good)
+                    {'until_year': 2012, 'gain_rate': 0.50},  # Period 2: Isolate 2004-2012 (Steeper)
+                    {'until_year': 2100, 'gain_rate': 0.30}  # Period 3: Anchor 2012-onward (Good)
+                ]
+            },
+
+            # EFF: Apply same 3-period logic
+            'EFF': {
+                'base': 0.450,
+                'periods': [
+                    {'until_year': 2004, 'gain_rate': 0.0020},
+                    {'until_year': 2012, 'gain_rate': 0.0035},
+                    {'until_year': 2100, 'gain_rate': 0.0020}
+                ]
+            },
+
+            # TSUM1 (Negative gain): Apply inverted 3-period logic
+            'TSUM1': {
+                'base': 650.0,
+                'periods': [
+                    {'until_year': 2004, 'gain_rate': -0.5},
+                    {'until_year': 2012, 'gain_rate': -0.9},  # More negative
+                    {'until_year': 2100, 'gain_rate': -0.6}
+                ]
+            },
+
+            # TSUM2: Apply inverted 3-period logic
+            'TSUM2': {
+                'base': 1400.0,
+                'periods': [
+                    {'until_year': 2004, 'gain_rate': -0.2},
+                    {'until_year': 2012, 'gain_rate': -0.5},  # More negative
+                    {'until_year': 2100, 'gain_rate': -0.2}
+                ]
+            },
+        }
     },
     'OPTIMIZATION': {
             'N_TRIALS': 500  # Start with 500, increase to 2000+ for a real run

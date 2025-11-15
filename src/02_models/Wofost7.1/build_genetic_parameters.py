@@ -1,95 +1,143 @@
-# File: src/02_models/Wofost7.1/build_genetic_parameters.py
-# Description: Applies temporal genetic gain and creates a master parameter file for each year.
-
-import yaml
 import json
 from pathlib import Path
 import sys
 import logging
 
-# --- Setup Project Root ---
-project_root = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(project_root))
-
-from src import config
+# --- (Setup Project Root as before) ---
+try:
+    project_root = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(project_root))
+    from src import config
+except (ImportError, IndexError):
+    print("Failed to import project config.")
+    sys.exit(1)
 
 # --- Configuration ---
-# FIX: Corrected the format string from %(asctime=s to %(asctime)s
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 CONFIG = config.WOFOST_CONFIG
 
-class ParameterDict(dict):
-    """A dictionary that allows attribute-style access."""
-    def add_variable(self, name, value, description=""):
-        self[name] = value
 
-    def __getattr__(self, name):
-        try:
-            return self[name]
-        except KeyError:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-    def __setattr__(self, name, value):
-        self[name] = value
+def get_piecewise_value(year_to_calc, reference_year, base_value, periods):
+    """
+    Calculates the parameter value for a given year using a
+    piecewise-linear (stepped) gain model.
+    """
+    # Start with the base value at the reference year
+    current_value = base_value
+
+    # Sort periods to be safe, from earliest to latest
+    periods.sort(key=lambda p: p['until_year'])
+
+    # Determine if we are calculating for the past or future
+    if year_to_calc < reference_year:
+        # --- CALCULATING FOR THE PAST ---
+        # We need to iterate from the reference_year *backwards* to the target_year
+
+        last_period_year = reference_year
+        for period in reversed(periods):
+            # Find the gain_rate for the *current* iteration's year
+            # This period's gain_rate applies from its 'until_year' down to the previous one
+            gain_rate = period['gain_rate']
+
+            # The start of this calculation step is the "floor" for this period
+            # It's either the target year, or the year the *next* period starts
+            start_year = max(year_to_calc, (periods[periods.index(period) - 1]['until_year'] + 1) if periods.index(
+                period) > 0 else -9999)
+
+            if last_period_year <= start_year:
+                continue  # This period is fully in the future relative to our step
+
+            # Years to apply this *negative* gain_rate over
+            num_years = last_period_year - start_year
+
+            # Subtract the gain (e.g., 2017 -> 2000)
+            current_value -= (gain_rate * num_years)
+
+            # Set up for the next loop
+            last_period_year = start_year
+            if last_period_year == year_to_calc:
+                break  # We've arrived at our target year
+
+    elif year_to_calc > reference_year:
+        # --- CALCULATING FOR THE FUTURE ---
+        # We iterate from the reference_year *forwards* to the target_year
+
+        last_period_year = reference_year
+        for period in periods:
+            # Find the gain_rate for the *current* iteration's year
+            gain_rate = period['gain_rate']
+
+            # The end of this calculation step is the "ceiling" for this period
+            end_year = min(year_to_calc, period['until_year'])
+
+            if last_period_year >= end_year:
+                continue  # This period is fully in the past relative to our step
+
+            # Years to apply this *positive* gain_rate over
+            num_years = end_year - last_period_year
+
+            # Add the gain
+            current_value += (gain_rate * num_years)
+
+            # Set up for the next loop
+            last_period_year = end_year
+            if last_period_year == year_to_calc:
+                break  # We've arrived at our target year
+
+    # If year_to_calc == reference_year, current_value remains base_value
+    return current_value
+
 
 def main():
-    """
-    Main function to build the genetic parameters file.
-    """
-    logging.info("--- Building Genetic Parameters (SugarbeetGenes.json) ---")
+    logging.info("--- Building Genetic Gain Factor File (Piecewise-Linear Model) ---")
 
-    # Load base crop parameters from YAML
     try:
-        with open(CONFIG['FILE_PATHS']['CROP_YAML'], 'r') as f:
-            cp = yaml.safe_load(f)['CropParameters']
-        # Merging GenericC3, ecotype, and specific variety parameters
-        base_params = {**cp.get('GenericC3', {}), **cp['EcoTypes']['sugarbeet'], **cp['Varieties']['Sugarbeet_601']}
+        gg_config = CONFIG['GENETIC_GAIN_PARAMS']
+        params_to_scale = gg_config['PARAMS_TO_SCALE']
+        reference_year = gg_config['REFERENCE_YEAR']
+        start_year = gg_config['START_YEAR']
+        end_year = CONFIG['END_YEAR']
 
-        # Convert list-based values to single values
-        cropdata = ParameterDict()
-        for key, val in base_params.items():
-            if key not in ['Metadata', '<<'] and isinstance(val, list) and len(val) > 0:
-                cropdata.add_variable(key, val[0])
-            elif key not in ['Metadata', '<<']:
-                cropdata.add_variable(key, val)
-        logging.info(f"Base parameters loaded. Initial TSUM1: {cropdata.get('TSUM1', 'N/A')}")
+        logging.info(f"Using REFERENCE_YEAR: {reference_year} (Factor = 1.0)")
+        all_years_factors = {}
 
-    except FileNotFoundError as e:
-        logging.error(f"FATAL: Crop YAML file not found. Error: {e}"); sys.exit(1)
+        for year in range(start_year, end_year + 1):
+            year_factors = {}
+
+            for param_name, settings in params_to_scale.items():
+                base_value = settings['base']
+                periods = settings['periods']
+
+                # Calculate the value for this year using the new piecewise function
+                current_value = get_piecewise_value(year, reference_year, base_value, periods)
+
+                # Calculate and store the factor
+                factor = current_value / base_value
+                factor_name = f"{param_name.upper()}_FACTOR"
+                year_factors[factor_name] = factor
+
+            all_years_factors[str(year)] = year_factors
+
+        output_path = config.PROCESSED_DATA_DIR / 'GeneticGainFactors.json'
+        with open(output_path, 'w') as f:
+            json.dump(all_years_factors, f, indent=4)
+
+        logging.info(f"--- GeneticGainFactors.json saved to {output_path} ---")
+
+        # Log examples
+        logging.info(f"Example factors for START YEAR ({start_year}):")
+        logging.info(json.dumps(all_years_factors[str(start_year)], indent=4))
+
+        logging.info(f"Example factors for REFERENCE YEAR ({reference_year}):")
+        logging.info(json.dumps(all_years_factors[str(reference_year)], indent=4))
+
+        logging.info(f"Example factors for (e.g.) 2005:")
+        logging.info(json.dumps(all_years_factors[str(2005)], indent=4))
+
     except Exception as e:
-        logging.error(f"FATAL: Could not parse crop YAML. Error: {e}", exc_info=True); sys.exit(1)
-
-    # Load genetic gain configuration
-    genetic_gain_config = CONFIG['GENETIC_GAIN_PARAMS']
-    all_years_genes = {}
-
-    # Loop through years and apply genetic gain
-    start_year = genetic_gain_config['START_YEAR']
-    for year in range(CONFIG['START_YEAR'], CONFIG['END_YEAR'] + 1):
-        year_params = cropdata.copy()
-        years_since_start = year - start_year
-
-        # Calculate new values based on genetic gain
-        new_rue = genetic_gain_config['RUE']['base'] + (genetic_gain_config['RUE']['gain_rate'] * years_since_start)
-        new_tsum1 = genetic_gain_config['TSUM1']['base'] + (genetic_gain_config['TSUM1']['gain_rate'] * years_since_start)
-        new_amax = genetic_gain_config['AMAX']['base'] + (genetic_gain_config['AMAX']['gain_rate'] * years_since_start)
-
-        # Overwrite the base parameters with the new values
-        year_params['RUE'] = new_rue
-        year_params['TSUM1'] = new_tsum1
-        year_params['AMAX'] = new_amax
-
-        all_years_genes[str(year)] = dict(year_params) # Convert ParameterDict to standard dict for JSON
-
-    # Save the final JSON file
-    output_path = config.PROCESSED_DATA_DIR / 'SugarbeetGenes.json'
-    with open(output_path, 'w') as f:
-        json.dump(all_years_genes, f, indent=4)
-
-    logging.info(f"--- SugarbeetGenes.json saved to {output_path} ---")
-    logging.info(f"Example parameters for {CONFIG['END_YEAR']}:")
-    logging.info(f"  RUE: {all_years_genes[str(CONFIG['END_YEAR'])]['RUE']:.4f}")
-    logging.info(f"  TSUM1: {all_years_genes[str(CONFIG['END_YEAR'])]['TSUM1']:.4f}")
-    logging.info(f"  AMAX: {all_years_genes[str(CONFIG['END_YEAR'])]['AMAX']:.4f}")
+        logging.error(f"FATAL: An error occurred. Check config 'GENETIC_GAIN_PARAMS'. Error: {e}",
+                      exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
