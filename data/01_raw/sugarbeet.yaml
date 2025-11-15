@@ -580,7 +580,7 @@ CropParameters:
                 Coverage:
                    Region: Germany, Northern and Central France, Netherlands, Belgium, Luxembourg, UK, Ireland, Denmark
             TSUM1:
-            -  650
+            -  450
             - temperature sum from emergence to anthesis
             - ['C.d']
             TSUM2:

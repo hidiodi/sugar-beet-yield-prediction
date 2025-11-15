@@ -33,23 +33,36 @@ def phase_1_input_sanity_checks(genes_path, initial_conditions_path):
 
     # 1. Genetic Gain Plot
     logging.info("Generating Genetic Gain Plot...")
+
+    # --- ADD THIS DEBUG LINE ---
+    print(f"\n[DEBUG] Loading genetic gain factors from: {genes_path}\n")
+
     with open(genes_path, 'r') as f:
         genes_data = json.load(f)
     df_genes = pd.DataFrame.from_dict(genes_data, orient='index')
     df_genes.index = df_genes.index.astype(int)
 
+    # --- ADD THIS DEBUG LINE ---
+    print("\n[DEBUG] DataFrame 'df_genes' structure:\n")
+    df_genes.info()
+    print("\n")
+
+    # This is the line that is failing
     fig, axes = plt.subplots(3, 1, figsize=(10, 15), sharex=True)
     fig.suptitle('Genetic Gain Verification (AMAX, TSUM1, RUE vs. Year)', fontsize=16)
-    sns.lineplot(data=df_genes, x=df_genes.index, y='AMAX', ax=axes[0], marker='o');
-    axes[0].set_title('AMAX vs. Year');
-    axes[0].set_ylabel('AMAX')
-    sns.lineplot(data=df_genes, x=df_genes.index, y='TSUM1', ax=axes[1], marker='o');
-    axes[1].set_title('TSUM1 vs. Year');
-    axes[1].set_ylabel('TSUM1')
-    sns.lineplot(data=df_genes, x=df_genes.index, y='RUE', ax=axes[2], marker='o');
-    axes[2].set_title('RUE vs. Year');
-    axes[2].set_ylabel('RUE')
-    axes[2].set_xlabel('Year')
+    sns.lineplot(data=df_genes, x=df_genes.index, y='AMAX_FACTOR', ax=axes[0], marker='o');
+    axes[0].set_title('AMAX_FACTOR vs. Year');
+    axes[0].set_ylabel('AMAX_FACTOR')
+
+    # Use 'TSUM1_FACTOR' instead of 'TSUM1'
+    sns.lineplot(data=df_genes, x=df_genes.index, y='TSUM1_FACTOR', ax=axes[1], marker='o');
+    axes[1].set_title('TSUM1_FACTOR vs. Year');
+    axes[1].set_ylabel('TSUM1_FACTOR')
+
+    # Use 'EFF_FACTOR' instead of 'RUE' (this is the efficiency/RUE factor)
+    sns.lineplot(data=df_genes, x=df_genes.index, y='EFF_FACTOR', ax=axes[2], marker='o');
+    axes[2].set_title('RUE (EFF_FACTOR) vs. Year');
+    axes[2].set_ylabel('EFF_FACTOR (RUE)')
     plt.tight_layout(rect=[0, 0, 1, 0.96]);
     plot_path = OUTPUT_DIR / "P1_genetic_gain_plot.png";
     plt.savefig(plot_path);
@@ -58,7 +71,7 @@ def phase_1_input_sanity_checks(genes_path, initial_conditions_path):
 
     # 2. Initial Conditions Distribution
     logging.info("Generating Initial Conditions Distribution Plots...")
-    df_ic = pd.read_csv(initial_conditions_path, parse_dates=['sowing_date'])
+    df_ic = pd.read_csv(initial_conditions_path, parse_dates=['sowing_date'], dtype={'district_no': str})
     df_ic['sowing_date_doy'] = df_ic['sowing_date'].dt.dayofyear
 
     fig, axes = plt.subplots(1, 3, figsize=(20, 6));
@@ -77,6 +90,48 @@ def phase_1_input_sanity_checks(genes_path, initial_conditions_path):
     plt.savefig(plot_path);
     plt.close()
     logging.info(f"Saved plot to {plot_path}")
+
+    # 3. WAV Trend Analysis (The "Bend" Test)
+    logging.info("Generating WAV Trend (Pre/Post-2000) Plot...")
+
+    # Calculate yearly statistics for WAV from the loaded df_ic
+    df_wav_yearly = df_ic.groupby('year')['WAV'].agg(
+        mean='mean',
+        p10=lambda x: x.quantile(0.10),
+        p90=lambda x: x.quantile(0.90)
+    ).reset_index()
+
+    plt.figure(figsize=(15, 7))
+
+    # Plot the mean line
+    sns.lineplot(data=df_wav_yearly, x='year', y='mean', label='Mean WAV', marker='o')
+
+    # Add the 10th-90th percentile fill
+    plt.fill_between(
+        data=df_wav_yearly,
+        x='year',
+        y1='p10',
+        y2='p90',
+        alpha=0.2,
+        label='10th-90th Percentile Range'
+    )
+
+    # --- THIS IS THE CRITICAL PART ---
+    # Add a vertical line at 2000 to show the data source change
+    plt.axvline(x=2000, color='red', linestyle='--', linewidth=2, label='Data Source Change (Inferred vs. Real)')
+
+    plt.title('Initial Soil Moisture (WAV) Trend vs. Year (Checking for "Bend" at 2000)')
+    plt.xlabel('Year')
+    plt.ylabel('Initial Available Water (WAV, cm)')
+    plt.legend()
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+
+    plot_path = OUTPUT_DIR / "P1_WAV_trend_analysis.png"
+    plt.savefig(plot_path)
+    plt.close()
+    logging.info(f"Saved plot to {plot_path}")
+
+    # Return the dataframes as before
     return df_genes, df_ic
 
 
@@ -87,7 +142,7 @@ def phase_2_output_sanity_checks(wofost_output_path):
     logging.info("--- Phase 2: Running Output Data Sanity Checks ---")
 
     try:
-        df_wofost = pd.read_csv(wofost_output_path)
+        df_wofost = pd.read_csv(wofost_output_path, dtype={'district_no': str})
     except FileNotFoundError:
         logging.error(f"FATAL: WOFOST output file not found at {wofost_output_path}. Cannot run checks.");
         return None, None
@@ -172,10 +227,9 @@ def phase_3_model_behavior_validation(df_genes, df_ic, df_agg_wofost):
     df_genes_reset = df_genes.reset_index().rename(columns={'index': 'year'});
     df_merged_genes = pd.merge(df_genes_reset, df_agg_wofost, on='year')
     plt.figure(figsize=(10, 6));
-    sns.scatterplot(data=df_merged_genes, x='AMAX', y='yield_potential_dry_kgha')
-    plt.title('Genetic Gain Test: AMAX vs. Potential Yield');
-    plt.xlabel('AMAX (kg CO2/ha/hr)');
-    plt.ylabel('Potential Yield (Dry kg/ha)')
+    sns.scatterplot(data=df_merged_genes, x='AMAX_FACTOR', y='yield_potential_dry_kgha')
+    plt.title('Genetic Gain Test: AMAX_FACTOR vs. Potential Yield');
+    plt.xlabel('AMAX_FACTOR (Genetic Gain Multiplier)');
     plot_path = OUTPUT_DIR / "P3_genetic_gain_test.png";
     plt.savefig(plot_path);
     plt.close();
@@ -191,6 +245,58 @@ def phase_3_model_behavior_validation(df_genes, df_ic, df_agg_wofost):
     plt.savefig(plot_path);
     plt.close();
     logging.info(f"Saved plot to {plot_path}")
+    # 4. The Per-Year Performance Test (with Potential Yield)
+    logging.info("Generating Per-Year Performance Plot...")
+    try:
+        # Load the static data which contains the actual yields
+        static_data_path = PROCESSED_DATA_DIR / 'StaticSiteData.csv'
+        df_static = pd.read_csv(static_data_path, dtype={'district_no': str})
+
+        df_actuals = df_static[['year', 'district_no', 'kreisYield']].rename(columns={'kreisYield': 'actual_yield'})
+
+        # Merge with your aggregated simulation results (df_agg_wofost)
+        df_merged_perf = pd.merge(df_agg_wofost, df_actuals, on=['year', 'district_no'])
+
+        # --- NEW: Convert Potential Yield to fresh dt/ha ---
+        # Get the DMC value from the config
+        dmc = config.WOFOST_CONFIG['CONSTANTS']['DMC_SUGARBEET']
+        # 'yield_potential_dry_kgha' is from df_agg_wofost (in dry kg/ha)
+        df_merged_perf['potential_yield_fresh_dt'] = (df_merged_perf['yield_potential_dry_kgha'] / dmc) / 100.0
+
+        # Now, aggregate all three yield types by year
+        df_yearly_perf = df_merged_perf.groupby('year').agg(
+            actual_yield_mean=('actual_yield', 'mean'),
+            forecast_yield_mean=('wofost_forecast_yield_fresh_dt', 'mean'),
+            potential_yield_mean=('potential_yield_fresh_dt', 'mean')  # <-- ADDED THIS LINE
+        ).reset_index()
+
+        # Melt the DataFrame for easy plotting with seaborn
+        df_yearly_perf_melted = df_yearly_perf.melt('year', var_name='Yield Type', value_name='Yield (dt/ha)')
+
+        # Create the plot
+        plt.figure(figsize=(15, 7))
+        sns.lineplot(data=df_yearly_perf_melted, x='year', y='Yield (dt/ha)', hue='Yield Type', marker='o',
+                     style='Yield Type')
+        plt.title('Per-Year Performance: Actual vs. Forecast vs. Potential Yield')  # <-- UPDATED TITLE
+        plt.ylabel('Mean Yield (dt/ha)')
+        plt.xlabel('Year')
+        plt.legend(title='Yield Type')
+        plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+
+        plot_path = OUTPUT_DIR / "P3_per_year_performance_test.png"
+        plt.savefig(plot_path)
+        plt.close()
+        logging.info(f"Saved plot to {plot_path}")
+
+    except FileNotFoundError:
+        logging.warning(f"Could not find StaticSiteData.csv at {static_data_path}. Skipping Per-Year Performance Test.")
+    except Exception as e:
+        logging.error(f"Failed to generate Per-Year Performance plot. Error: {e}")
+
+    except FileNotFoundError:
+        logging.warning(f"Could not find StaticSiteData.csv at {static_data_path}. Skipping Per-Year Performance Test.")
+    except Exception as e:
+        logging.error(f"Failed to generate Per-Year Performance plot. Error: {e}")
 
 
 def phase_4_spatial_analysis(df_agg_wofost, df_ic):
@@ -250,11 +356,11 @@ def main():
     Main function to run the validation dashboard.
     """
     logging.info("--- Starting Validation Dashboard ---")
-    genes_path = PROCESSED_DATA_DIR / 'SugarbeetGenes.json'
+    genes_path = PROCESSED_DATA_DIR / 'GeneticGainFactors.json'
     initial_conditions_path = PROCESSED_DATA_DIR / 'InitialConditions.csv'
     # This path needs to point to the raw ensemble output from the main pipeline
     wofost_output_path = config.WOFOST_CONFIG['FILE_PATHS'][
-                             'OUTPUT_DIR'] / f"forecast_ensemble_{config.WOFOST_CONFIG['START_YEAR']}-{config.WOFOST_CONFIG['END_YEAR']}.csv"
+                             'OUTPUT_DIR'] / "forecast_ensemble_results_raw.csv"
     logging.info(f"Output will be saved to: {OUTPUT_DIR}")
 
     # --- Run Phases ---
