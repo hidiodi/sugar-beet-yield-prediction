@@ -80,7 +80,7 @@ WEATHER_END_YEAR = 2024
 # --- WOFOST Model Configuration ---
 WOFOST_CONFIG = {
     # max range 1982 - 2024 and None to run all districts
-    'START_YEAR': 1981, 'END_YEAR': 2024, 'DISTRICT_LIMIT': 5,
+    'START_YEAR': 1981, 'END_YEAR': 2024, 'DISTRICT_LIMIT': None,
     'FILE_PATHS': {
         'HISTORICAL_DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
         'CORRECT_WEATHER_DIR': DATA_DIR / '04_feature/weather_district_daily',
@@ -114,20 +114,16 @@ WOFOST_CONFIG = {
     'GENETIC_GAIN_PARAMS': {
         'REFERENCE_YEAR': 2017,
         'START_YEAR': 1981,
-
         'PARAMS_TO_SCALE': {
-
-            # AMAX: New 3-period model with new splits
             'AMAX': {
                 'base': 45.0,
                 'periods': [
-                    {'until_year': 2004, 'gain_rate': 0.25},  # Period 1: Anchor 1981-2004 (Good)
-                    {'until_year': 2012, 'gain_rate': 0.50},  # Period 2: Isolate 2004-2012 (Steeper)
-                    {'until_year': 2100, 'gain_rate': 0.30}  # Period 3: Anchor 2012-onward (Good)
+                    {'until_year': 2004, 'gain_rate': 0.25},  # Period 1: Anchor 1981-2004
+                    {'until_year': 2012, 'gain_rate': 0.50},  # Period 2: Isolate 2004-2012
+                    {'until_year': 2100, 'gain_rate': 0.30}  # Period 3: Anchor 2012-onward if we spot a disturbence in this trend we can create a new step
                 ]
             },
 
-            # EFF: Apply same 3-period logic
             'EFF': {
                 'base': 0.450,
                 'periods': [
@@ -137,22 +133,20 @@ WOFOST_CONFIG = {
                 ]
             },
 
-            # TSUM1 (Negative gain): Apply inverted 3-period logic
             'TSUM1': {
                 'base': 650.0,
                 'periods': [
                     {'until_year': 2004, 'gain_rate': -0.5},
-                    {'until_year': 2012, 'gain_rate': -0.9},  # More negative
+                    {'until_year': 2012, 'gain_rate': -0.9},
                     {'until_year': 2100, 'gain_rate': -0.6}
                 ]
             },
 
-            # TSUM2: Apply inverted 3-period logic
             'TSUM2': {
                 'base': 1400.0,
                 'periods': [
                     {'until_year': 2004, 'gain_rate': -0.2},
-                    {'until_year': 2012, 'gain_rate': -0.5},  # More negative
+                    {'until_year': 2012, 'gain_rate': -0.5},
                     {'until_year': 2100, 'gain_rate': -0.2}
                 ]
             },
