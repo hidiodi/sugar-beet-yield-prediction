@@ -14,7 +14,8 @@ sys.path.insert(0, str(project_root))
 from src import config
 
 # --- Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime=s - %(levelname)s - %(message)s')
+# FIX: Corrected the format string from %(asctime=s to %(asctime)s
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 CONFIG = config.WOFOST_CONFIG
 
 class ParameterDict(dict):
