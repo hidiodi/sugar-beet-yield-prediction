@@ -19,14 +19,16 @@ PIPELINE_NAME = "Main Hybrid Model Pipeline"
 SCRIPTS_TO_RUN = [
     #"src/01_data/download_all_data_pipeline.py",
     #"src/01_data/process_input_data_pipeline.py",
-    #"src/02_models/Wofost7.1/04_create_daily_weather_file.py",
-    "src/02_models/Wofost7.1/calculate_initial_conditions.py",
-    "src/02_models/Wofost7.1/run_wofost_pipeline.py",
-    #"src/02_models/Wofost7.1/apply_detrending_correction.py",
+    #"src/02_models/Wofost7.1/build_initial_conditions.py",
+    #"src/02_models/Wofost7.1/build_site_data.py",
+    #"src/02_models/Wofost7.1/build_genetic_parameters.py",
+    #"src/02_models/Wofost7.1/build_forecast_weather.py",
+    #"src/02_models/Wofost7.1/run_wofost_pipeline.py",
+    #"src/02_models/Wofost7.1/create_trendModel.py",
     "src/01_data/FeatureEngineering/build_stage1_features.py",
     #"src/03_analysis/basic_analysis/analyze_stage1_features.py",
-    #"src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
-    #"src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
+    "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
+    "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
     "src/02_models/XGBoost/regression_model/ModelScripts/train_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
     "src/02_models/XGBoost/regression_model/Testing/backtest_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
     #"src/02_models/NGboost/train_final_ngboost_model.py",
@@ -114,40 +116,73 @@ WOFOST_CONFIG = {
     'GENETIC_GAIN_PARAMS': {
         'REFERENCE_YEAR': 2017,
         'START_YEAR': 1981,
+
         'PARAMS_TO_SCALE': {
-            'AMAX': {
-                'base': 45.0,
+
+            # --- Genetic Gain (from Report) ---
+            # NO CHANGE. We trust this physiological data.
+            'CVO': {
+                'base': 0.72,
                 'periods': [
-                    {'until_year': 2004, 'gain_rate': 0.25},  # Period 1: Anchor 1981-2004
-                    {'until_year': 2012, 'gain_rate': 0.50},  # Period 2: Isolate 2004-2012
-                    {'until_year': 2100, 'gain_rate': 0.30}  # Period 3: Anchor 2012-onward if we spot a disturbence in this trend we can create a new step
+                    {'until_year': 2010, 'gain_rate': 0.0015},
+                    {'until_year': 2100, 'gain_rate': 0.0}
+                ]
+            },
+            'SPAN': {
+                'base': 33.0,
+                'periods': [
+                    {'until_year': 2010, 'gain_rate': 0.0},
+                    {'until_year': 2100, 'gain_rate': 0.15}
+                ]
+            },
+            'RDMCR': {
+                'base': 0.03,
+                'periods': [
+                    {'until_year': 2010, 'gain_rate': 0.0},
+                    {'until_year': 2100, 'gain_rate': -0.0001}
+                ]
+            },
+            'TSUM1': {
+                'base': 650.0,
+                'periods': [
+                    {'until_year': 2100, 'gain_rate': -0.4}
                 ]
             },
 
+            # --- Agronomic Gain Proxy (TUNED) ---
+            # We are "flattening" these proxy curves to fix the
+            # 1980s "lows" and 2000s "highs".
+            'AMAX': {
+                'base': 45.0,
+                'periods': [
+                    # P4 CHANGE: Reduced from 0.25 -> 0.20 to lift 1980s
+                    {'until_year': 2004, 'gain_rate': 0.20},
+                    # P4 CHANGE: Drastically reduced from 0.50 -> 0.35 to lower 2000s
+                    {'until_year': 2012, 'gain_rate': 0.35},
+                    # P4 CHANGE: Reduced from 0.30 -> 0.25 to maintain a smoother trend
+                    {'until_year': 2100, 'gain_rate': 0.25}
+                ]
+            },
+
+            # --- Agronomic Gain Proxy (TUNED) ---
+            # Applying the same "flattening" logic as AMAX.
             'EFF': {
                 'base': 0.450,
                 'periods': [
-                    {'until_year': 2004, 'gain_rate': 0.0020},
-                    {'until_year': 2012, 'gain_rate': 0.0035},
+                    # P4 CHANGE: Reduced from 0.0020 -> 0.0015 to lift 1980s
+                    {'until_year': 2004, 'gain_rate': 0.0015},
+                    # P4 CHANGE: Reduced from 0.0035 -> 0.0025 to lower 2000s
+                    {'until_year': 2012, 'gain_rate': 0.0025},
+                    # P4 CHANGE: Kept at 0.0020 (was 0.0020)
                     {'until_year': 2100, 'gain_rate': 0.0020}
                 ]
             },
 
-            'TSUM1': {
-                'base': 650.0,
-                'periods': [
-                    {'until_year': 2004, 'gain_rate': -0.5},
-                    {'until_year': 2012, 'gain_rate': -0.9},
-                    {'until_year': 2100, 'gain_rate': -0.6}
-                ]
-            },
-
+            # --- Set TSUM2 gain to zero (NO CHANGE) ---
             'TSUM2': {
                 'base': 1400.0,
                 'periods': [
-                    {'until_year': 2004, 'gain_rate': -0.2},
-                    {'until_year': 2012, 'gain_rate': -0.5},
-                    {'until_year': 2100, 'gain_rate': -0.2}
+                    {'until_year': 2100, 'gain_rate': 0.0}
                 ]
             },
         }
@@ -179,7 +214,9 @@ FEATURE_ENGINEERING_CONFIG = {
         'ECMWF_FORECAST_FEATURES_CSV': DATA_DIR / '02_intermediate/ecmwf51_forecast_features_BY_MEMBER.csv',
         'DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
         'WALKFORWARD_FORECAST_CSV': DATA_DIR / '05_model_input/wofost_walkforward/final_honest_forecasts.csv', #technical trend model
-        'WOFOST_ENSEMBLE_CSV': DATA_DIR / '06_model_output/multi_year_final/forecast_ensemble_1982-2024.csv', #actual wofost output
+        'WOFOST_ENSEMBLE_CSV': DATA_DIR / '06_model_output/multi_year_final/forecast_ensemble_results_raw.csv', #actual wofost yield output
+        'WOFOST_METRICS_CSV': DATA_DIR / '06_model_output/multi_year_final/forecast_extreme_weather_metrics.csv', #actual wofost weather output
+
         'OUTPUT_DIR': DATA_DIR / '05_model_input/',
         'OUTPUT_FILE': DATA_DIR / '05_model_input/stage1_preseason_features.csv'
     },
@@ -198,97 +235,70 @@ FEATURE_ENGINEERING_CONFIG = {
     }
 }
 
+#Residual XGboost model config
 XGBOOST_TRAINING_CONFIG = {
     'DATA_PATH': DATA_DIR / '05_model_input/stage1_preseason_features.csv',
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models',
     'FEATURE_COLS': [
-        # --- Trend & Technology Proxy ---
-        'national_avg_yield_lag1',
-        'stat_trend_forecast', # Champion trend feature
-        'wofost_forecast_yield_fresh_dt', # Champion physics feature
+        # --- CORE DRIVERS (TREND & PHYSICS) ---
+        'stat_trend_forecast',  # Champion leak-proof statistical trend
+        'national_avg_yield_lag1',  # Macro-level trend proxy
+        'wofost_yield_anomaly',  # Weather-driven deviation from the WOFOST trend
 
-        # --- Antecedent Weather Features (Observed by March) ---
+        # --- WOFOST-DERIVED PHYSICAL RISK METRICS ---
+        'max_lai_achieved_mean',  # Mean expected canopy size
+        'max_lai_achieved_std',  # Uncertainty in canopy development
+        'cumulative_water_stress_std',  # CONSOLIDATED: Primary metric for season-long drought risk
+        'consecutive_tmax_gt_30c_std',  # CONSOLIDATED: Primary metric for heatwave risk
+
+        # --- ANTECEDENT CONDITIONS (OBSERVED BY MARCH) ---
         'antecedent_precip_sum',
         'antecedent_frost_days',
         'antecedent_heavy_precip_days',
         'antecedent_gdd_sum_anomaly',
 
-        # --- Seasonal Forecast - Central Tendency (Ensemble Mean) ---
+        # --- SPRING FORECAST (CRITICAL EARLY GROWTH) ---
         'spring_temp_anomaly_forecast_mean',
-        'spring_precip_anomaly_forecast_mean',
-        'summer_temp_anomaly_forecast_mean',
-        'summer_precip_anomaly_forecast_mean',
-
-        # --- Seasonal Forecast - Uncertainty & Spread (Ensemble Std Dev) ---
         'spring_temp_anomaly_forecast_std',
-        'summer_temp_anomaly_forecast_std',
-        'spring_precip_anomaly_forecast_std',
-        'summer_precip_anomaly_forecast_std',
-
-        # --- Seasonal Forecast - Tail Risk (Ensemble Quantiles) ---
         'spring_temp_anomaly_forecast_p10',
         'spring_temp_anomaly_forecast_p90',
-        'summer_temp_anomaly_forecast_p10',
-        'summer_temp_anomaly_forecast_p90',
-        'summer_precip_anomaly_forecast_p10',
-        'summer_precip_anomaly_forecast_p90',
+        'spring_precip_anomaly_forecast_mean',
+        'spring_precip_anomaly_forecast_std',
 
-        # --- Monthly Summer Temperature Risk ---
-        'june_temp_anomaly_p10',
-        'july_temp_anomaly_p10',
-        'august_temp_anomaly_p10',
-
-        # --- Solar Radiation Forecast Features ---
+        # --- SUMMER SOLAR RADIATION FORECAST ---
         'summer_solar_rad_anomaly_forecast_mean',
         'summer_solar_rad_anomaly_forecast_std',
         'summer_solar_rad_anomaly_forecast_p10',
         'summer_solar_rad_anomaly_forecast_p90',
 
-        # --- Seasonal Forecast - Probabilistic Risk Features ---
-        'prob_hot_summer',
-        'prob_dry_summer',
+        # --- STATIC SITE CHARACTERISTICS (SIMPLIFIED) ---
+        'lat',
+        'lon',
+        'avg_clay_0_30cm',
+        'avg_som_0_30cm',
 
-        # --- Static Geographic & Soil Features ---
-        'lat', 'lon', 'avg_elevation', 'avg_slope',
-        'avg_bdod_0_30cm', 'avg_clay_0_30cm',
-        # 'avg_sand_0_30cm', # REMOVED: Redundant with clay
-        'avg_som_0_30cm', 'avg_phh2o_0_30cm',
-
-        # --- Satellite Features ---
-        # 'winter_cropland_ndvi_mean', # REMOVED: Redundant with anomaly
+        # --- SATELLITE-DERIVED WINTER CONDITIONS ---
         'winter_cropland_ndvi_anomaly',
-        # 'winter_cropland_LST_mean', # REMOVED: Redundant with anomaly
         'winter_cropland_LST_anomaly',
         'winter_cropland_snow_cover_days',
+        'has_satellite_data',
 
-        # --- Teleconnection Indices ---
-        'nao_winter_avg', 'sca_winter_avg', 'enso_mei_winter_avg',
+        # --- TELECONNECTION INDICES ---
+        'nao_winter_avg',
+        'sca_winter_avg',
+        'enso_mei_winter_avg',
 
-        # --- Lagged Economic Features & Anomalies ---
-        'profit_margin_proxy_lag1',
-        # 'cost_of_inputs_lag1', # REMOVED: Redundant, prefer anomalies
-        'producer_price_index_lag1_anomaly', 'seed_price_index_lag1_anomaly',
-        'energy_price_index_lag1_anomaly', 'plant_protection_price_index_lag1_anomaly',
-        'fertilizer_price_index_lag1_anomaly_capped', 'is_fertilizer_price_extreme',
+        # --- ECONOMIC SHOCK FEATURES (ANOMALIES ONLY) ---
+        'producer_price_index_lag1_anomaly',
+        'seed_price_index_lag1_anomaly',
+        'energy_price_index_lag1_anomaly',
+        'plant_protection_price_index_lag1_anomaly',
+        'fertilizer_price_index_lag1_anomaly_capped',
+        'is_fertilizer_price_extreme',
 
-        # --- WOFOST-Related Hybrid Features ---
-        'wofost_forecast_x_profit_margin',
-        'has_wofost_data',
-
-        # --- General Regional & Temporal Features ---
-        # 'state_encoded', # REMOVED: Redundant with lat/lon
-        'year', # Keep 'year' as the primary time feature
-        # 'year_trend', # REMOVED: Redundant with 'year'
-
-        # --- Interaction & Risk Features ---
+        # --- ROBUST INTERACTION TERMS ---
         'gdd_x_fertilizer_price',
-        'hot_dry_interaction',
-        'forecast_hot_dry_risk_p90',
-        'profit_margin_proxy_lag1_x_spring_temp_anomaly_mean',
         'antecedent_precip_sum_x_spring_temp_anomaly_mean',
-
-        'summer_temp_forecast_range',
-        'summer_precip_forecast_range',
         'enso_x_spring_temp_forecast',
         'sca_x_spring_temp_forecast',
     ],
@@ -342,7 +352,6 @@ XGBOOST_TUNING_CONFIG = {
     'VALIDATION_END_YEAR': 2014,
     'STORAGE_DB_NAME': "xgb_yield_separate_tuning_v7.db" # A single DB can hold multiple studies
 }
-
 # --- Backtesting Configuration ---
 BACKTESTING_CONFIG = {
     'GEOJSON_PATH': DATA_DIR / '01_raw/districts_official.geojson',
@@ -366,13 +375,13 @@ ENSEMBLE_BACKTESTING_CONFIG = {
     'NOMINAL_COVERAGE': 0.95
 }
 
+#Standalone XGboost model config
 STANDALONE_XGB_CONFIG = {
     # UPDATED: Point back to the ORIGINAL source file.
     'DATA_PATH': DATA_DIR / '05_model_input/stage1_preseason_features.csv',
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models/standalone_xgb',
 
     'FEATURE_COLS': XGBOOST_TRAINING_CONFIG['FEATURE_COLS'] + [
-        'wofost_forecast_yield_fresh_dt'
     ],
 
     # The script will CREATE and use 'yield_detrended' as the target
@@ -388,7 +397,6 @@ STANDALONE_XGB_CONFIG = {
     'MEDIAN_MODEL_PATH': BASE_DIR / 'src/models/standalone_xgb/standalone_model_median.joblib',
     'UPPER_MODEL_PATH': BASE_DIR / 'src/models/standalone_xgb/standalone_model_upper.joblib'
 }
-
 # --- Standalone XGBoost Backtesting Configuration (OVERRIDDEN) ---
 STANDALONE_BACKTESTING_CONFIG = {
     'GEOJSON_PATH': DATA_DIR / '01_raw/districts_official.geojson',

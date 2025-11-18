@@ -32,8 +32,8 @@ sns.set_theme(style="whitegrid")
 
 # --- Configuration ---
 # Use the main XGB config
-XGB_CONFIG = config.XGBOOST_TRAINING_CONFIG
-BACKTEST_CONFIG = config.BACKTESTING_CONFIG
+XGB_CONFIG = config.STANDALONE_XGB_CONFIG
+BACKTEST_CONFIG = config.STANDALONE_BACKTESTING_CONFIG
 
 
 # ==============================================================================

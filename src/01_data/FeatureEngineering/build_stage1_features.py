@@ -183,7 +183,6 @@ def main():
     master_df = pd.read_csv(file_paths['MASTER_DATASET'])
     master_df['district_no'] = master_df['district_no'].astype(str).str.zfill(5)
 
-    # --- NEW: Add National Average Yield Lag ---
     logging.info("Calculating national average yield lag feature...")
     national_yield = master_df.groupby('year')['yield'].mean().reset_index()
     national_yield.rename(columns={'yield': 'national_avg_yield'}, inplace=True)
@@ -223,6 +222,15 @@ def main():
     df_satellite['district_no'] = df_satellite['district_no'].astype(str).str.zfill(5)
     merged_df = pd.merge(merged_df, df_satellite, on=['district_no', 'year'], how='left')
 
+    # --- FIX: Handle missing satellite data ---
+    logging.info("Handling missing satellite data for pre-2001 years...")
+    merged_df['has_satellite_data'] = merged_df['winter_cropland_ndvi_anomaly'].notna().astype(int)
+    # Impute with zero, the flag will allow the model to distinguish these cases
+    for col in ['winter_cropland_ndvi_anomaly', 'winter_cropland_LST_anomaly', 'winter_cropland_snow_cover_days']:
+        if col in merged_df.columns:
+            merged_df[col].fillna(0, inplace=True)
+    logging.info("✓ Missing satellite data handled by imputing with zero and adding 'has_satellite_data' flag.")
+
     # --- 3. (FIX) Load STATISTICAL TREND features (from Script 2) ---
     df_stat_trend = pd.read_csv(file_paths['WALKFORWARD_FORECAST_CSV'])
     df_stat_trend['district_no'] = df_stat_trend['district_no'].astype(str).str.zfill(5)
@@ -237,7 +245,7 @@ def main():
 
     # Aggregate the mean yield from the raw ensemble file
     df_wofost_yield_agg = df_wofost_yield_raw.groupby(['year', 'district_no']).agg(
-        wofost_forecast_yield_fresh_dt=('yield_water_limited_dry_kgha', 'mean')
+        wofost_forecast_yield_fresh_dt=('yield_water_limited', 'mean')
     ).reset_index()
 
     # Get DMC from the central config file
@@ -297,6 +305,43 @@ def main():
     merged_df['gdd_x_fertilizer_price'] = merged_df['antecedent_gdd_sum_anomaly'] * merged_df[
         'fertilizer_price_index_lag1_anomaly_capped']
 
+    # --- 5. (FIX) Load WOFOST RISK METRICS ---
+    logging.info("Loading pre-aggregated WOFOST risk metrics...")
+    wofost_metrics_file = file_paths['WOFOST_METRICS_CSV']
+    if not wofost_metrics_file.exists():
+        logging.warning(f"WOFOST risk metrics file not found at {wofost_metrics_file}. Skipping.")
+    else:
+        df_wofost_metrics = pd.read_csv(wofost_metrics_file)
+
+        # --- PATCH: Sanitize illegal column names from old WOFOST output ---
+        df_wofost_metrics.columns = df_wofost_metrics.columns.str.replace(r'[<>]', '', regex=True)
+        logging.info("✓ Patched illegal characters from column names.")
+        # --- END PATCH ---
+
+        df_wofost_metrics['district_no'] = df_wofost_metrics['district_no'].astype(str).str.zfill(5)
+
+        # Sanity check for duplicate columns before merge, excluding keys
+        cols_to_merge = [col for col in df_wofost_metrics.columns if
+                         col not in merged_df.columns or col in ['year', 'district_no']]
+        merged_df = pd.merge(merged_df, df_wofost_metrics[cols_to_merge], on=['year', 'district_no'], how='left')
+        logging.info(f"✓ WOFOST risk metrics merged. Added {len(cols_to_merge) - 2} new features.")
+
+    # --- VIF FIX: Create leak-proof WOFOST yield anomaly ---
+    logging.info("Creating leak-proof WOFOST yield anomaly feature...")
+    # Sort to ensure correct rolling window application
+    merged_df = merged_df.sort_values(by=['district_no', 'year'])
+
+    # Calculate a 5-year TRAILING average. shift(1) ensures the current year is not included.
+    wofost_trend = merged_df.groupby('district_no')['wofost_forecast_yield_fresh_dt'] \
+        .transform(lambda x: x.shift(1).rolling(window=5, min_periods=3).mean())
+
+    # The anomaly is the deviation from this backward-looking trend.
+    merged_df['wofost_yield_anomaly'] = merged_df['wofost_forecast_yield_fresh_dt'] - wofost_trend
+
+    # Handle the initial years where a trend cannot be calculated by filling with zero
+    merged_df['wofost_yield_anomaly'].fillna(0, inplace=True)
+    logging.info("✓ 'wofost_yield_anomaly' created.")
+
     # --- UPDATED & NEW Interaction Terms ---
     logging.info("Creating new and updated interaction features...")
     # Update to use new explicit column name for mean forecast
@@ -330,55 +375,26 @@ def main():
 
     # These columns were identified by VIF analysis as redundant or constant
     COLUMNS_TO_DROP = [
-        # Constant Column
+        # --- Useless / Constant / Phantom Columns ---
         'crs_anomaly',
+        'has_wofost_data',  # Will be re-added later, this is a stale version
+        'simulation_failed_mean',
+        'days_to_anthesis_std',
+        'days_to_anthesis_mean',
 
-        # Redundant Economic Columns (German names)
-        'zuckerrben',
-        'dngemittel',
-        'energie_und_schmierstoffe',
-        'pflanzenschutzmittel',
-        'saat_und_pflanzgut',
+        # --- Redundant Economic Columns (German names) ---
+        'zuckerrben', 'dngemittel', 'energie_und_schmierstoffe',
+        'pflanzenschutzmittel', 'saat_und_pflanzgut',
 
-        # Redundant/Stale Weather Columns (replaced by `create_hybrid_...` function)
+        # --- Redundant/Stale Weather Columns (single values replaced by ensemble stats) ---
         'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly',
-        'antecedent_gdd_sum_anomaly', 'spring_temp_anomaly_forecast',
-        'spring_precip_anomaly_forecast', 'spring_solar_rad_anomaly_forecast',
-        'spring_evaporation_anomaly_forecast', 'spring_runoff_anomaly_forecast',
-        'spring_soil_temp_l1_anomaly_forecast', 'spring_snowfall_anomaly_forecast',
+        'spring_temp_anomaly_forecast', 'spring_precip_anomaly_forecast',
         'summer_temp_anomaly_forecast', 'summer_precip_anomaly_forecast',
-        'summer_solar_rad_anomaly_forecast', 'summer_evaporation_anomaly_forecast',
-        'summer_runoff_anomaly_forecast', 'summer_soil_temp_l1_anomaly_forecast',
-        'summer_snowfall_anomaly_forecast', 'spring_temp_prob_warm_forecast',
-        'spring_precip_prob_wet_forecast', 'spring_solar_rad_prob_wet_forecast',
-        'spring_evaporation_prob_wet_forecast', 'spring_runoff_prob_wet_forecast',
-        'spring_soil_temp_l1_prob_warm_forecast', 'spring_snowfall_prob_wet_forecast',
-        'summer_temp_prob_warm_forecast', 'summer_precip_prob_wet_forecast',
-        'summer_solar_rad_prob_wet_forecast', 'summer_evaporation_prob_wet_forecast',
-        'summer_runoff_prob_wet_forecast', 'summer_soil_temp_l1_prob_warm_forecast',
-        'summer_snowfall_prob_wet_forecast',
+        # NOTE: We are deliberately KEEPING all other features previously dropped for VIF
 
-        # Redundant features identified in VIF analysis (from user_17/18)
-        'avg_sand_0_30cm',
-        'avg_sand_0_100cm',
-        'winter_cropland_LST_mean',
-        'winter_cropland_ndvi_mean',
-        'state_encoded',
-        'year_trend',
-
-        # --- DATA LEAKAGE FIX ---
-        # Drop all non-lagged economic data (it's unknown in March)
-        'producer_price_index',
-        'seed_price_index',
-        'energy_price_index',
-        'fertilizer_price_index',
-        'plant_protection_price_index',
-
-        # --- VIF(inf) FIX ---
-        # Drop the components of 'cost_of_inputs_lag1'
-        'fertilizer_price_index_lag1',
-        'plant_protection_price_index_lag1',
-        'seed_price_index_lag1',
+        # --- DATA LEAKAGE FIX (ESSENTIAL) ---
+        'producer_price_index', 'seed_price_index', 'energy_price_index',
+        'fertilizer_price_index', 'plant_protection_price_index',
     ]
 
     # Drop only columns that actually exist in the dataframe

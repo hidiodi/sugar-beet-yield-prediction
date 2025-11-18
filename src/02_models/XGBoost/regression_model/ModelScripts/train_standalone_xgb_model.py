@@ -19,7 +19,7 @@ from src import config
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 # Use the main XGB config, as this is now the main hybrid model
-TRAIN_CONFIG = config.XGBOOST_TRAINING_CONFIG
+TRAIN_CONFIG = config.STANDALONE_XGB_CONFIG
 
 
 def train_hybrid_model(train_config):

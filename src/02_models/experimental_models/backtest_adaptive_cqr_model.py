@@ -18,6 +18,8 @@ import numpy as np
 
 warnings.filterwarnings("ignore")
 sns.set_theme(style="whitegrid")
+XGB_CONFIG = config.XGBOOST_TRAINING_CONFIG
+print("✅ Dynamically loading feature set from central config...")
 
 # --- Configuration for the Adaptive CQR Model ---
 LOWER_MODEL_PATH = os.path.join('src/models', 'final_quantile_model_lower.joblib')
@@ -248,28 +250,13 @@ def main():
         print(f"❌ CRITICAL ERROR during loading. Details: {e}");
         return
 
-    feature_cols = [
-        'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly', 'antecedent_gdd_sum_anomaly',
-        'spring_temp_anomaly_forecast', 'spring_precip_anomaly_forecast', 'spring_solar_rad_anomaly_forecast',
-        'spring_evaporation_anomaly_forecast', 'spring_runoff_anomaly_forecast', 'spring_soil_temp_l1_anomaly_forecast',
-        'spring_snowfall_anomaly_forecast', 'summer_temp_anomaly_forecast', 'summer_precip_anomaly_forecast',
-        'summer_solar_rad_anomaly_forecast', 'summer_evaporation_anomaly_forecast', 'summer_runoff_anomaly_forecast',
-        'summer_soil_temp_l1_anomaly_forecast', 'summer_snowfall_anomaly_forecast', 'spring_temp_prob_warm_forecast',
-        'spring_precip_prob_wet_forecast', 'spring_solar_rad_prob_wet_forecast', 'spring_evaporation_prob_wet_forecast',
-        'spring_runoff_prob_wet_forecast', 'spring_soil_temp_l1_prob_warm_forecast',
-        'spring_snowfall_prob_wet_forecast',
-        'summer_temp_prob_warm_forecast', 'summer_precip_prob_wet_forecast', 'summer_solar_rad_prob_wet_forecast',
-        'summer_evaporation_prob_wet_forecast', 'summer_runoff_prob_wet_forecast',
-        'summer_soil_temp_l1_prob_warm_forecast', 'summer_snowfall_prob_wet_forecast', 'lat', 'lon', 'avg_elevation',
-        'avg_slope', 'avg_bdod_0_30cm', 'avg_clay_0_30cm', 'avg_sand_0_30cm', 'avg_som_0_30cm', 'avg_phh2o_0_30cm',
-        'avg_bdod_0_100cm', 'avg_clay_0_100cm', 'avg_sand_0_100cm', 'avg_som_0_100cm', 'avg_phh2o_0_100cm',
-        'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly', 'winter_cropland_LST_mean',
-        'winter_cropland_LST_anomaly', 'winter_cropland_snow_cover_days', 'fertilizer_price_index_lag1_anomaly_capped',
-        'is_fertilizer_price_extreme', 'gdd_x_fertilizer_price',
-        'spring_temp_x_spring_precip', 'antecedent_gdd_sum_anomaly_sq', 'summer_heat_x_profit_margin',
-        'summer_precip_x_input_costs', 'spring_temp_prob_warm_forecast_sq', 'summer_temp_prob_warm_forecast_sq',
-        'spring_precip_prob_wet_forecast_sq', 'summer_precip_prob_wet_forecast_sq'
-    ]
+    feature_cols = [col for col in XGB_CONFIG['FEATURE_COLS'] if col in df.columns]
+
+    # CRITICAL: We are predicting the residual from the trend, so the trend itself cannot be a feature.
+    # This prevents a perfect data leak.
+    if 'stat_trend_forecast' in feature_cols:
+        feature_cols.remove('stat_trend_forecast')
+        print(" -> Removed 'stat_trend_forecast' from feature list to prevent leakage.")
 
     print("\n--- Applying Causal Detrending ---")
     df.sort_values(by=['district_no', 'year'], inplace=True)
