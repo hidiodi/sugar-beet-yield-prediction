@@ -299,19 +299,19 @@ def phase_3_model_behavior_validation(df_genes, df_ic, df_agg_wofost):
         logging.error(f"Failed to generate Per-Year Performance plot. Error: {e}")
 
 
-def phase_4_spatial_analysis(df_agg_wofost, df_ic):
+def phase_4_spatial_analysis(df_agg_wofost, df_ic, gdf_districts):
     """
     Performs Phase 4 checks by creating spatial plots (choropleth maps).
     """
-    if df_agg_wofost is None or df_ic is None: logging.error("Skipping Phase 4 due to missing data."); return
+    # --- MODIFIED: Check for all data inputs ---
+    if df_agg_wofost is None or df_ic is None:
+        logging.error("Skipping Phase 4 due to missing aggregated data.")
+        return
+    if gdf_districts is None:
+        logging.error("Skipping Phase 4 due to missing GeoJSON data.")
+        return
 
     logging.info("--- Phase 4: Running Spatial Analysis ---")
-    try:
-        gdf_districts = gpd.read_file(config.DISTRICTS_GEOJSON_PATH).rename(columns={'id': 'district_no'})
-        gdf_districts['district_no'] = gdf_districts['district_no'].astype(str).str.zfill(5)
-    except FileNotFoundError:
-        logging.error("FATAL: GeoJSON file for districts not found."); return
-
     # Average metrics over all years for a stable map
     df_spatial_yield = df_agg_wofost.groupby('district_no')['wofost_forecast_yield_fresh_dt'].mean().reset_index()
     df_spatial_stress = df_agg_wofost.groupby('district_no')['drought_stress_index'].mean().reset_index()
@@ -351,6 +351,101 @@ def phase_4_spatial_analysis(df_agg_wofost, df_ic):
     logging.info(f"Saved map to {plot_path}")
 
 
+# File: src/02_models/Wofost7.1/validation_dashboard.py
+
+def phase_5_spatial_trend_analysis(df_agg_wofost, gdf_districts):
+    """
+    Performs Phase 5 checks by creating spatial plots of the MODEL ERROR (bias)
+    over time using a 'small multiples' approach.
+    """
+    if df_agg_wofost is None:
+        logging.error("Skipping Phase 5 due to missing aggregated data.")
+        return
+    if gdf_districts is None:
+        logging.error("Skipping Phase 5 due to missing GeoJSON data.")
+        return
+
+    logging.info("--- Phase 5: Running Spatial Error Trend Analysis ---")
+
+    try:
+        # 1. Load the actual yields to calculate error
+        static_data_path = PROCESSED_DATA_DIR / 'StaticSiteData.csv'
+        df_static = pd.read_csv(static_data_path, dtype={'district_no': str})
+        df_actuals = df_static[['year', 'district_no', 'kreisYield']].rename(columns={'kreisYield': 'actual_yield'})
+
+        # 2. Merge actuals with aggregated forecast data
+        df_merged = pd.merge(df_agg_wofost, df_actuals, on=['year', 'district_no'])
+
+        # 3. Calculate the Error (Bias)
+        # (Forecast - Actual). Positive = Over-prediction, Negative = Under-prediction
+        df_merged['model_error_dt'] = df_merged['wofost_forecast_yield_fresh_dt'] - df_merged['actual_yield']
+
+        # 4. Define time periods
+        min_year = df_merged['year'].min()
+        max_year = df_merged['year'].max()
+
+        bins = [1980, 1990, 2000, 2010, max_year]
+        labels = ["1981-1990", "1991-2000", "2001-2010", f"2011-{max_year}"]
+
+        df_merged['time_period'] = pd.cut(df_merged['year'], bins=bins, labels=labels, right=True)
+
+        # 5. Aggregate ERROR by district AND time period
+        df_spatial_error = df_merged.groupby(['district_no', 'time_period'])['model_error_dt'].mean().reset_index()
+
+        # 6. Merge with geodataframe
+        gdf_trend = pd.merge(gdf_districts, df_spatial_error, on='district_no')
+
+        # 7. Create the plot with a diverging colormap
+
+        # --- IMPORTANT: Center the colormap ---
+        # Find the max absolute error to center the map at 0
+        vmax = abs(gdf_trend['model_error_dt']).max()
+        vmin = -vmax
+
+        fig, axes = plt.subplots(2, 2, figsize=(20, 18))
+        fig.suptitle('Mean Model Error (Forecast - Actual) by District and Decade', fontsize=20, y=0.95)
+
+        axes_flat = axes.flatten()
+
+        for i, period in enumerate(labels):
+            ax = axes_flat[i]
+            gdf_period = gdf_trend[gdf_trend['time_period'] == period]
+
+            if gdf_period.empty:
+                ax.set_title(f"{period}\n(No Data)")
+                ax.set_axis_off()
+                continue
+
+            gdf_period.plot(
+                column='model_error_dt',
+                ax=ax,
+                legend=False,
+                cmap='RdBu_r',  # Red-White-Blue diverging map
+                vmin=vmin,
+                vmax=vmax
+            )
+            ax.set_title(period, fontsize=16)
+            ax.set_axis_off()
+
+        # Add a single shared colorbar
+        sm = plt.cm.ScalarMappable(cmap='RdBu_r', norm=plt.Normalize(vmin=vmin, vmax=vmax))
+        sm._A = []
+        cbar_ax = fig.add_axes([0.25, 0.05, 0.5, 0.03])  # [left, bottom, width, height]
+        cbar = fig.colorbar(sm, cax=cbar_ax, orientation='horizontal')
+        cbar.set_label('Mean Error (dt/ha) | Blue = Under-predict, Red = Over-predict')
+
+        plt.tight_layout(rect=[0, 0.08, 1, 0.95])
+
+        plot_path = OUTPUT_DIR / "P5_map_spatial_error_trend.png"  # New name
+        plt.savefig(plot_path, dpi=300)
+        plt.close()
+        logging.info(f"Saved error map to {plot_path}")
+
+    except FileNotFoundError:
+        logging.warning(f"Could not find StaticSiteData.csv at {static_data_path}. Skipping Phase 5.")
+    except Exception as e:
+        logging.error(f"Failed to generate Phase 5 plot. Error: {e}", exc_info=True)
+
 def main():
     """
     Main function to run the validation dashboard.
@@ -358,7 +453,6 @@ def main():
     logging.info("--- Starting Validation Dashboard ---")
     genes_path = PROCESSED_DATA_DIR / 'GeneticGainFactors.json'
     initial_conditions_path = PROCESSED_DATA_DIR / 'InitialConditions.csv'
-    # This path needs to point to the raw ensemble output from the main pipeline
     wofost_output_path = config.WOFOST_CONFIG['FILE_PATHS'][
                              'OUTPUT_DIR'] / "forecast_ensemble_results_raw.csv"
     logging.info(f"Output will be saved to: {OUTPUT_DIR}")
@@ -367,7 +461,19 @@ def main():
     df_genes, df_ic = phase_1_input_sanity_checks(genes_path, initial_conditions_path)
     df_full_wofost, df_agg_wofost = phase_2_output_sanity_checks(wofost_output_path)
     phase_3_model_behavior_validation(df_genes, df_ic, df_agg_wofost)
-    phase_4_spatial_analysis(df_agg_wofost, df_ic)
+
+    # --- NEW: Load Geo-data once in main ---
+    gdf_districts = None
+    try:
+        gdf_districts = gpd.read_file(config.DISTRICTS_GEOJSON_PATH).rename(columns={'id': 'district_no'})
+        gdf_districts['district_no'] = gdf_districts['district_no'].astype(str).str.zfill(5)
+    except FileNotFoundError:
+        logging.error("FATAL: GeoJSON file for districts not found. Skipping all spatial analysis (Phase 4 & 5).")
+
+    # Pass gdf_districts to both functions
+    phase_4_spatial_analysis(df_agg_wofost, df_ic, gdf_districts)
+    phase_5_spatial_trend_analysis(df_agg_wofost, gdf_districts) # <-- NEW FUNCTION CALL
+
     logging.info("--- Validation Dashboard Complete ---")
 
 

@@ -268,17 +268,38 @@ def aggregate_and_save_extreme_weather_metrics(df_fcst_ensemble, output_path):
     if df_fcst_ensemble.empty:
         logging.warning("[ANALYSIS] Forecast ensemble dataframe is empty. Skipping extreme metrics.");
         return
-    aggs = {'consecutive_tmax_gt_30c': ['mean', 'std', lambda x: x.quantile(0.90)],
-            'consecutive_dry_days': ['mean', 'std', lambda x: x.quantile(0.90)],
-            'drought_stress_index': ['mean', 'std', lambda x: x.quantile(0.90)], 'simulation_failed': ['mean'],
-            'days_to_anthesis': ['mean', 'std'], 'max_lai_achieved': ['mean', 'std', lambda x: x.quantile(0.10)],
-            'cumulative_water_stress': ['mean', 'std', lambda x: x.quantile(0.90)]}
+
+    # --- FIX: Define named functions to prevent illegal '<lambda>' column names ---
+    def p90(x):
+        return x.quantile(0.90)
+
+    p90.__name__ = 'p90'
+
+    def p10(x):
+        return x.quantile(0.10)
+
+    p10.__name__ = 'p10'
+    # --- END FIX ---
+
+    # We are also removing the 'days_to_anthesis' phantom feature as discussed
+    aggs = {
+        'consecutive_tmax_gt_30c': ['mean', 'std', p90],
+        'consecutive_dry_days': ['mean', 'std', p90],
+        'drought_stress_index': ['mean', 'std', p90],
+        'simulation_failed': ['mean'],
+        'max_lai_achieved': ['mean', 'std', p10],
+        'cumulative_water_stress': ['mean', 'std', p90]
+    }
     df_extreme_metrics = df_fcst_ensemble.groupby(['year', 'district_no']).agg(aggs).reset_index()
+
+    # Flatten column names correctly
     df_extreme_metrics.columns = ['_'.join(col).strip() for col in df_extreme_metrics.columns.values]
     df_extreme_metrics.rename(columns={'year_': 'year', 'district_no_': 'district_no'}, inplace=True)
+
+    # Example of new, clean column names: 'consecutive_tmax_gt_30c_p90', 'max_lai_achieved_p10'
+
     df_extreme_metrics.to_csv(output_path, index=False)
     logging.info(f"[ANALYSIS] ✓ All risk features saved to {output_path}")
-
 
 if __name__ == "__main__":
     logging.info("=" * 70 + "\nStarting WOFOST Pipeline (FINAL CORRECTED VERSION)\n" + "=" * 70)
@@ -360,15 +381,33 @@ if __name__ == "__main__":
         for key, val in base_params.items():
             if key not in ['Metadata', '<<']:
                 crop_params.add_variable(key, val[0] if isinstance(val, list) and len(val) > 0 else val)
-
         factors_for_year = genetic_factors[str(year)]
         logging.info(f"Applying Genetic Gain Factors for {year}: {factors_for_year}")
 
-        crop_params['AMAXTB'] = [v * factors_for_year['AMAX_FACTOR'] if (i + 1) % 2 == 0 else v for i, v in
-                                 enumerate(crop_params['AMAXTB'])]
-        crop_params['EFFTB'] = [v * factors_for_year['EFF_FACTOR'] if (i + 1) % 2 == 0 else v for i, v in
-                                enumerate(crop_params['EFFTB'])]
-        crop_params['TSUM1'] *= factors_for_year['TSUM1_FACTOR']
+        # --- Apply factors to TABLE parameters (e.g., [day, value, day, value...]) ---
+        # This logic multiplies only the 'value' parts of the list.
+        crop_params['AMAXTB'] = [
+            v * factors_for_year.get('AMAX_FACTOR', 1.0) if (i + 1) % 2 == 0 else v
+            for i, v in enumerate(crop_params['AMAXTB'])
+        ]
+
+        crop_params['EFFTB'] = [
+            v * factors_for_year.get('EFF_FACTOR', 1.0) if (i + 1) % 2 == 0 else v
+            for i, v in enumerate(crop_params['EFFTB'])
+        ]
+
+        # --- Apply factors to SINGLE VALUE parameters ---
+        crop_params['TSUM1'] *= factors_for_year.get('TSUM1_FACTOR', 1.0)
+        crop_params['TSUM2'] *= factors_for_year.get('TSUM2_FACTOR', 1.0)
+
+        # Leaf conversion efficiency
+        crop_params['CVO'] *= factors_for_year.get('CVO_FACTOR', 1.0)
+
+        # Leaf lifespan
+        crop_params['SPAN'] *= factors_for_year.get('SPAN_FACTOR', 1.0)
+
+        # Relative death rate
+        crop_params['RDMCR'] *= factors_for_year.get('RDMCR_FACTOR', 1.0)
 
         df_static_year = df_static_all[df_static_all['year'] == year].copy()
         df_initial_conditions_year = df_initial_conditions[df_initial_conditions['year'] == year].copy()
