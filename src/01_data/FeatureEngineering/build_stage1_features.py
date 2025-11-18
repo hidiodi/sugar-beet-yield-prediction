@@ -1,6 +1,9 @@
 # File: src/01_data/FeatureEngineering/build_stage1_features.py
-# MODIFIED (v4.1): Removed constant, redundant, and duplicate columns
-#                  to resolve VIF(inf) issues identified in analysis.
+# REFACTORED (v5.2): Restoring Spring Forecasts + Teleconnections
+# Description:
+#   1. RESTORES ECMWF Spring Forecasts (Temp/Precip).
+#   2. KEEPS Summer Forecasts DELETED (Noise reduction).
+#   3. ADDS Teleconnections (NAO/ENSO) for Regime Awareness.
 
 import numpy as np
 import pandas as pd
@@ -16,399 +19,206 @@ sys.path.insert(0, str(project_root))
 from src import config
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
 CONFIG = config.FEATURE_ENGINEERING_CONFIG
 
 
-def create_hybrid_antecedent_and_forecast_features(
-        weather_dir: Path,
-        ecmwf_by_member_forecast_path: Path,
-        start_year: int,
-        end_year: int,
-        forecast_month: int = 3
-):
-    """
-    Constructs a robust, dataleak-proof feature set by combining:
-    1. Observed antecedent weather (AGERA5).
-    2. Distributional and probabilistic features from the full ECMWF ensemble,
-       including monthly, seasonal, and solar radiation metrics.
-    """
-    logging.info("--- Starting Hybrid Antecedent (Observed) + ENSEMBLE Forecast Feature Engineering ---")
-
-    # --- PART 1: Engineer Antecedent Features from AGERA5 (Observed History) ---
-    logging.info(f"Loading AGERA5 data from {start_year - 1} to {end_year} for antecedent features...")
+def process_antecedent_weather_only(weather_dir: Path, start_year: int, end_year: int, forecast_month: int = 3):
+    """Aggregates observed weather up to March 1st."""
+    logging.info("--- Processing Antecedent (Observed) Weather ---")
     all_weather_files = [weather_dir / f"historical_daily_weather_era5_{y}.csv" for y in
                          range(start_year - 1, end_year + 1)]
     df_daily = pd.concat([pd.read_csv(f) for f in all_weather_files if f.exists()], ignore_index=True)
+
     df_daily['district_no'] = df_daily['district_no'].astype(str).str.zfill(5)
     df_daily['date'] = pd.to_datetime(df_daily['date'])
     df_daily['year'] = df_daily['date'].dt.year
-    df_daily = df_daily.sort_values(by=['district_no', 'date'])
+
+    # GDD Calculation
     df_daily['gdd'] = ((df_daily['tmax'] + df_daily['tmin']) / 2 - 5).clip(lower=0)
-    df_normals_30yr = df_daily[df_daily['year'].between(1981, 2010)].copy()
-    daily_normals = df_normals_30yr.groupby(df_normals_30yr['date'].dt.dayofyear)['gdd'].mean().rename('gdd_30yr_avg')
+
+    # Normals (1981-2010)
+    df_normals = df_daily[df_daily['year'].between(1981, 2010)].copy()
+    daily_normals = df_normals.groupby(df_normals['date'].dt.dayofyear)['gdd'].mean().rename('gdd_30yr_avg')
     df_daily = pd.merge(df_daily, daily_normals, left_on=df_daily['date'].dt.dayofyear, right_index=True, how='left')
     df_daily['gdd_anomaly'] = df_daily['gdd'] - df_daily['gdd_30yr_avg']
-    df_daily['forecast_year'] = df_daily['date'].apply(lambda d: d.year + 1 if d.month >= 10 else d.year)
-    antecedent_window_df = df_daily[(df_daily['date'].dt.month <= forecast_month) | (df_daily['date'].dt.month >= 10)]
 
-    logging.info("Aggregating leak-proof antecedent features...")
-    antecedent_features = antecedent_window_df.groupby(['district_no', 'forecast_year']).agg(
+    # Harvest Year Logic
+    df_daily['harvest_year'] = df_daily['date'].apply(lambda d: d.year + 1 if d.month >= 10 else d.year)
+
+    # Filter: Strictly BEFORE forecast month
+    antecedent_mask = (
+            ((df_daily['date'].dt.month < forecast_month) & (df_daily['year'] == df_daily['harvest_year'])) |
+            ((df_daily['date'].dt.month >= 10) & (df_daily['year'] == df_daily['harvest_year'] - 1))
+    )
+    df_antecedent = df_daily[antecedent_mask].copy()
+
+    logging.info(f"Aggregating antecedent features...")
+    df_agg = df_antecedent.groupby(['district_no', 'harvest_year']).agg(
         antecedent_precip_sum=('precip', 'sum'),
         antecedent_frost_days=('tmin', lambda x: (x < 0).sum()),
-        antecedent_heavy_precip_days=('precip', lambda x: (x > 10).sum()),
         antecedent_gdd_sum_anomaly=('gdd_anomaly', 'sum')
-    ).reset_index().rename(columns={'forecast_year': 'year'})
-    logging.info(f"Generated {len(antecedent_features)} rows of antecedent features.")
+    ).reset_index().rename(columns={'harvest_year': 'year'})
 
-    # --- PART 2: Engineer Distributional Features from ECMWF Ensemble Forecast ---
-    logging.info(f"Loading ENSEMBLE forecast data from {ecmwf_by_member_forecast_path}...")
-    df_fcst_member = pd.read_csv(ecmwf_by_member_forecast_path)
-    df_fcst_member['district_no'] = df_fcst_member['district_no'].astype(str).str.zfill(5)
-
-    # Define aggregation functions with explicit names to avoid lambda conflicts
-    p10 = lambda x: x.quantile(0.10);
-    p10.__name__ = 'p10'
-    p90 = lambda x: x.quantile(0.90);
-    p90.__name__ = 'p90'
-    prob_hot = lambda x: (x > 1.5).mean();
-    prob_hot.__name__ = 'prob_hot'
-    prob_dry = lambda x: (x < -0.5).mean();
-    prob_dry.__name__ = 'prob_dry'
-
-    aggs = {
-        # --- Retain Existing Seasonal Features ---
-        'spring_temp_anomaly_forecast': ['mean', 'std', p10, p90],
-        'summer_temp_anomaly_forecast': ['mean', 'std', p10, p90, prob_hot],
-        'spring_precip_anomaly_forecast': ['mean', 'std'],
-        'summer_precip_anomaly_forecast': ['mean', 'std', p10, p90, prob_dry],
-
-        # --- NEW: Deconstruct Summer by Month ---
-        'temp_anomaly_forecast_6': [p10],  # June
-        'temp_anomaly_forecast_7': [p10],  # July
-        'temp_anomaly_forecast_8': [p10],  # August
-
-        # --- NEW: Add Solar Radiation Risk ---
-        'summer_solar_rad_anomaly_forecast': ['mean', 'std', p10, p90]
-    }
-
-    # Filter for columns that actually exist in the input file
-    valid_aggs = {k: v for k, v in aggs.items() if k in df_fcst_member.columns}
-    logging.info(f"Aggregating distributional features for: {list(valid_aggs.keys())}")
-
-    df_fcst_agg = df_fcst_member.groupby(['year', 'district_no']).agg(valid_aggs).reset_index()
-
-    # Flatten the multi-level column index
-    df_fcst_agg.columns = ['_'.join(col).strip() for col in df_fcst_agg.columns.values]
-
-    # Clean up column names
-    df_fcst_agg.rename(columns={
-        'year_': 'year',
-        'district_no_': 'district_no',
-        'summer_temp_anomaly_forecast_prob_hot': 'prob_hot_summer',
-        'summer_precip_anomaly_forecast_prob_dry': 'prob_dry_summer',
-        'temp_anomaly_forecast_6_p10': 'june_temp_anomaly_p10',
-        'temp_anomaly_forecast_7_p10': 'july_temp_anomaly_p10',
-        'temp_anomaly_forecast_8_p10': 'august_temp_anomaly_p10'
-    }, inplace=True)
-
-    # Engineer new risk/interaction features from the aggregated distributions
-    df_fcst_agg['forecast_uncertainty_summer_temp'] = df_fcst_agg['summer_temp_anomaly_forecast_std']
-    df_fcst_agg['forecast_hot_dry_risk_p90'] = df_fcst_agg['summer_temp_anomaly_forecast_p90'].clip(lower=0) * \
-                                               df_fcst_agg['summer_precip_anomaly_forecast_p10'].clip(upper=0) * -1
-
-    # --- PART 3: Combine and Finalize ---
-    logging.info("Merging observed antecedent features with ensemble forecast features...")
-    final_df = pd.merge(antecedent_features, df_fcst_agg, on=['year', 'district_no'], how='inner')
-    final_df = final_df[final_df['year'].between(start_year, end_year)]
-
-    logging.info(f"✓ Hybrid weather feature set with ENSEMBLE STATS created. Final shape: {final_df.shape}")
-    return final_df
+    return df_agg
 
 
-def load_and_process_economic_data(producer_price_file, input_price_file):
-    # This function is unchanged.
-    logging.info("Loading and processing granular economic data sources...")
+def load_and_process_economics(producer_file, input_file):
+    """Loads economic data with explicit type conversion."""
     try:
-        df_prod_raw = pd.read_csv(producer_price_file)
-        df_prod = df_prod_raw[df_prod_raw['ID'] == 'LWPR-132'].melt(
-            id_vars=['ID', 'Description'], var_name='year', value_name='producer_price_index'
-        )
-        df_prod['year'] = pd.to_numeric(df_prod['year'])
-        df_prod = df_prod[['year', 'producer_price_index']]
-        df_input_raw = pd.read_csv(input_price_file)
-        INPUT_COST_IDS = {
-            'LWBM-11': 'seed_price_index', 'LWBM-12': 'energy_price_index',
-            'LWBM-13': 'fertilizer_price_index', 'LWBM-14': 'plant_protection_price_index'
-        }
-        df_input = df_input_raw[df_input_raw['ID'].isin(INPUT_COST_IDS.keys())]
-        df_input_melted = df_input.melt(
-            id_vars=['ID', 'Description'], var_name='period', value_name='price_index'
-        )
-        df_input_melted['price_index'] = pd.to_numeric(df_input_melted['price_index'], errors='coerce')
-        df_input_melted['year'] = pd.to_numeric(df_input_melted['period'].str.split('/').str[1], errors='coerce')
-        df_input_melted.dropna(subset=['year'], inplace=True)
-        df_input_melted['year'] = df_input_melted['year'].astype(int)
-        df_annual_avg = df_input_melted.groupby(['year', 'ID'])['price_index'].mean().reset_index()
-        df_input_final = df_annual_avg.pivot(index='year', columns='ID', values='price_index').reset_index()
-        df_input_final.rename(columns=INPUT_COST_IDS, inplace=True)
-        df_economic = pd.merge(df_prod, df_input_final, on='year', how='outer')
-        logging.info("Granular economic datasets successfully merged.")
-        return df_economic
+        logging.info("Processing Economic Data...")
+        df_prod = pd.read_csv(producer_file)
+        df_prod = df_prod[df_prod['ID'] == 'LWPR-132'].copy()
+        df_prod = df_prod.melt(id_vars=['ID', 'Description'], var_name='year', value_name='producer_price_index')
+        df_prod['year'] = pd.to_numeric(df_prod['year'], errors='coerce')
+        df_prod['producer_price_index'] = pd.to_numeric(df_prod['producer_price_index'], errors='coerce')
+        df_prod.dropna(subset=['year', 'producer_price_index'], inplace=True)
+        df_prod['year'] = df_prod['year'].astype(int)
+
+        df_input = pd.read_csv(input_file)
+        IDS = {'LWBM-13': 'fertilizer_price_index', 'LWBM-11': 'seed_price_index'}
+        df_input = df_input[df_input['ID'].isin(IDS.keys())].copy()
+        df_input = df_input.melt(id_vars=['ID', 'Description'], var_name='period', value_name='val')
+        df_input['year'] = pd.to_numeric(df_input['period'].str.split('/').str[1], errors='coerce')
+        df_input['val'] = pd.to_numeric(df_input['val'], errors='coerce')
+        df_input.dropna(subset=['year', 'val'], inplace=True)
+        df_input['year'] = df_input['year'].astype(int)
+
+        df_input = df_input.groupby(['year', 'ID'])['val'].mean().unstack().reset_index()
+        df_input.rename(columns=IDS, inplace=True)
+
+        df_econ = pd.merge(df_prod[['year', 'producer_price_index']], df_input, on='year', how='outer')
+        return df_econ
     except Exception as e:
-        logging.error(f"Failed to load or process economic data files. Details: {e}", exc_info=True)
-        return None
+        logging.error(f"Economic data load failed: {e}")
+        return pd.DataFrame(columns=['year'])
 
 
 def main():
-    """Main function to build the definitive, augmented feature set."""
-    logging.info("--- Starting Definitive Hybrid Feature Engineering Pipeline (v4.1) ---")
+    logging.info("--- Starting Feature Engineering (Restoring Spring Forecasts) ---")
+    paths = CONFIG['FILE_PATHS']
+    paths['OUTPUT_DIR'].mkdir(exist_ok=True, parents=True)
 
-    file_paths = CONFIG['FILE_PATHS']
-    output_path = file_paths['OUTPUT_DIR']
-    output_file = file_paths['OUTPUT_FILE']
-    output_path.mkdir(exist_ok=True, parents=True)
+    # 1. Load Base Master (Contains Teleconnections & Raw Forecasts)
+    df = pd.read_csv(paths['MASTER_DATASET'])
+    df['district_no'] = df['district_no'].astype(str).str.zfill(5)
+    df['kreisYield'] = pd.to_numeric(df['yield'], errors='coerce')
+    df.dropna(subset=['kreisYield'], inplace=True)
 
-    walkforward_forecast_file = file_paths['WALKFORWARD_FORECAST_CSV']
-    if not walkforward_forecast_file.exists():
-        logging.error(f"FATAL: Required STAT-TREND file not found at {walkforward_forecast_file}. Cannot proceed.")
-        sys.exit(1)
+    # Keep Teleconnections if available (NAO/ENSO are in the Master usually)
+    # We explicitly select them to ensure they survive
+    tele_cols = ['nao_winter_avg', 'enso_mei_winter_avg', 'sca_winter_avg']
+    for col in tele_cols:
+        if col not in df.columns:
+            logging.warning(f"Teleconnection {col} missing from Master. Filling 0.")
+            df[col] = 0.0
 
-    wofost_ensemble_file = file_paths['WOFOST_ENSEMBLE_CSV']
-    if not wofost_ensemble_file.exists():
-        logging.error(f"FATAL: Required WOFOST file not found at {wofost_ensemble_file}. Cannot proceed.")
-        sys.exit(1)
+    # 2. RESTORE SPRING FORECASTS (The Signal)
+    # The master dataset already has the raw ECMWF means merged in previous iterations.
+    # We just need to make sure we KEEP them and maybe rename them for clarity.
+    # If they are not in Master, we load from the intermediate file.
 
-    logging.info("STAGE 1: Loading and Merging Base Data")
-    master_df = pd.read_csv(file_paths['MASTER_DATASET'])
-    master_df['district_no'] = master_df['district_no'].astype(str).str.zfill(5)
-
-    logging.info("Calculating national average yield lag feature...")
-    national_yield = master_df.groupby('year')['yield'].mean().reset_index()
-    national_yield.rename(columns={'yield': 'national_avg_yield'}, inplace=True)
-    national_yield['national_avg_yield_lag1'] = national_yield['national_avg_yield'].shift(1)
-    master_df = pd.merge(master_df, national_yield[['year', 'national_avg_yield_lag1']], on='year', how='left')
-
-    df_economic = load_and_process_economic_data(file_paths['PRODUCER_PRICE_CSV'], file_paths['INPUT_PRICE_CSV'])
-    if df_economic is None: sys.exit(1)
-    merged_df = pd.merge(master_df, df_economic, on='year', how='left')
-    merged_df['kreisYield'] = pd.to_numeric(merged_df['yield'], errors='coerce')
-    merged_df.dropna(subset=['kreisYield'], inplace=True)
-
-    logging.info("STAGE 2: Augmenting with All Additional Feature Sets")
-
-    df_weather_features = create_hybrid_antecedent_and_forecast_features(
-        weather_dir=file_paths['DAILY_WEATHER_DIR'],
-        ecmwf_by_member_forecast_path=file_paths['ECMWF_FORECAST_FEATURES_CSV'],
-        start_year=CONFIG['WEATHER_FEATURE_YEAR_START'],
-        end_year=CONFIG['WEATHER_FEATURE_YEAR_END']
-    )
-    df_weather_features['district_no'] = df_weather_features['district_no'].astype(str).str.zfill(5)
-
-    # Handle potential column collisions before merging
-    logging.info(f"DIAGNOSTIC: Columns in base data before weather merge: {merged_df.columns.tolist()}")
-    logging.info(f"DIAGNOSTIC: Columns in new weather data: {df_weather_features.columns.tolist()}")
-
-    cols_to_drop = [col for col in df_weather_features.columns if
-                    col in merged_df.columns and col not in ['year', 'district_no']]
-    if cols_to_drop:
-        logging.warning(f"Dropping existing stale columns from base data to prevent merge conflicts: {cols_to_drop}")
-        merged_df = merged_df.drop(columns=cols_to_drop)
-
-    merged_df = pd.merge(merged_df, df_weather_features, on=['district_no', 'year'], how='left')
-    logging.info("✓ Hybrid (antecedent + ENSEMBLE forecast) weather features merged.")
-
-    df_satellite = pd.read_csv(file_paths['SATELLITE_FEATURES_CSV'])
-    df_satellite['district_no'] = df_satellite['district_no'].astype(str).str.zfill(5)
-    merged_df = pd.merge(merged_df, df_satellite, on=['district_no', 'year'], how='left')
-
-    # --- FIX: Handle missing satellite data ---
-    logging.info("Handling missing satellite data for pre-2001 years...")
-    merged_df['has_satellite_data'] = merged_df['winter_cropland_ndvi_anomaly'].notna().astype(int)
-    # Impute with zero, the flag will allow the model to distinguish these cases
-    for col in ['winter_cropland_ndvi_anomaly', 'winter_cropland_LST_anomaly', 'winter_cropland_snow_cover_days']:
-        if col in merged_df.columns:
-            merged_df[col].fillna(0, inplace=True)
-    logging.info("✓ Missing satellite data handled by imputing with zero and adding 'has_satellite_data' flag.")
-
-    # --- 3. (FIX) Load STATISTICAL TREND features (from Script 2) ---
-    df_stat_trend = pd.read_csv(file_paths['WALKFORWARD_FORECAST_CSV'])
-    df_stat_trend['district_no'] = df_stat_trend['district_no'].astype(str).str.zfill(5)
-    df_stat_trend = df_stat_trend[['year', 'district_no', 'final_corrected_forecast']]
-    # Give it a new, correct name
-    df_stat_trend.rename(columns={'final_corrected_forecast': 'stat_trend_forecast'}, inplace=True)
-    merged_df = pd.merge(merged_df, df_stat_trend, on=['year', 'district_no'], how='left')
-
-    # --- 4. (NEW) Load WOFOST YIELD features (from Script 1) ---
-    df_wofost_yield_raw = pd.read_csv(file_paths['WOFOST_ENSEMBLE_CSV'])
-    df_wofost_yield_raw['district_no'] = df_wofost_yield_raw['district_no'].astype(str).str.zfill(5)
-
-    # Aggregate the mean yield from the raw ensemble file
-    df_wofost_yield_agg = df_wofost_yield_raw.groupby(['year', 'district_no']).agg(
-        wofost_forecast_yield_fresh_dt=('yield_water_limited', 'mean')
-    ).reset_index()
-
-    # Get DMC from the central config file
-    DMC_SUGARBEET = config.WOFOST_CONFIG['CONSTANTS']['DMC_SUGARBEET']
-
-    # Convert this mean value from kg/ha (dry) to dt/ha (fresh)
-    df_wofost_yield_agg['wofost_forecast_yield_fresh_dt'] = (df_wofost_yield_agg[
-                                                                 'wofost_forecast_yield_fresh_dt'] / DMC_SUGARBEET) / 100.0
-
-    # Now merge the correctly named and scaled feature
-    merged_df = pd.merge(merged_df, df_wofost_yield_agg, on=['year', 'district_no'], how='left')
-
-    logging.info("STAGE 3: Engineering the Complete Hybrid Feature Set")
-    gdf = gpd.read_file(file_paths['GEOJSON_DISTRICTS'])
-    gdf_states = gdf[['id', 'state']].rename(columns={'id': 'district_no'})
-    gdf_states['district_no'] = gdf_states['district_no'].astype(str).str.zfill(5)
-    merged_df = pd.merge(merged_df, gdf_states, on='district_no', how='left')
-    merged_df['state_encoded'], _ = pd.factorize(merged_df['state'])
-
-    merged_df.rename(columns={'latitude': 'lat', 'longitude': 'lon'}, inplace=True)
-
-    # --- FIX (v4.1): Removed redundant 'year_trend' creation ---
-
-    merged_df = merged_df.sort_values(by=['district_no', 'year'])
-    lagged_cols = {
-        'producer_price_index': 'producer_price_index_lag1', 'seed_price_index': 'seed_price_index_lag1',
-        'energy_price_index': 'energy_price_index_lag1', 'fertilizer_price_index': 'fertilizer_price_index_lag1',
-        'plant_protection_price_index': 'plant_protection_price_index_lag1'
-    }
-    for col, new_col in lagged_cols.items():
-        merged_df[new_col] = merged_df.groupby('district_no')[col].shift(1)
-    merged_df['profit_margin_proxy_lag1'] = merged_df['producer_price_index_lag1'] / (
-            merged_df['fertilizer_price_index_lag1'] + 1e-6)
-    merged_df['cost_of_inputs_lag1'] = merged_df['fertilizer_price_index_lag1'] + merged_df[
-        'plant_protection_price_index_lag1'] + merged_df['seed_price_index_lag1']
-
-    merged_df['wofost_forecast_x_profit_margin'] = merged_df['wofost_forecast_yield_fresh_dt'] * merged_df[
-        'profit_margin_proxy_lag1']
-    merged_df['has_wofost_data'] = merged_df['wofost_forecast_yield_fresh_dt'].notna().astype(int)
-
-    economic_features_to_detrend = list(lagged_cols.values())
-    for feature in economic_features_to_detrend:
-        trend = merged_df.groupby('district_no')[feature].transform(
-            lambda x: x.rolling(window=5, min_periods=1).mean().shift(1))
-        merged_df[f'{feature}_anomaly'] = merged_df[feature] - trend.ffill().bfill()
-
-    lower_bound = merged_df.groupby('district_no')['fertilizer_price_index_lag1_anomaly'].transform(
-        lambda s: s.expanding(min_periods=20).quantile(0.05)).ffill().bfill()
-    upper_bound = merged_df.groupby('district_no')['fertilizer_price_index_lag1_anomaly'].transform(
-        lambda s: s.expanding(min_periods=20).quantile(0.95)).ffill().bfill()
-    merged_df['fertilizer_price_index_lag1_anomaly_capped'] = merged_df['fertilizer_price_index_lag1_anomaly'].clip(
-        lower=lower_bound, upper=upper_bound)
-    merged_df['is_fertilizer_price_extreme'] = np.where(
-        (merged_df['fertilizer_price_index_lag1_anomaly'] < lower_bound) | (
-                merged_df['fertilizer_price_index_lag1_anomaly'] > upper_bound), 1, 0)
-
-    merged_df['gdd_x_fertilizer_price'] = merged_df['antecedent_gdd_sum_anomaly'] * merged_df[
-        'fertilizer_price_index_lag1_anomaly_capped']
-
-    # --- 5. (FIX) Load WOFOST RISK METRICS ---
-    logging.info("Loading pre-aggregated WOFOST risk metrics...")
-    wofost_metrics_file = file_paths['WOFOST_METRICS_CSV']
-    if not wofost_metrics_file.exists():
-        logging.warning(f"WOFOST risk metrics file not found at {wofost_metrics_file}. Skipping.")
+    # Check if forecast cols are in Master
+    if 'spring_temp_anomaly_forecast' not in df.columns:
+        logging.info("Loading ECMWF Forecasts from source...")
+        df_fcst = pd.read_csv(paths['ECMWF_FORECAST_FEATURES_CSV'])
+        df_fcst['district_no'] = df_fcst['district_no'].astype(str).str.zfill(5)
+        # Aggregation: We want MEAN for Spring (Signal)
+        # We deliberately IGNORE Summer (Noise)
+        df_fcst_agg = df_fcst.groupby(['year', 'district_no']).agg({
+            'spring_temp_anomaly_forecast': 'mean',
+            'spring_precip_anomaly_forecast': 'mean'
+        }).reset_index()
+        df = pd.merge(df, df_fcst_agg, on=['year', 'district_no'], how='left')
     else:
-        df_wofost_metrics = pd.read_csv(wofost_metrics_file)
+        logging.info("Using existing Spring Forecasts from Master.")
 
-        # --- PATCH: Sanitize illegal column names from old WOFOST output ---
-        df_wofost_metrics.columns = df_wofost_metrics.columns.str.replace(r'[<>]', '', regex=True)
-        logging.info("✓ Patched illegal characters from column names.")
-        # --- END PATCH ---
+    # 3. Load Statistical Trend & National Lag
+    df_trend = pd.read_csv(paths['WALKFORWARD_FORECAST_CSV'])
+    df_trend['district_no'] = df_trend['district_no'].astype(str).str.zfill(5)
+    df_trend.rename(columns={'final_corrected_forecast': 'stat_trend_forecast'}, inplace=True)
+    df = pd.merge(df, df_trend[['year', 'district_no', 'stat_trend_forecast']], on=['year', 'district_no'], how='left')
 
-        df_wofost_metrics['district_no'] = df_wofost_metrics['district_no'].astype(str).str.zfill(5)
+    nat_yield = df.groupby('year')['kreisYield'].mean().reset_index()
+    nat_yield['national_avg_yield_lag1'] = nat_yield['kreisYield'].shift(1)
+    df = pd.merge(df, nat_yield[['year', 'national_avg_yield_lag1']], on='year', how='left')
 
-        # Sanity check for duplicate columns before merge, excluding keys
-        cols_to_merge = [col for col in df_wofost_metrics.columns if
-                         col not in merged_df.columns or col in ['year', 'district_no']]
-        merged_df = pd.merge(merged_df, df_wofost_metrics[cols_to_merge], on=['year', 'district_no'], how='left')
-        logging.info(f"✓ WOFOST risk metrics merged. Added {len(cols_to_merge) - 2} new features.")
+    # 4. Load WOFOST Ensemble (Risk)
+    df_wofost = pd.read_csv(paths['WOFOST_ENSEMBLE_CSV'])
+    df_wofost['district_no'] = df_wofost['district_no'].astype(str).str.zfill(5)
+    DMC = config.WOFOST_CONFIG['CONSTANTS']['DMC_SUGARBEET']
+    df_wofost['yield_fresh'] = (df_wofost['yield_water_limited'] / DMC) / 100.0
 
-    # --- VIF FIX: Create leak-proof WOFOST yield anomaly ---
-    logging.info("Creating leak-proof WOFOST yield anomaly feature...")
-    # Sort to ensure correct rolling window application
-    merged_df = merged_df.sort_values(by=['district_no', 'year'])
+    df_risk = df_wofost.groupby(['year', 'district_no']).agg(
+        wofost_esp_mean=('yield_fresh', 'mean'),
+        wofost_esp_std=('yield_fresh', 'std'),
+        wofost_esp_p10=('yield_fresh', lambda x: x.quantile(0.10)),
+        wofost_esp_p90=('yield_fresh', lambda x: x.quantile(0.90)),
+        wofost_water_stress_mean=('cumulative_water_stress', 'mean')
+    ).reset_index()
+    df = pd.merge(df, df_risk, on=['year', 'district_no'], how='left')
 
-    # Calculate a 5-year TRAILING average. shift(1) ensures the current year is not included.
-    wofost_trend = merged_df.groupby('district_no')['wofost_forecast_yield_fresh_dt'] \
-        .transform(lambda x: x.shift(1).rolling(window=5, min_periods=3).mean())
+    # 5. Antecedent Weather (Conflicts Handled)
+    df_weather = process_antecedent_weather_only(
+        paths['DAILY_WEATHER_DIR'],
+        CONFIG['WEATHER_FEATURE_YEAR_START'],
+        CONFIG['WEATHER_FEATURE_YEAR_END']
+    )
+    # Drop stale columns to avoid _x/_y
+    cols_to_drop = [c for c in df_weather.columns if c in df.columns and c not in ['year', 'district_no']]
+    if cols_to_drop: df.drop(columns=cols_to_drop, inplace=True)
+    df = pd.merge(df, df_weather, on=['year', 'district_no'], how='left')
 
-    # The anomaly is the deviation from this backward-looking trend.
-    merged_df['wofost_yield_anomaly'] = merged_df['wofost_forecast_yield_fresh_dt'] - wofost_trend
+    # 6. Satellite (Winter Only)
+    df_sat = pd.read_csv(paths['SATELLITE_FEATURES_CSV'])
+    df_sat['district_no'] = df_sat['district_no'].astype(str).str.zfill(5)
+    sat_cols = ['winter_cropland_ndvi_anomaly', 'winter_cropland_snow_cover_days']
+    df_sat = df_sat[['year', 'district_no'] + [c for c in sat_cols if c in df_sat.columns]]
 
-    # Handle the initial years where a trend cannot be calculated by filling with zero
-    merged_df['wofost_yield_anomaly'].fillna(0, inplace=True)
-    logging.info("✓ 'wofost_yield_anomaly' created.")
+    cols_to_drop = [c for c in df_sat.columns if c in df.columns and c not in ['year', 'district_no']]
+    if cols_to_drop: df.drop(columns=cols_to_drop, inplace=True)
+    df = pd.merge(df, df_sat, on=['year', 'district_no'], how='left')
 
-    # --- UPDATED & NEW Interaction Terms ---
-    logging.info("Creating new and updated interaction features...")
-    # Update to use new explicit column name for mean forecast
-    merged_df['hot_dry_interaction'] = merged_df['summer_temp_anomaly_forecast_mean'] * (
-            merged_df['summer_precip_anomaly_forecast_mean'] * -1)
+    for c in sat_cols:
+        if c in df.columns: df[c] = df[c].fillna(0)
 
-    # NEW: Economic x Spring Weather Interaction
-    merged_df['profit_margin_proxy_lag1_x_spring_temp_anomaly_mean'] = merged_df['profit_margin_proxy_lag1'] * \
-                                                                       merged_df['spring_temp_anomaly_forecast_mean']
+    # 7. Economics
+    df_econ = load_and_process_economics(paths['PRODUCER_PRICE_CSV'], paths['INPUT_PRICE_CSV'])
+    if not df_econ.empty:
+        cols_to_drop = [c for c in df_econ.columns if c in df.columns and c != 'year']
+        if cols_to_drop: df.drop(columns=cols_to_drop, inplace=True)
+        df = pd.merge(df, df_econ, on='year', how='left')
 
-    # NEW: Antecedent x Spring Weather Interaction
-    merged_df['antecedent_precip_sum_x_spring_temp_anomaly_mean'] = merged_df['antecedent_precip_sum'] * \
-                                                                    merged_df['spring_temp_anomaly_forecast_mean']
+        for c in ['producer_price_index', 'fertilizer_price_index']:
+            if c in df.columns:
+                df[f'{c}_lag1'] = df.groupby('district_no')[c].shift(1).ffill().bfill()
 
-    merged_df['summer_temp_forecast_range'] = merged_df['summer_temp_anomaly_forecast_p90'] - merged_df[
-        'summer_temp_anomaly_forecast_p10']
-    merged_df['summer_precip_forecast_range'] = merged_df['summer_precip_anomaly_forecast_p90'] - merged_df[
-        'summer_precip_anomaly_forecast_p10']
+    # 8. Feature Engineering (Interactions)
+    logging.info("Creating Interaction Terms...")
 
-    print("Created new features: 'summer_temp_forecast_range', 'summer_precip_forecast_range'")
+    df['trend_vs_phys_gap'] = df['wofost_esp_mean'] - df['stat_trend_forecast']
+    df['wofost_skew'] = (df['wofost_esp_mean'] - df['wofost_esp_p10']) / (
+                df['wofost_esp_p90'] - df['wofost_esp_p10'] + 1e-6)
 
-    merged_df['enso_x_spring_temp_forecast'] = merged_df['enso_mei_winter_avg'] * merged_df[
-        'spring_temp_anomaly_forecast_mean']
-    merged_df['sca_x_spring_temp_forecast'] = merged_df['sca_winter_avg'] * merged_df[
-        'spring_temp_anomaly_forecast_mean']
+    # INTERACTION: Spring Forecast x Antecedent State
+    # "Warm Spring" acts differently if "Soil is Dry" vs "Soil is Wet"
+    if 'spring_temp_anomaly_forecast' in df.columns and 'antecedent_precip_sum' in df.columns:
+        df['spring_temp_x_antecedent_rain'] = df['spring_temp_anomaly_forecast'] * df['antecedent_precip_sum']
 
-    print("Created new features: 'enso_x_spring_temp_forecast', 'sca_x_spring_temp_forecast'")
+    # INTERACTION: Teleconnection x Forecast
+    # "NAO+" usually implies Wet/Warm Winter/Spring in Germany.
+    # If NAO is High AND Spring Forecast is Warm -> Stronger confidence.
+    if 'nao_winter_avg' in df.columns and 'spring_temp_anomaly_forecast' in df.columns:
+        df['nao_x_spring_temp'] = df['nao_winter_avg'] * df['spring_temp_anomaly_forecast']
 
-    # --- FIX (v4.1): Drop constant and redundant columns to fix VIF(inf) ---
-    logging.info("Dropping constant and redundant columns to prevent VIF issues...")
+    # Cleanup
+    df.dropna(subset=['stat_trend_forecast', 'wofost_esp_mean'], inplace=True)
+    weather_cols = ['antecedent_precip_sum', 'antecedent_gdd_sum_anomaly']
+    for c in weather_cols:
+        if c in df.columns: df[c] = df[c].fillna(0)
 
-    # These columns were identified by VIF analysis as redundant or constant
-    COLUMNS_TO_DROP = [
-        # --- Useless / Constant / Phantom Columns ---
-        'crs_anomaly',
-        'has_wofost_data',  # Will be re-added later, this is a stale version
-        'simulation_failed_mean',
-        'days_to_anthesis_std',
-        'days_to_anthesis_mean',
-
-        # --- Redundant Economic Columns (German names) ---
-        'zuckerrben', 'dngemittel', 'energie_und_schmierstoffe',
-        'pflanzenschutzmittel', 'saat_und_pflanzgut',
-
-        # --- Redundant/Stale Weather Columns (single values replaced by ensemble stats) ---
-        'antecedent_frost_days_anomaly', 'antecedent_heavy_precip_days_anomaly',
-        'spring_temp_anomaly_forecast', 'spring_precip_anomaly_forecast',
-        'summer_temp_anomaly_forecast', 'summer_precip_anomaly_forecast',
-        # NOTE: We are deliberately KEEPING all other features previously dropped for VIF
-
-        # --- DATA LEAKAGE FIX (ESSENTIAL) ---
-        'producer_price_index', 'seed_price_index', 'energy_price_index',
-        'fertilizer_price_index', 'plant_protection_price_index',
-    ]
-
-    # Drop only columns that actually exist in the dataframe
-    existing_cols_to_drop = [col for col in COLUMNS_TO_DROP if col in merged_df.columns]
-    merged_df = merged_df.drop(columns=existing_cols_to_drop)
-    logging.info(f"Dropped {len(existing_cols_to_drop)} columns.")
-
-
-    output_file = file_paths['OUTPUT_FILE']
-    merged_df.to_csv(output_file, index=False, float_format='%.6f')
-    logging.info(f"Stage 1 dataset with ENSEMBLE features created and saved to '{output_file}'")
-    logging.info(f"Final columns now include monthly temp risk, solar radiation, national trend, and new interactions.")
-    logging.info(f"Final dataset shape: {merged_df.shape}")
-
+    output_file = paths['OUTPUT_FILE']
+    df.to_csv(output_file, index=False)
+    logging.info(f"✓ Feature Engineering Complete. Saved to {output_file}")
 
 if __name__ == '__main__':
     main()
