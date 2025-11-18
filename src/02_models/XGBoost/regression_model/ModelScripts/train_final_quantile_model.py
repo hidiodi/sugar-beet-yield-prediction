@@ -1,6 +1,9 @@
 # File: src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py
-# Description: Trains a RESIDUAL model. Predicts the deviation from the statistical trend.
-# VERSION: 4.0 (Stat-Trend Residual Model)
+# REFACTORED (v5.0): "The Risk & Cone Model" Training
+# Description:
+#   Trains the residual model to predict deviations from the 5-year rolling trend.
+#   Uses strict regularization to prevent overfitting to weather noise.
+#   Focuses on "Gap" features (Physical vs Statistical) and Risk (std/p10).
 
 import pandas as pd
 from xgboost import XGBRegressor
@@ -21,93 +24,125 @@ TRAIN_CONFIG = config.XGBOOST_TRAINING_CONFIG
 
 def train_and_save_models(train_config):
     """
-    Loads data, trains three separate quantile models on the RESIDUAL of the
-    statistical trend forecast, and saves the final model artifacts.
+    Trains 3 quantile models (Lower, Median, Upper) on the Residuals.
     """
-    logging.info("--- Starting STAT-TREND RESIDUAL Quantile Model Training ---")
+    logging.info("--- Starting ROBUST Quantile Model Training (Risk-Based) ---")
 
-    # --- 1. Load and Prepare Data ---
+    # 1. Load Data
     data_path = train_config['DATA_PATH']
     logging.info(f"Loading data from {data_path}...")
-    try:
-        df = pd.read_csv(data_path)
-    except FileNotFoundError:
-        logging.error(f"FATAL: Input data not found at {data_path}. Aborting.")
+    if not data_path.exists():
+        logging.error(f"FATAL: Data not found at {data_path}")
         sys.exit(1)
 
-    # --- LOGIC CHANGE: Define the target as the residual from the 5-year rolling average ---
-    baseline_feature = 'yield_trend'  # This will be our new baseline feature name
-    target_col = 'trend_residual'
-    logging.info(f"Calculating baseline '{baseline_feature}' as 5-year rolling average of kreisYield.")
+    df = pd.read_csv(data_path)
 
-    # Sort to ensure correct rolling window application
+    # 2. Define Target: The Residual from a simple Rolling Trend
+    # We predict: Actual Yield - 5yr Rolling Avg
+    # The model explains *why* this year deviates from the recent norm.
+    baseline_feature = 'yield_rolling_trend'
+    target_col = 'trend_residual'
+
     df.sort_values(by=['district_no', 'year'], inplace=True)
 
-    # Calculate the 5-year TRAILING average. shift(1) is crucial to prevent data leakage.
+    # Calculate 5-year trailing average (shift 1 to avoid leakage)
     df[baseline_feature] = df.groupby('district_no')['kreisYield'].transform(
         lambda x: x.rolling(window=5, min_periods=3).mean().shift(1)
     )
 
-    logging.info(f"Calculating target variable '{target_col}' as (kreisYield - {baseline_feature}).")
     df[target_col] = df['kreisYield'] - df[baseline_feature]
 
-    # Drop rows where the baseline or the target can't be calculated (e.g., early years)
-    df.dropna(subset=[baseline_feature, target_col], inplace=True)
+    # Drop rows where we can't calculate the target or the anchor
+    df.dropna(subset=[baseline_feature, target_col, 'stat_trend_forecast'], inplace=True)
 
-    # --- LOGIC CHANGE: Define the feature set for the residual model ---
-    # Start with the master list of clean features from the config.
-    base_feature_cols = train_config['FEATURE_COLS']
+    # 3. Define Features (The "Knowns" in March)
+    # We interpret 'FEATURE_COLS' from config as the definitive list.
+    # But we hardcode the critical ones here to ensure they are included.
 
-    # CRITICAL: DO NOT use the baseline as a feature to predict its own residual.
-    # This would be a perfect data leak.
-    if baseline_feature in base_feature_cols:
-        residual_feature_cols = [col for col in base_feature_cols if col != baseline_feature]
-        logging.info(f"Removed '{baseline_feature}' from feature list to prevent data leakage.")
-    else:
-        residual_feature_cols = base_feature_cols
+    # CRITICAL: 'stat_trend_forecast' is NOT a leak here. It is a pre-calculated baseline
+    # available in March. It is the "Anchor".
 
-    # Final validation of features
-    missing_features = set(residual_feature_cols) - set(df.columns)
-    if missing_features:
-        logging.error(f"FATAL: The following required features are missing from the dataset: {missing_features}")
-        sys.exit(1)
+    robust_feature_cols = [
+        # The Anchors
+        'stat_trend_forecast',  # The complex statistical expectation
+        'national_avg_yield_lag1',  # Macro trend
 
-    X_train = df[residual_feature_cols]
+        # The Physics (The Cone of Uncertainty)
+        'trend_vs_phys_gap',  # SIGNAL: WOFOST Mean - Stat Trend
+        'wofost_esp_std',  # RISK: How volatile is the biology?
+        'wofost_esp_p10',  # DOWNSIDE: What's the worst case?
+        'wofost_skew',  # ASYMMETRY: Is upside or downside more likely?
+
+        # The Antecedent State (Observed)
+        'antecedent_precip_sum',  # Soil recharge
+        'antecedent_gdd_sum_anomaly',  # Early heat
+        'winter_cropland_ndvi_anomaly',  # Crop state entering spring
+
+        # The Economics (Incentives)
+        'fertilizer_price_index_lag1',
+        'producer_price_index_lag1',
+
+        # Static
+        'avg_clay_0_30cm',
+        'avg_sand_0_30cm',
+        'avg_elevation'
+    ]
+
+    # Intersect with available columns
+    valid_features = [c for c in robust_feature_cols if c in df.columns]
+
+    missing = set(robust_feature_cols) - set(valid_features)
+    if missing:
+        logging.warning(f"The following robust features are missing from input: {missing}")
+
+    X_train = df[valid_features]
     y_train = df[target_col]
-    logging.info(f"Data prepared. Training on {len(X_train)} samples with {len(residual_feature_cols)} features.")
 
-    # --- 2. Load Hyperparameters from Config (Unchanged) ---
-    params_lower = train_config['BEST_PARAMS_LOWER']
-    params_median = train_config['BEST_PARAMS_MEDIAN']
-    params_upper = train_config['BEST_PARAMS_UPPER']
-    quantiles = train_config['QUANTILES']
+    logging.info(f"Training on {len(X_train)} samples with {len(valid_features)} features.")
+    logging.info(f"Features: {valid_features}")
 
-    model_configs = {
-        'lower': {'alpha': quantiles['lower'], 'params': params_lower, 'path': train_config['LOWER_MODEL_PATH']},
-        'median': {'alpha': quantiles['median'], 'params': params_median, 'path': train_config['MEDIAN_MODEL_PATH']},
-        'upper': {'alpha': quantiles['upper'], 'params': params_upper, 'path': train_config['UPPER_MODEL_PATH']}
+    # 4. Model Hyperparameters (Regularized)
+    # We use shallower trees and higher gamma to force the model to find
+    # universal risks rather than memorizing specific year weather patterns.
+
+    xgb_params = {
+        'n_estimators': 800,
+        'max_depth': 4,  # Shallow trees = Less overfitting
+        'learning_rate': 0.02,  # Slow learning
+        'subsample': 0.75,
+        'colsample_bytree': 0.8,
+        'min_child_weight': 15,  # Needs many samples to make a split decision
+        'gamma': 2.0,  # High regularization threshold
+        'n_jobs': -1,
+        'random_state': 42
     }
 
-    # --- 3. Train and Save Each Model (Unchanged) ---
+    quantiles = train_config['QUANTILES']
+    model_configs = {
+        'lower': {'alpha': quantiles['lower'], 'path': train_config['LOWER_MODEL_PATH']},
+        'median': {'alpha': quantiles['median'], 'path': train_config['MEDIAN_MODEL_PATH']},
+        'upper': {'alpha': quantiles['upper'], 'path': train_config['UPPER_MODEL_PATH']}
+    }
+
+    # 5. Train and Save
     for name, cfg in model_configs.items():
-        logging.info(f"Training {name.upper()} model on target '{target_col}' (alpha={cfg['alpha']})...")
+        logging.info(f"Training {name.upper()} model (alpha={cfg['alpha']})...")
 
         model = XGBRegressor(
             objective='reg:quantileerror',
             quantile_alpha=cfg['alpha'],
-            **cfg['params']
+            **xgb_params
         )
 
         model.fit(X_train, y_train)
-        logging.info(f"Training for {name.upper()} model complete.")
 
-        # Save the trained model
+        # Save
         output_path = cfg['path']
         output_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(model, output_path)
-        logging.info(f"✓ {name.upper()} model saved to {output_path}")
+        logging.info(f"✓ {name.upper()} model saved.")
 
-    logging.info("--- All RESIDUAL models have been trained and saved successfully. ---")
+    logging.info("--- Training Complete. Models Ready. ---")
 
 
 if __name__ == "__main__":

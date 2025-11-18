@@ -26,11 +26,12 @@ SCRIPTS_TO_RUN = [
     #"src/02_models/Wofost7.1/run_wofost_pipeline.py",
     #"src/02_models/Wofost7.1/create_trendModel.py",
     "src/01_data/FeatureEngineering/build_stage1_features.py",
-    #"src/03_analysis/basic_analysis/analyze_stage1_features.py",
+    "src/03_analysis/basic_analysis/analyze_stage1_features.py",
     "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
     "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
     "src/02_models/XGBoost/regression_model/ModelScripts/train_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
     "src/02_models/XGBoost/regression_model/Testing/backtest_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
+    "src/02_models/experimental_models/backtest_adaptive_cqr_model.py",
     #"src/02_models/NGboost/train_final_ngboost_model.py",
     #"src/02_models/NGboost/backtest_final_ngboost_model.py",
     #"src/02_models/FinalEnsemble/backtest_final_ensemble.py",
@@ -240,67 +241,41 @@ XGBOOST_TRAINING_CONFIG = {
     'DATA_PATH': DATA_DIR / '05_model_input/stage1_preseason_features.csv',
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models',
     'FEATURE_COLS': [
-        # --- CORE DRIVERS (TREND & PHYSICS) ---
-        'stat_trend_forecast',  # Champion leak-proof statistical trend
-        'national_avg_yield_lag1',  # Macro-level trend proxy
-        'wofost_yield_anomaly',  # Weather-driven deviation from the WOFOST trend
+        # Anchors
+        'stat_trend_forecast',
+        'national_avg_yield_lag1',
 
-        # --- WOFOST-DERIVED PHYSICAL RISK METRICS ---
-        'max_lai_achieved_mean',  # Mean expected canopy size
-        'max_lai_achieved_std',  # Uncertainty in canopy development
-        'cumulative_water_stress_std',  # CONSOLIDATED: Primary metric for season-long drought risk
-        'consecutive_tmax_gt_30c_std',  # CONSOLIDATED: Primary metric for heatwave risk
+        # The Biophysical Signal
+        'trend_vs_phys_gap',
+        'wofost_esp_std',
+        'wofost_esp_p10',
+        'wofost_skew',
+        'wofost_water_stress_mean',
 
-        # --- ANTECEDENT CONDITIONS (OBSERVED BY MARCH) ---
-        'antecedent_precip_sum',
-        'antecedent_frost_days',
-        'antecedent_heavy_precip_days',
-        'antecedent_gdd_sum_anomaly',
+        # The Spring Forecast Signal (RESTORED)
+        'spring_temp_anomaly_forecast',
+        'spring_precip_anomaly_forecast',
 
-        # --- SPRING FORECAST (CRITICAL EARLY GROWTH) ---
-        'spring_temp_anomaly_forecast_mean',
-        'spring_temp_anomaly_forecast_std',
-        'spring_temp_anomaly_forecast_p10',
-        'spring_temp_anomaly_forecast_p90',
-        'spring_precip_anomaly_forecast_mean',
-        'spring_precip_anomaly_forecast_std',
-
-        # --- SUMMER SOLAR RADIATION FORECAST ---
-        'summer_solar_rad_anomaly_forecast_mean',
-        'summer_solar_rad_anomaly_forecast_std',
-        'summer_solar_rad_anomaly_forecast_p10',
-        'summer_solar_rad_anomaly_forecast_p90',
-
-        # --- STATIC SITE CHARACTERISTICS (SIMPLIFIED) ---
-        'lat',
-        'lon',
-        'avg_clay_0_30cm',
-        'avg_som_0_30cm',
-
-        # --- SATELLITE-DERIVED WINTER CONDITIONS ---
-        'winter_cropland_ndvi_anomaly',
-        'winter_cropland_LST_anomaly',
-        'winter_cropland_snow_cover_days',
-        'has_satellite_data',
-
-        # --- TELECONNECTION INDICES ---
+        # Teleconnections (Regime Context)
         'nao_winter_avg',
-        'sca_winter_avg',
-        'enso_mei_winter_avg',
+        'nao_x_spring_temp',  # Interaction Term
 
-        # --- ECONOMIC SHOCK FEATURES (ANOMALIES ONLY) ---
-        'producer_price_index_lag1_anomaly',
-        'seed_price_index_lag1_anomaly',
-        'energy_price_index_lag1_anomaly',
-        'plant_protection_price_index_lag1_anomaly',
-        'fertilizer_price_index_lag1_anomaly_capped',
-        'is_fertilizer_price_extreme',
+        # Antecedent Conditions
+        'antecedent_precip_sum',
+        'antecedent_gdd_sum_anomaly',
+        'spring_temp_x_antecedent_rain',  # Interaction Term
 
-        # --- ROBUST INTERACTION TERMS ---
-        'gdd_x_fertilizer_price',
-        'antecedent_precip_sum_x_spring_temp_anomaly_mean',
-        'enso_x_spring_temp_forecast',
-        'sca_x_spring_temp_forecast',
+        'winter_cropland_ndvi_anomaly',
+        'winter_cropland_snow_cover_days',
+
+        # Economics
+        'fertilizer_price_index_lag1',
+        'producer_price_index_lag1',
+
+        # Geography
+        'avg_clay_0_30cm',
+        'avg_sand_0_30cm',
+        'avg_elevation'
     ],
     'BEST_PARAMS_LOWER': {
         'n_estimators': 1397,

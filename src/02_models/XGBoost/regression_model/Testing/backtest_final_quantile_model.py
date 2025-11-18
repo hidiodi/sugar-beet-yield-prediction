@@ -1,6 +1,6 @@
-# File: src/models/backtest_final_quantile_model.py
-# Description: Backtests the STAT-TREND RESIDUAL model.
-# VERSION: 4.0 (Stat-Trend Residual Backtest)
+# File: src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py
+# Description: Backtests the ROBUST Risk-Based Residual Model.
+# VERSION: 5.0 (Risk-Cone Backtest)
 
 import pandas as pd
 import geopandas as gpd
@@ -31,80 +31,81 @@ sns.set_theme(style="whitegrid")
 XGB_CONFIG = config.XGBOOST_TRAINING_CONFIG
 BACKTEST_CONFIG = config.BACKTESTING_CONFIG
 
-def run_backtest_residual_model(df: pd.DataFrame, models: dict, full_feature_list: list) -> pd.DataFrame:
-    """
-    Runs a time-series backtest for a RESIDUAL model using a 5-YEAR ROLLING AVERAGE baseline.
-    """
-    # --- CHANGE: Update the title to reflect the new baseline ---
-    print(
-        f"\n--- Starting ROLLING AVERAGE RESIDUAL Model Backtest from {BACKTEST_CONFIG['BACKTEST_START_YEAR']} to {BACKTEST_CONFIG['BACKTEST_END_YEAR']} ---")
-    all_predictions = []
 
-    # --- CHANGE: Define the new baseline and the features to exclude from training ---
-    baseline_feature = 'yield_trend'  # The name of our rolling average baseline
+def run_backtest_residual_model(df: pd.DataFrame, models: dict, feature_cols: list) -> pd.DataFrame:
+    """
+    Runs a time-series backtest.
+    Strategy:
+      1. Baseline = 5-Year Rolling Average (Shifted 1 year).
+      2. Model Predicts = Residual (Actual - Baseline).
+      3. Final Prediction = Baseline + Predicted Residual.
+    """
+    print(
+        f"\n--- Starting Risk-Based Backtest from {BACKTEST_CONFIG['BACKTEST_START_YEAR']} to {BACKTEST_CONFIG['BACKTEST_END_YEAR']} ---")
+
+    # --- 1. GLOBAL PRE-PROCESSING (Safe due to shift=1) ---
+    # We calculate the baseline anchor (Rolling Average) for the whole dataset first.
+    # Since it is shifted by 1, the value for Year X only depends on X-1, X-2...
+    # This prevents leakage without needing complex loop logic.
+
+    baseline_col = 'yield_rolling_trend'
     target_col = 'trend_residual'
 
-    # Exclude the old baseline AND the new one (which is the target) from predictors to prevent leakage.
-    features_to_exclude = ['stat_trend_forecast', baseline_feature]
-    actual_training_features = [col for col in full_feature_list if col in df.columns and col not in features_to_exclude]
-    print(f" -> Training with {len(actual_training_features)} features.")
+    df.sort_values(by=['district_no', 'year'], inplace=True)
 
+    # 5-Year Rolling Average (Lagged)
+    df[baseline_col] = df.groupby('district_no')['kreisYield'].transform(
+        lambda x: x.rolling(window=5, min_periods=3).mean().shift(1)
+    )
+
+    # The Target the model learns to predict
+    df[target_col] = df['kreisYield'] - df[baseline_col]
+
+    # Drop strictly invalid rows for training (where we don't have a history yet)
+    # But keep them in 'df' generally, filter later
+    valid_mask = df[baseline_col].notna() & df[target_col].notna() & df['stat_trend_forecast'].notna()
+
+    print(f" -> Backtesting with {len(feature_cols)} features.")
+    print(f" -> Features: {feature_cols}")
+
+    all_predictions = []
 
     for year_to_predict in tqdm(range(BACKTEST_CONFIG['BACKTEST_START_YEAR'], BACKTEST_CONFIG['BACKTEST_END_YEAR'] + 1),
                                 desc="Backtesting Years"):
-        train_df_full = df[df['year'] < year_to_predict].copy()
-        test_df = df[df['year'] == year_to_predict].copy()
 
-        if test_df.empty or len(train_df_full) < 100:
+        # TRAIN: All valid data strictly BEFORE the target year
+        train_df = df[(df['year'] < year_to_predict) & valid_mask].copy()
+
+        # TEST: The target year (Must have baseline available to make a prediction)
+        test_df = df[(df['year'] == year_to_predict) & df[baseline_col].notna()].copy()
+
+        if test_df.empty or len(train_df) < 100:
             continue
 
-        # --- DATA PREPARATION WITHIN THE LOOP (NEW LOGIC) ---
-        # 1. Define the baseline and target residual for the training set
-        # The .shift(1) is crucial to prevent the model from seeing the current year's yield
-        train_df_full[baseline_feature] = train_df_full.groupby('district_no')['kreisYield'].transform(
-            lambda x: x.rolling(window=5, min_periods=3).mean().shift(1)
-        )
-        train_df_full[target_col] = train_df_full['kreisYield'] - train_df_full[baseline_feature]
+        # Prepare Features
+        X_train = train_df[feature_cols]
+        y_train = train_df[target_col]
+        X_test = test_df[feature_cols]
 
-        # 2. Drop rows where the baseline or target can't be calculated (early years)
-        train_df_full.dropna(subset=[baseline_feature, target_col], inplace=True)
+        # Sanity Check: Ensure 'stat_trend_forecast' is in features if expected
+        if 'stat_trend_forecast' not in X_train.columns:
+            raise ValueError(
+                "CRITICAL: 'stat_trend_forecast' is missing from backtest features. It is required as an anchor.")
 
-        # 3. Correctly calculate the baseline for the test set using only historical data
-        # To do this, we combine historical data with the test data, calculate the rolling
-        # average over the whole series, and then merge the result back to the test set.
-        temp_df_for_baseline = pd.concat([
-            df[df['year'] < year_to_predict],
-            test_df
-        ]).sort_values(by=['district_no', 'year'])
-
-        temp_df_for_baseline[baseline_feature] = temp_df_for_baseline.groupby('district_no')['kreisYield'].transform(
-            lambda x: x.rolling(window=5, min_periods=3).mean().shift(1)
-        )
-
-        # Merge the correctly calculated baseline onto the test_df
-        test_df = pd.merge(test_df, temp_df_for_baseline[['district_no', 'year', baseline_feature]], on=['district_no', 'year'], how='left')
-        test_df.dropna(subset=[baseline_feature], inplace=True)
-
-
-        if train_df_full.empty or test_df.empty:
-            continue
-
-        # 3. Prepare data splits (this part is the same)
-        X_train = train_df_full[actual_training_features]
-        y_train = train_df_full[target_col]
-        X_test = test_df[actual_training_features]
-
-        # 4. Fit models on the residual and predict the residual for the test year (this part is the same)
+        # Retrain Models on Expanding Window
+        # We use clone() to reset the model weights every year
         fitted_models = {name: clone(model).fit(X_train, y_train) for name, model in models.items()}
-        predicted_residuals = {name: model.predict(X_test) for name, model in fitted_models.items()}
 
-        # --- RECONSTRUCT FINAL PREDICTION (this part is the same) ---
-        fold_results = test_df[['district_no', 'year', 'kreisYield', 'name', baseline_feature]].copy()
+        # Predict Residuals
+        pred_residuals = {name: model.predict(X_test) for name, model in fitted_models.items()}
 
-        # Final Prediction = Baseline Forecast + Predicted Residual
-        fold_results['predicted_yield_median'] = fold_results[baseline_feature] + predicted_residuals['median']
-        fold_results['predicted_yield_lower'] = fold_results[baseline_feature] + predicted_residuals['lower']
-        fold_results['predicted_yield_upper'] = fold_results[baseline_feature] + predicted_residuals['upper']
+        # Reconstruct Final Yield Prediction
+        # Prediction = Rolling_Trend (Baseline) + Predicted_Residual
+        fold_results = test_df[
+            ['district_no', 'year', 'kreisYield', 'name', baseline_col, 'stat_trend_forecast']].copy()
+
+        for name in ['lower', 'median', 'upper']:
+            fold_results[f'predicted_yield_{name}'] = fold_results[baseline_col] + pred_residuals[name]
 
         all_predictions.append(fold_results)
 
@@ -114,8 +115,14 @@ def run_backtest_residual_model(df: pd.DataFrame, models: dict, full_feature_lis
     results_df = pd.concat(all_predictions, ignore_index=True)
     results_df['error'] = results_df['predicted_yield_median'] - results_df['kreisYield']
     results_df['abs_error'] = results_df['error'].abs()
+
+    # Clip negative predictions to 0 (Physical impossibility)
+    for col in ['predicted_yield_lower', 'predicted_yield_median', 'predicted_yield_upper']:
+        results_df[col] = results_df[col].clip(lower=0)
+
     print("\nBacktest complete.")
     return results_df
+
 
 def analyze_interval_performance(results_df: pd.DataFrame):
     print(f"\n--- Analyzing Prediction Interval Performance (Target: {BACKTEST_CONFIG['NOMINAL_COVERAGE']:.0%}) ---")
@@ -145,21 +152,34 @@ def plot_national_average_timeline(backtest_results: pd.DataFrame, report_dir: s
     print("-> Generating National Average Prediction Timeline...")
     yearly_avg = backtest_results.groupby('year').agg(
         avg_actual_yield=('kreisYield', 'mean'), avg_pred_median=('predicted_yield_median', 'mean'),
-        avg_pred_lower=('predicted_yield_lower', 'mean'), avg_pred_upper=('predicted_yield_upper', 'mean')
+        avg_pred_lower=('predicted_yield_lower', 'mean'), avg_pred_upper=('predicted_yield_upper', 'mean'),
+        avg_stat_trend=('stat_trend_forecast', 'mean')
     ).reset_index()
-    plt.figure(figsize=(14, 8));
-    plt.plot(yearly_avg['year'], yearly_avg['avg_actual_yield'], label='National Average Actual Yield', color='navy',
-             marker='o', zorder=3)
-    plt.plot(yearly_avg['year'], yearly_avg['avg_pred_median'], label='Median Prediction', color='red', linestyle='--',
-             zorder=4)
-    plt.fill_between(yearly_avg['year'], yearly_avg['avg_pred_lower'], yearly_avg['avg_pred_upper'], color='red',
-                     alpha=0.2, label='95% Prediction Interval', zorder=2)
-    plt.title("National Average Yield vs. Predicted Interval (Rolling Avg. Residual Model)", fontsize=16);
-    plt.xlabel("Year");
+
+    plt.figure(figsize=(14, 8))
+
+    # Plot Actual
+    plt.plot(yearly_avg['year'], yearly_avg['avg_actual_yield'], label='Actual Yield', color='navy', marker='o',
+             zorder=3, linewidth=2)
+
+    # Plot Statistical Trend (The Anchor)
+    plt.plot(yearly_avg['year'], yearly_avg['avg_stat_trend'], label='Statistical Trend (Baseline)', color='gray',
+             linestyle=':', zorder=2)
+
+    # Plot Model Prediction
+    plt.plot(yearly_avg['year'], yearly_avg['avg_pred_median'], label='Risk-Adjusted Prediction', color='darkorange',
+             linestyle='--', linewidth=2, zorder=4)
+
+    # Plot Interval
+    plt.fill_between(yearly_avg['year'], yearly_avg['avg_pred_lower'], yearly_avg['avg_pred_upper'], color='orange',
+                     alpha=0.2, label='90% Risk Cone', zorder=1)
+
+    plt.title("National Average Yield: Actual vs Risk-Adjusted Forecast", fontsize=16)
+    plt.xlabel("Year")
     plt.ylabel("Yield (dt/ha)")
-    plt.legend();
-    plt.grid(True, linestyle=':');
-    plt.savefig(os.path.join(report_dir, '01_national_average_timeline.png'), bbox_inches='tight');
+    plt.legend()
+    plt.grid(True, linestyle=':')
+    plt.savefig(os.path.join(report_dir, '01_national_average_timeline.png'), bbox_inches='tight')
     plt.close()
 
 
@@ -173,60 +193,49 @@ def plot_best_worst_district_timelines(district_performance: pd.DataFrame, backt
     districts_to_plot = pd.concat([best_districts, worst_districts])
     fig, axes = plt.subplots(2, 3, figsize=(20, 10), sharey=True)
     for i, (_, district_info) in enumerate(districts_to_plot.iterrows()):
-        ax = axes.flatten()[i];
+        ax = axes.flatten()[i]
         data = backtest_results[backtest_results['district_no'] == district_info['district_no']]
-        ax.plot(data['year'], data['kreisYield'], label='Actual Yield', color='navy', marker='o', markersize=4,
-                zorder=3)
-        ax.plot(data['year'], data['predicted_yield_median'], label='Median Prediction', color='red', linestyle='--',
-                zorder=4)
+        ax.plot(data['year'], data['kreisYield'], label='Actual', color='navy', marker='o', markersize=4)
+        ax.plot(data['year'], data['predicted_yield_median'], label='Predicted', color='red', linestyle='--')
         ax.fill_between(data['year'], data['predicted_yield_lower'], data['predicted_yield_upper'], color='red',
-                        alpha=0.2, label='95% Interval')
-        ax.set_title(f"{'Best' if i < 3 else 'Worst'}: {district_info['name']}\n(R² = {district_info['r2']:.2f})");
-        ax.legend();
+                        alpha=0.2)
+        ax.set_title(f"{'Best' if i < 3 else 'Worst'}: {district_info['name']}\n(R² = {district_info['r2']:.2f})")
+        ax.legend()
         ax.grid(True, linestyle=':')
-    plt.suptitle("Prediction Timelines for Best & Worst Districts (Rolling Avg. Residual Model)", fontsize=18);
-    plt.tight_layout(rect=[0, 0, 1, 0.96]);
-    plt.savefig(os.path.join(report_dir, '02_best_worst_districts.png'), bbox_inches='tight');
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.savefig(os.path.join(report_dir, '02_best_worst_districts.png'), bbox_inches='tight')
     plt.close()
 
 
 def plot_performance_map(district_performance: pd.DataFrame, gdf_districts: gpd.GeoDataFrame, report_dir: str):
-    print("-> Generating R-squared Map...");
+    print("-> Generating R-squared Map...")
     merged_gdf = gdf_districts.merge(district_performance, on='district_no', how='left')
-    fig, ax = plt.subplots(1, 1, figsize=(12, 12));
+    fig, ax = plt.subplots(1, 1, figsize=(12, 12))
     merged_gdf.plot(column='r2', cmap='RdYlGn', linewidth=0.5, ax=ax, edgecolor='0.8', legend=True,
                     legend_kwds={'label': "R-squared (R²)", 'orientation': "horizontal"},
                     missing_kwds={'color': 'lightgrey'}, vmin=-1, vmax=1)
-    low_data_gdf = merged_gdf[merged_gdf['is_low_data'] == True]
-    if not low_data_gdf.empty: low_data_gdf.plot(ax=ax, facecolor='none', hatch='//', edgecolor='black', linewidth=0.5)
-    hatch_patch = mpatches.Patch(hatch='//', facecolor='white', edgecolor='black',
-                                 label=f'Low Data (< {BACKTEST_CONFIG["LOW_DATA_THRESHOLD"]} years)')
-    plt.legend(handles=[hatch_patch], loc='lower left', title='Data Availability');
-    ax.set_title('Model Performance (R²) by District - Rolling Avg. Residual Model', fontsize=16);
-    ax.set_axis_off();
-    plt.savefig(os.path.join(report_dir, '03_r_squared_map.png'), bbox_inches='tight');
+    plt.title('Model Performance (R²) by District', fontsize=16)
+    plt.savefig(os.path.join(report_dir, '03_r_squared_map.png'), bbox_inches='tight')
     plt.close()
 
 
 def plot_r2_vs_data_count(district_performance: pd.DataFrame, report_dir: str):
-    print("-> Generating R² vs. Data Count plot...");
-    plt.figure(figsize=(10, 6));
+    print("-> Generating R² vs. Data Count plot...")
+    plt.figure(figsize=(10, 6))
     sns.scatterplot(data=district_performance, x='data_point_count', y='r2', hue='is_low_data',
                     palette={True: 'red', False: 'blue'}, alpha=0.6)
-    plt.ylim(-1.1, 1.1);
-    plt.axhline(0, color='grey', linestyle='--');
-    plt.title("Data Availability vs Model Performance - Rolling Avg. Residual Model")
-    plt.xlabel("Number of Years in Backtest per District");
-    plt.ylabel("R-squared (R²)");
-    plt.legend(title='Is Low Data?');
-    plt.savefig(os.path.join(report_dir, '04_r2_vs_data_count.png'), bbox_inches='tight');
+    plt.axhline(0, color='grey', linestyle='--')
+    plt.title("Data Availability vs Model Performance")
+    plt.xlabel("Backtest Years per District")
+    plt.ylabel("R-squared")
+    plt.savefig(os.path.join(report_dir, '04_r2_vs_data_count.png'), bbox_inches='tight')
     plt.close()
 
 
 def main():
     report_dir = Path(BACKTEST_CONFIG['REPORT_DIR'])
     report_dir.mkdir(parents=True, exist_ok=True)
-    print("--- Starting STAT-TREND RESIDUAL Model Evaluation ---")
+    print("--- Starting Risk-Based Residual Model Evaluation ---")
 
     try:
         models = {name: joblib.load(XGB_CONFIG[f'{name.upper()}_MODEL_PATH']) for name in ['lower', 'median', 'upper']}
@@ -238,17 +247,38 @@ def main():
         df = pd.merge(df, gdf[['district_no', 'name']], on='district_no', how='left')
         print("Models and data loaded successfully.")
     except Exception as e:
-        print(f"❌ CRITICAL ERROR during loading. Details: {e}");
+        print(f"❌ CRITICAL ERROR during loading. Details: {e}")
         return
 
-    feature_list = XGB_CONFIG['FEATURE_COLS']
+    # Define robust feature set (Must match Training Script)
+    # We explicitly INCLUDE 'stat_trend_forecast' as it is the anchor feature.
+    # We explicitly EXCLUDE identifiers and targets.
 
-    # NOTE: The Conformalized Quantile Regression (CQR) logic has been removed for simplicity.
-    # This backtest now uses the direct quantile outputs.
-    results = run_backtest_residual_model(df, models, feature_list)
+    # Base candidates from config
+    candidates = XGB_CONFIG['FEATURE_COLS']
+
+    # Hardcoded safe list to ensure we use exactly what the Risk Model expects
+    # (Aligning with the training script logic)
+    safe_features = [
+        'stat_trend_forecast', 'national_avg_yield_lag1',
+        'trend_vs_phys_gap', 'wofost_esp_std', 'wofost_esp_p10', 'wofost_skew',
+        'antecedent_precip_sum', 'antecedent_gdd_sum_anomaly', 'winter_cropland_ndvi_anomaly',
+        'fertilizer_price_index_lag1', 'producer_price_index_lag1',
+        'avg_clay_0_30cm', 'avg_sand_0_30cm', 'avg_elevation'
+    ]
+
+    # Intersect with what is actually in the DF
+    final_features = [col for col in safe_features if col in df.columns]
+
+    missing_features = set(safe_features) - set(final_features)
+    if missing_features:
+        print(f"⚠️ Warning: The following features were expected but missing: {missing_features}")
+
+    # Run Backtest
+    results = run_backtest_residual_model(df, models, final_features)
 
     if results.empty:
-        print("❌ Backtest did not produce results. Terminating.");
+        print("❌ Backtest did not produce results. Terminating.")
         return
 
     results_path = report_dir / 'full_backtest_predictions.csv'
