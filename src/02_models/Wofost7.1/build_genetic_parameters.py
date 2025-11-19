@@ -1,143 +1,126 @@
+# File: src/02_models/Wofost7.1/build_genetic_parameters.py
+# Description: Calculates genetic gain factors based on OFFICIAL BSA TRENDS.
+#              Method: Loel et al. (2014) coefficients for EFF and CVO.
+#              Normalization: Factors are normalized to 2017 = 1.0 (Model Reference Year).
+
+import pandas as pd
 import json
 from pathlib import Path
 import sys
 import logging
 
-# --- (Setup Project Root as before) ---
-try:
-    project_root = Path(__file__).resolve().parents[3]
-    sys.path.insert(0, str(project_root))
-    from src import config
-except (ImportError, IndexError):
-    print("Failed to import project config.")
-    sys.exit(1)
+# --- Setup Project Root ---
+project_root = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(project_root))
+from src import config
 
-# --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-CONFIG = config.WOFOST_CONFIG
+
+# --- SCIENTIFIC COEFFICIENTS ---
+# Source: Loel et al. 2014 / Hoffmann 2018
+# 1. EFF (Light Use Efficiency): 1% Yield Index gain = 0.8% EFF gain.
+EFF_SENSITIVITY = 1.3
+
+# 2. CVO (Conversion/Sink): 1.0 Pol point increase = 4% CVO gain.
+CVO_SENSITIVITY = 0.05
+
+# 3. AMAX (Max CO2 Assimilation):
+# Literature suggests AMAX is relatively stable, but we allow slight scaling
+# to account for modern "stay-green" traits.
+AMAX_SENSITIVITY = 0.15
 
 
-def get_piecewise_value(year_to_calc, reference_year, base_value, periods):
+def calculate_factors_from_data(input_csv, dataset_start_year=1980, model_reference_year=2017):
     """
-    Calculates the parameter value for a given year using a
-    piecewise-linear (stepped) gain model.
+    Reads official BSA trend data and calculates WOFOST factors.
+    Normalizes all factors so that model_reference_year == 1.0.
     """
-    # Start with the base value at the reference year
-    current_value = base_value
+    try:
+        df = pd.read_csv(input_csv)
+    except FileNotFoundError:
+        logging.error(f"FATAL: Official genetic data not found at {input_csv}")
+        sys.exit(1)
 
-    # Sort periods to be safe, from earliest to latest
-    periods.sort(key=lambda p: p['until_year'])
+    # 1. Get Dataset Baseline Values (1980)
+    # We calculate raw change relative to the start of the dataset first.
+    base_row = df[df['year'] == dataset_start_year]
+    if base_row.empty:
+        logging.error(f"FATAL: Dataset start year {dataset_start_year} not in dataset.")
+        sys.exit(1)
 
-    # Determine if we are calculating for the past or future
-    if year_to_calc < reference_year:
-        # --- CALCULATING FOR THE PAST ---
-        # We need to iterate from the reference_year *backwards* to the target_year
+    base_yield_idx = base_row['relative_sugar_yield_index'].values[0]
+    base_sugar_pol = base_row['sugar_content_pol'].values[0]
 
-        last_period_year = reference_year
-        for period in reversed(periods):
-            # Find the gain_rate for the *current* iteration's year
-            # This period's gain_rate applies from its 'until_year' down to the previous one
-            gain_rate = period['gain_rate']
+    # Dictionary to hold raw factors (relative to 1980)
+    raw_factors = {}
 
-            # The start of this calculation step is the "floor" for this period
-            # It's either the target year, or the year the *next* period starts
-            start_year = max(year_to_calc, (periods[periods.index(period) - 1]['until_year'] + 1) if periods.index(
-                period) > 0 else -9999)
+    for _, row in df.iterrows():
+        year = int(row['year'])
 
-            if last_period_year <= start_year:
-                continue  # This period is fully in the future relative to our step
+        # Calculate Delta relative to 1980
+        delta_yield_pct = (row['relative_sugar_yield_index'] - base_yield_idx) / 100.0
+        delta_pol = row['sugar_content_pol'] - base_sugar_pol
 
-            # Years to apply this *negative* gain_rate over
-            num_years = last_period_year - start_year
+        # Calculate Raw Factors (1980 = 1.0)
+        eff_raw = 1.0 + (delta_yield_pct * EFF_SENSITIVITY)
+        cvo_raw = 1.0 + (delta_pol * CVO_SENSITIVITY)
+        amax_raw = 1.0 + (delta_yield_pct * AMAX_SENSITIVITY)
 
-            # Subtract the gain (e.g., 2017 -> 2000)
-            current_value -= (gain_rate * num_years)
+        raw_factors[year] = {
+            'EFF_FACTOR': eff_raw,
+            'CVO_FACTOR': cvo_raw,
+            'AMAX_FACTOR': amax_raw,
+            'TSUM1_FACTOR': 1.0,
+            'SPAN_FACTOR': 1.0,
+            'RDMCR_FACTOR': 1.0,
+            'TSUM2_FACTOR': 1.0
+        }
 
-            # Set up for the next loop
-            last_period_year = start_year
-            if last_period_year == year_to_calc:
-                break  # We've arrived at our target year
+    # 2. Normalize to Model Reference Year (2017)
+    # This ensures our YAML configuration (Sugarbeet_601) acts as the 2017 standard.
+    if model_reference_year not in raw_factors:
+        logging.error(f"FATAL: Model reference year {model_reference_year} not in calculated factors.")
+        sys.exit(1)
 
-    elif year_to_calc > reference_year:
-        # --- CALCULATING FOR THE FUTURE ---
-        # We iterate from the reference_year *forwards* to the target_year
+    ref_values = raw_factors[model_reference_year]
 
-        last_period_year = reference_year
-        for period in periods:
-            # Find the gain_rate for the *current* iteration's year
-            gain_rate = period['gain_rate']
+    final_factors = {}
 
-            # The end of this calculation step is the "ceiling" for this period
-            end_year = min(year_to_calc, period['until_year'])
+    for year, facs in raw_factors.items():
+        normalized_facs = {}
+        for param, val in facs.items():
+            # Normalize: Value_Year / Value_RefYear
+            # e.g., if 1980 is 1.0 and 2017 is 1.2, then 1980 becomes 1.0/1.2 = 0.83
+            if ref_values[param] != 0:
+                normalized_facs[param] = round(val / ref_values[param], 4)
+            else:
+                normalized_facs[param] = 1.0
 
-            if last_period_year >= end_year:
-                continue  # This period is fully in the past relative to our step
+        final_factors[str(year)] = normalized_facs
 
-            # Years to apply this *positive* gain_rate over
-            num_years = end_year - last_period_year
-
-            # Add the gain
-            current_value += (gain_rate * num_years)
-
-            # Set up for the next loop
-            last_period_year = end_year
-            if last_period_year == year_to_calc:
-                break  # We've arrived at our target year
-
-    # If year_to_calc == reference_year, current_value remains base_value
-    return current_value
+    return final_factors
 
 
 def main():
-    logging.info("--- Building Genetic Gain Factor File (Piecewise-Linear Model) ---")
+    logging.info("--- Building Genetic Factors from OFFICIAL BSA/IfZ DATA ---")
 
-    try:
-        gg_config = CONFIG['GENETIC_GAIN_PARAMS']
-        params_to_scale = gg_config['PARAMS_TO_SCALE']
-        reference_year = gg_config['REFERENCE_YEAR']
-        start_year = gg_config['START_YEAR']
-        end_year = CONFIG['END_YEAR']
+    input_csv = config.DATA_DIR / '01_raw/official_genetic_trends.csv'
+    output_json = config.PROCESSED_DATA_DIR / 'GeneticGainFactors.json'
 
-        logging.info(f"Using REFERENCE_YEAR: {reference_year} (Factor = 1.0)")
-        all_years_factors = {}
+    # We start calculations from 1980 data, but normalize everything so 2017 is 1.0
+    factors = calculate_factors_from_data(
+        input_csv,
+        dataset_start_year=1980,
+        model_reference_year=2017
+    )
 
-        for year in range(start_year, end_year + 1):
-            year_factors = {}
+    with open(output_json, 'w') as f:
+        json.dump(factors, f, indent=4)
 
-            for param_name, settings in params_to_scale.items():
-                base_value = settings['base']
-                periods = settings['periods']
-
-                # Calculate the value for this year using the new piecewise function
-                current_value = get_piecewise_value(year, reference_year, base_value, periods)
-
-                # Calculate and store the factor
-                factor = current_value / base_value
-                factor_name = f"{param_name.upper()}_FACTOR"
-                year_factors[factor_name] = factor
-
-            all_years_factors[str(year)] = year_factors
-
-        output_path = config.PROCESSED_DATA_DIR / 'GeneticGainFactors.json'
-        with open(output_path, 'w') as f:
-            json.dump(all_years_factors, f, indent=4)
-
-        logging.info(f"--- GeneticGainFactors.json saved to {output_path} ---")
-
-        # Log examples
-        logging.info(f"Example factors for START YEAR ({start_year}):")
-        logging.info(json.dumps(all_years_factors[str(start_year)], indent=4))
-
-        logging.info(f"Example factors for REFERENCE YEAR ({reference_year}):")
-        logging.info(json.dumps(all_years_factors[str(reference_year)], indent=4))
-
-        logging.info(f"Example factors for (e.g.) 2005:")
-        logging.info(json.dumps(all_years_factors[str(2005)], indent=4))
-
-    except Exception as e:
-        logging.error(f"FATAL: An error occurred. Check config 'GENETIC_GAIN_PARAMS'. Error: {e}",
-                      exc_info=True)
-        sys.exit(1)
+    logging.info(f"✓ Saved normalized genetic factors to {output_json}")
+    logging.info(f"  Reference Year (2017) Check: {factors['2017']}")
+    logging.info(f"  1980 Check (Should be < 1.0): {factors['1980']}")
+    logging.info(f"  2024 Check (Should be > 1.0): {factors['2024']}")
 
 
 if __name__ == "__main__":

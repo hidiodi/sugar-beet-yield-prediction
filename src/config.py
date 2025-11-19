@@ -20,22 +20,23 @@ SCRIPTS_TO_RUN = [
     #"src/01_data/download_all_data_pipeline.py",
     #"src/01_data/process_input_data_pipeline.py",
     #"src/02_models/Wofost7.1/build_initial_conditions.py",
-    #"src/02_models/Wofost7.1/build_site_data.py",
-    #"src/02_models/Wofost7.1/build_genetic_parameters.py",
+    "src/02_models/Wofost7.1/build_site_data.py",
+    "src/02_models/Wofost7.1/build_genetic_parameters.py",
     #"src/02_models/Wofost7.1/build_forecast_weather.py",
-    #"src/02_models/Wofost7.1/run_wofost_pipeline.py",
+    "src/02_models/Wofost7.1/run_wofost_pipeline.py",
+    "src/02_models/Wofost7.1/validation_dashboard.py",
     #"src/02_models/Wofost7.1/create_trendModel.py",
-    "src/01_data/FeatureEngineering/build_stage1_features.py",
-    "src/03_analysis/basic_analysis/analyze_stage1_features.py",
-    "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
-    "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
-    "src/02_models/XGBoost/regression_model/ModelScripts/train_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
-    "src/02_models/XGBoost/regression_model/Testing/backtest_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
-    "src/02_models/experimental_models/backtest_adaptive_cqr_model.py",
+    #"src/01_data/FeatureEngineering/build_stage1_features.py",
+    #"src/03_analysis/basic_analysis/analyze_stage1_features.py",
+    #"src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
+    #"src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
+    #"src/02_models/XGBoost/regression_model/ModelScripts/train_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
+    #"src/02_models/XGBoost/regression_model/Testing/backtest_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
+    #"src/02_models/experimental_models/backtest_adaptive_cqr_model.py",
     #"src/02_models/NGboost/train_final_ngboost_model.py",
     #"src/02_models/NGboost/backtest_final_ngboost_model.py",
     #"src/02_models/FinalEnsemble/backtest_final_ensemble.py",
-    "src/03_analysis/basic_analysis/compare_model_versions.py",
+    #"src/03_analysis/basic_analysis/compare_model_versions.py",
     #"src/02_models/XGBoost/regression_model/Tuning/tune_quantiles.py",
     #"src/03_analysis/shap_analysis_xgb.py",
     #"src/03_analysis/run_hybrid_analysis_pipeline.py",
@@ -83,7 +84,7 @@ WEATHER_END_YEAR = 2024
 # --- WOFOST Model Configuration ---
 WOFOST_CONFIG = {
     # max range 1982 - 2024 and None to run all districts
-    'START_YEAR': 1981, 'END_YEAR': 2024, 'DISTRICT_LIMIT': None,
+    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': 20,
     'FILE_PATHS': {
         'HISTORICAL_DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
         'CORRECT_WEATHER_DIR': DATA_DIR / '04_feature/weather_district_daily',
@@ -102,92 +103,28 @@ WOFOST_CONFIG = {
         'CROP_START_DATE': datetime.date(2018, 3, 22), 'CROP_END_DATE': datetime.date(2018, 11, 15),
         'MAX_DURATION': 250,
     },
-    'CONSTANTS': {
-        'DMC_SUGARBEET': 0.25, 'INITIAL_ROOTING_DEPTH_CM': 10.0, 'SOIL_PARTICLE_DENSITY': 2.65,
-    },
     'SOIL_COLUMN_MAPPING': {
         'sand': 'avg_sand_0_100cm', 'clay': 'avg_clay_0_100cm', 'som': 'avg_som_0_100cm', 'bdod': 'avg_bdod_0_100cm',
     },
     'SOIL_DEFAULTS_AND_CONSTANTS': {
-        'RDMSOL': 150.0, 'KSUB': 10.0, 'SOPE': 10.0
+        'RDMSOL': 120.0, 'KSUB': 10.0, 'SOPE': 10.0
     },
     'GENERIC_SITE': {'LATITUDE': 52.0, 'LONGITUDE': 10.0, 'ELEVATION': 50.0},
     'ANALOG_YEAR_CONFIG': {'NUM_ANALOGS': 5, 'MIN_YEARS_FOR_FIT': 10, },
+    'CONSTANTS': {
+        'DMC_SUGARBEET': 0.25, # Keep at 25%
+        'INITIAL_ROOTING_DEPTH_CM': 10.0,
+        'SOIL_PARTICLE_DENSITY': 2.65,
+        'HARVEST_LOSS_FACTOR': 0.96, # Ensure this is 0.85
+        'MAX_ROOTING_DEPTH_GLOBAL_CAP_CM': 120.0 # INCREASE this from 70.0 to 120.0
+    },
+
 
     'GENETIC_GAIN_PARAMS': {
         'REFERENCE_YEAR': 2017,
         'START_YEAR': 1981,
-
-        'PARAMS_TO_SCALE': {
-
-            # --- Genetic Gain (from Report) ---
-            # NO CHANGE. We trust this physiological data.
-            'CVO': {
-                'base': 0.72,
-                'periods': [
-                    {'until_year': 2010, 'gain_rate': 0.0015},
-                    {'until_year': 2100, 'gain_rate': 0.0}
-                ]
-            },
-            'SPAN': {
-                'base': 33.0,
-                'periods': [
-                    {'until_year': 2010, 'gain_rate': 0.0},
-                    {'until_year': 2100, 'gain_rate': 0.15}
-                ]
-            },
-            'RDMCR': {
-                'base': 0.03,
-                'periods': [
-                    {'until_year': 2010, 'gain_rate': 0.0},
-                    {'until_year': 2100, 'gain_rate': -0.0001}
-                ]
-            },
-            'TSUM1': {
-                'base': 650.0,
-                'periods': [
-                    {'until_year': 2100, 'gain_rate': -0.4}
-                ]
-            },
-
-            # --- Agronomic Gain Proxy (TUNED) ---
-            # We are "flattening" these proxy curves to fix the
-            # 1980s "lows" and 2000s "highs".
-            'AMAX': {
-                'base': 45.0,
-                'periods': [
-                    # P4 CHANGE: Reduced from 0.25 -> 0.20 to lift 1980s
-                    {'until_year': 2004, 'gain_rate': 0.20},
-                    # P4 CHANGE: Drastically reduced from 0.50 -> 0.35 to lower 2000s
-                    {'until_year': 2012, 'gain_rate': 0.35},
-                    # P4 CHANGE: Reduced from 0.30 -> 0.25 to maintain a smoother trend
-                    {'until_year': 2100, 'gain_rate': 0.25}
-                ]
-            },
-
-            # --- Agronomic Gain Proxy (TUNED) ---
-            # Applying the same "flattening" logic as AMAX.
-            'EFF': {
-                'base': 0.450,
-                'periods': [
-                    # P4 CHANGE: Reduced from 0.0020 -> 0.0015 to lift 1980s
-                    {'until_year': 2004, 'gain_rate': 0.0015},
-                    # P4 CHANGE: Reduced from 0.0035 -> 0.0025 to lower 2000s
-                    {'until_year': 2012, 'gain_rate': 0.0025},
-                    # P4 CHANGE: Kept at 0.0020 (was 0.0020)
-                    {'until_year': 2100, 'gain_rate': 0.0020}
-                ]
-            },
-
-            # --- Set TSUM2 gain to zero (NO CHANGE) ---
-            'TSUM2': {
-                'base': 1400.0,
-                'periods': [
-                    {'until_year': 2100, 'gain_rate': 0.0}
-                ]
-            },
-        }
     },
+
     'OPTIMIZATION': {
             'N_TRIALS': 500  # Start with 500, increase to 2000+ for a real run
         }
@@ -241,41 +178,59 @@ XGBOOST_TRAINING_CONFIG = {
     'DATA_PATH': DATA_DIR / '05_model_input/stage1_preseason_features.csv',
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models',
     'FEATURE_COLS': [
-        # Anchors
+        # 1. Anchors
         'stat_trend_forecast',
         'national_avg_yield_lag1',
 
-        # The Biophysical Signal
+        # 2. The Biophysical Signal (Cone)
         'trend_vs_phys_gap',
         'wofost_esp_std',
         'wofost_esp_p10',
         'wofost_skew',
         'wofost_water_stress_mean',
 
-        # The Spring Forecast Signal (RESTORED)
+        # 3. Operational Risks (Mechanics) - FROM WOFOST SCANNER
+        'prob_sowing_failure',  # Late/Muddy Sowing Risk
+
+        # 4. Hydraulic Risks - FROM WOFOST SCANNER
+        'anoxia_events',  # Root suffocation (Summer Rain > 25mm/3d)
+
+        # 5. Terminal Risks - FROM WOFOST SCANNER
+        'prob_terminal_freeze',  # Harvest Loss (Nov Frost)
+        'harvest_respiration_risk',  # Clamp Rot / Sugar Burn (Warm Autumn)
+
+        # 6. Spring Signal (Forecasting)
         'spring_temp_anomaly_forecast',
         'spring_precip_anomaly_forecast',
 
-        # Teleconnections (Regime Context)
+        # 7. Teleconnections
         'nao_winter_avg',
-        'nao_x_spring_temp',  # Interaction Term
+        'nao_x_spring_temp',
 
-        # Antecedent Conditions
+        # 8. Antecedent Biological State (Observed DWD)
         'antecedent_precip_sum',
-        'antecedent_gdd_sum_anomaly',
-        'spring_temp_x_antecedent_rain',  # Interaction Term
+        'sowing_potential_days',  # Observed "Good Days" in Feb
 
+        # 9. Pest & Disease (Mechanism-Informed)
+        'winter_pest_kill_days',  # Deep Frost
+        'vector_pressure_local',  # SBR Risk (Interaction of Warmth * Location)
+
+        # 10. Toxicology (Rotation History)
+        'toxic_carryover_index',  # Herbicide Persistence (Dry Prev Autumn)
+        'nitrogen_leaching_index',  # Winter Rain * Sand
+
+        # 11. Satellite & Geo
         'winter_cropland_ndvi_anomaly',
         'winter_cropland_snow_cover_days',
-
-        # Economics
-        'fertilizer_price_index_lag1',
-        'producer_price_index_lag1',
-
-        # Geography
         'avg_clay_0_30cm',
         'avg_sand_0_30cm',
-        'avg_elevation'
+        'avg_elevation',
+        'is_vector_endemic_zone',
+
+        # 12. Economics
+        'fertilizer_price_index_lag1',
+        'producer_price_index_lag1',
+        'spring_temp_x_antecedent_rain'
     ],
     'BEST_PARAMS_LOWER': {
         'n_estimators': 1397,
