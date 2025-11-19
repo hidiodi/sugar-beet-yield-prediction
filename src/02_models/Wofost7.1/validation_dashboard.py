@@ -1,480 +1,238 @@
-# File: src/03_analysis/validation_dashboard.py
-# Description: The single, definitive validation dashboard for the WOFOST pipeline.
-# ENHANCEMENT 3: Merged functionality from the redundant analysis script.
+# File: src/02_models/Wofost7.1/validation_dashboard.py
+# Description: Validation Dashboard (v3.1 - Dynamic Columns).
+#              - Adapts to exact CSV columns (No KeyErrors).
+#              - Visualizes the metrics YOU actually saved (Mud days, Frost, Respiration).
 
 import pandas as pd
-import json
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import sys
 import logging
-import geopandas as gpd
+from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
 
 # --- Setup Project Root ---
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
-
 from src import config
 
-# --- Configuration ---
+# --- Config ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-PROCESSED_DATA_DIR = config.PROCESSED_DATA_DIR
-OUTPUT_DIR = project_root / "reports" / "figures" / "validation_dashboard"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-sns.set_theme(style="whitegrid")
+CONFIG = config.WOFOST_CONFIG
+# Ensure the path is absolute to avoid FileNotFoundError on saving
+OUTPUT_DIR = (config.BASE_DIR / 'reports/figures/validation_dashboard').resolve()
 
 
-def phase_1_input_sanity_checks(genes_path, initial_conditions_path):
-    """
-    Performs Phase 1 checks on the input data assets.
-    """
-    logging.info("--- Phase 1: Running Input Data Sanity Checks ---")
+def load_all_data():
+    logging.info("Loading datasets...")
 
-    # 1. Genetic Gain Plot
-    logging.info("Generating Genetic Gain Plot...")
-
-    # --- ADD THIS DEBUG LINE ---
-    print(f"\n[DEBUG] Loading genetic gain factors from: {genes_path}\n")
-
-    with open(genes_path, 'r') as f:
-        genes_data = json.load(f)
-    df_genes = pd.DataFrame.from_dict(genes_data, orient='index')
-    df_genes.index = df_genes.index.astype(int)
-
-    # --- ADD THIS DEBUG LINE ---
-    print("\n[DEBUG] DataFrame 'df_genes' structure:\n")
-    df_genes.info()
-    print("\n")
-
-    # This is the line that is failing
-    fig, axes = plt.subplots(3, 1, figsize=(10, 15), sharex=True)
-    fig.suptitle('Genetic Gain Verification (AMAX, TSUM1, RUE vs. Year)', fontsize=16)
-    sns.lineplot(data=df_genes, x=df_genes.index, y='AMAX_FACTOR', ax=axes[0], marker='o');
-    axes[0].set_title('AMAX_FACTOR vs. Year');
-    axes[0].set_ylabel('AMAX_FACTOR')
-
-    # Use 'TSUM1_FACTOR' instead of 'TSUM1'
-    sns.lineplot(data=df_genes, x=df_genes.index, y='TSUM1_FACTOR', ax=axes[1], marker='o');
-    axes[1].set_title('TSUM1_FACTOR vs. Year');
-    axes[1].set_ylabel('TSUM1_FACTOR')
-
-    # Use 'EFF_FACTOR' instead of 'RUE' (this is the efficiency/RUE factor)
-    sns.lineplot(data=df_genes, x=df_genes.index, y='EFF_FACTOR', ax=axes[2], marker='o');
-    axes[2].set_title('RUE (EFF_FACTOR) vs. Year');
-    axes[2].set_ylabel('EFF_FACTOR (RUE)')
-    plt.tight_layout(rect=[0, 0, 1, 0.96]);
-    plot_path = OUTPUT_DIR / "P1_genetic_gain_plot.png";
-    plt.savefig(plot_path);
-    plt.close()
-    logging.info(f"Saved plot to {plot_path}")
-
-    # 2. Initial Conditions Distribution
-    logging.info("Generating Initial Conditions Distribution Plots...")
-    df_ic = pd.read_csv(initial_conditions_path, parse_dates=['sowing_date'], dtype={'district_no': str})
-    df_ic['sowing_date_doy'] = df_ic['sowing_date'].dt.dayofyear
-
-    fig, axes = plt.subplots(1, 3, figsize=(20, 6));
-    fig.suptitle('Initial Conditions Distribution (WAV, TDWI, Sowing Date)', fontsize=16)
-    sns.histplot(df_ic['WAV'], kde=True, ax=axes[0]);
-    axes[0].set_title('Distribution of Initial Soil Moisture (WAV)');
-    axes[0].set_xlabel('WAV (cm)')
-    sns.histplot(df_ic['TDWI'], kde=True, ax=axes[1]);
-    axes[1].set_title('Distribution of Initial Dry Weight (TDWI)');
-    axes[1].set_xlabel('TDWI (kg/ha)')
-    sns.histplot(df_ic['sowing_date_doy'], kde=True, ax=axes[2]);
-    axes[2].set_title('Distribution of Sowing Date (Day of Year)');
-    axes[2].set_xlabel('Day of Year')
-    plt.tight_layout(rect=[0, 0, 1, 0.96]);
-    plot_path = OUTPUT_DIR / "P1_initial_conditions_distribution.png";
-    plt.savefig(plot_path);
-    plt.close()
-    logging.info(f"Saved plot to {plot_path}")
-
-    # 3. WAV Trend Analysis (The "Bend" Test)
-    logging.info("Generating WAV Trend (Pre/Post-2000) Plot...")
-
-    # Calculate yearly statistics for WAV from the loaded df_ic
-    df_wav_yearly = df_ic.groupby('year')['WAV'].agg(
-        mean='mean',
-        p10=lambda x: x.quantile(0.10),
-        p90=lambda x: x.quantile(0.90)
-    ).reset_index()
-
-    plt.figure(figsize=(15, 7))
-
-    # Plot the mean line
-    sns.lineplot(data=df_wav_yearly, x='year', y='mean', label='Mean WAV', marker='o')
-
-    # Add the 10th-90th percentile fill
-    plt.fill_between(
-        data=df_wav_yearly,
-        x='year',
-        y1='p10',
-        y2='p90',
-        alpha=0.2,
-        label='10th-90th Percentile Range'
-    )
-
-    # --- THIS IS THE CRITICAL PART ---
-    # Add a vertical line at 2000 to show the data source change
-    plt.axvline(x=2000, color='red', linestyle='--', linewidth=2, label='Data Source Change (Inferred vs. Real)')
-
-    plt.title('Initial Soil Moisture (WAV) Trend vs. Year (Checking for "Bend" at 2000)')
-    plt.xlabel('Year')
-    plt.ylabel('Initial Available Water (WAV, cm)')
-    plt.legend()
-    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
-
-    plot_path = OUTPUT_DIR / "P1_WAV_trend_analysis.png"
-    plt.savefig(plot_path)
-    plt.close()
-    logging.info(f"Saved plot to {plot_path}")
-
-    # Return the dataframes as before
-    return df_genes, df_ic
-
-
-def phase_2_output_sanity_checks(wofost_output_path):
-    """
-    Performs Phase 2 checks on the output data.
-    """
-    logging.info("--- Phase 2: Running Output Data Sanity Checks ---")
-
+    # 1. Create Output Directory
     try:
-        df_wofost = pd.read_csv(wofost_output_path, dtype={'district_no': str})
-    except FileNotFoundError:
-        logging.error(f"FATAL: WOFOST output file not found at {wofost_output_path}. Cannot run checks.");
-        return None, None
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        logging.error(f"Could not create output directory {OUTPUT_DIR}: {e}")
+        sys.exit(1)
 
-    # --- FIX: Use the CORRECT column names from the pipeline ---
-    yield_wlp_col = 'yield_water_limited'
-    yield_pp_col = 'yield_potential'
+    # 2. Simulation Results
+    sim_path = CONFIG['FILE_PATHS']['OUTPUT_DIR'] / "forecast_ensemble_results_raw.csv"
+    if not sim_path.exists():
+        logging.error(f"Missing file: {sim_path}")
+        sys.exit(1)
 
-    if yield_wlp_col not in df_wofost.columns or yield_pp_col not in df_wofost.columns:
-        logging.error(f"FATAL: Expected yield columns ('{yield_wlp_col}', '{yield_pp_col}') not found in output file.")
-        return None, None
+    df_sim = pd.read_csv(sim_path, dtype={'district_no': str})
+    df_sim['district_no'] = df_sim['district_no'].astype(str).str.zfill(5)
+    df_sim['year'] = df_sim['year'].astype(int)
 
-    dmc = config.WOFOST_CONFIG['CONSTANTS']['DMC_SUGARBEET']
-    df_wofost['wofost_forecast_yield_fresh_dt'] = (df_wofost[yield_wlp_col] / dmc) / 100.0
+    # 3. Actual Yields
+    yield_path = CONFIG['FILE_PATHS']['YIELD_DATA']
+    df_act = pd.read_csv(yield_path, dtype={'district_no': str})
+    df_act['district_no'] = df_act['district_no'].astype(str).str.zfill(5)
+    df_act['year'] = df_act['year'].astype(int)
+    df_act.rename(columns={'yield': 'actual_yield'}, inplace=True)
 
-    # 1. Output Yield Distribution Plot (from full ensemble)
-    logging.info("Generating Ensemble Yield Distribution Plot...")
-    plt.figure(figsize=(10, 6))
-    sns.histplot(df_wofost['wofost_forecast_yield_fresh_dt'].dropna(), kde=True)
-    plt.title('Distribution of Ensemble Forecast Yields')
-    plt.xlabel('Yield (Fresh Weight dt/ha)')
-    plt.ylabel('Frequency')
-    plot_path = OUTPUT_DIR / "P2_ensemble_yield_distribution.png";
-    plt.savefig(plot_path);
-    plt.close()
-    logging.info(f"Saved plot to {plot_path}")
+    # 4. Initial Conditions
+    ic_path = config.PROCESSED_DATA_DIR / 'InitialConditions.csv'
+    df_ic = pd.DataFrame()
+    if ic_path.exists():
+        df_ic = pd.read_csv(ic_path, dtype={'district_no': str})
+        df_ic['district_no'] = df_ic['district_no'].astype(str).str.zfill(5)
+        df_ic['year'] = df_ic['year'].astype(int)
 
-    # 2. ENHANCEMENT: Yearly Ensemble Spread Boxplot (cannibalized from other script)
-    logging.info("Generating Yearly Ensemble Spread Boxplot...")
-    plt.figure(figsize=(16, 8))
-    sns.boxplot(data=df_wofost, x='year', y='wofost_forecast_yield_fresh_dt')
-    plt.title('Distribution of Forecast Yield by Year (Ensemble Spread)')
-    plt.xlabel('Year')
-    plt.ylabel('Yield (Fresh Weight dt/ha)')
-    plt.grid(axis='y')
+    logging.info(f"Loaded {len(df_sim)} simulation rows.")
+    logging.info(f"Simulation Columns found: {list(df_sim.columns)}")
+
+    return df_sim, df_act, df_ic
+
+
+def analyze_inputs(df_ic):
+    """Plots distributions of Sowing Dates and Initial Water."""
+    if df_ic.empty: return
+
+    logging.info("Plotting Input Diagnostics...")
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Sowing Date
+    if 'sowing_date' in df_ic.columns:
+        df_ic['sow_doy'] = pd.to_datetime(df_ic['sowing_date']).dt.dayofyear
+        sns.histplot(df_ic['sow_doy'], bins=30, kde=True, ax=axes[0], color='green')
+        axes[0].set_title("Sowing Date Distribution (DOY)")
+        axes[0].axvline(60, color='k', linestyle='--', label='March 1')
+        axes[0].legend()
+
+    # WAV
+    if 'WAV' in df_ic.columns:
+        sns.histplot(df_ic['WAV'], bins=30, kde=True, ax=axes[1], color='blue')
+        axes[1].set_title("Initial Available Water (WAV)")
+
     plt.tight_layout()
-    plot_path = OUTPUT_DIR / "P2_yearly_yield_boxplot.png";
-    plt.savefig(plot_path);
+    plt.savefig(OUTPUT_DIR / "01_input_diagnostics.png")
     plt.close()
-    logging.info(f"Saved plot to {plot_path}")
-
-    # 3. Aggregate data for further checks
-    df_agg = df_wofost.groupby(['year', 'district_no']).agg(
-        yield_water_limited_dry_kgha=(yield_wlp_col, 'mean'),
-        yield_potential_dry_kgha=(yield_pp_col, 'mean'),
-        drought_stress_index=('drought_stress_index', 'mean'),
-        wofost_forecast_yield_fresh_dt=('wofost_forecast_yield_fresh_dt', 'mean')
-    ).reset_index()
-
-    # 4. Missing Data Report
-    missing_yields = df_agg['wofost_forecast_yield_fresh_dt'].isnull().sum()
-    total_records = len(df_agg)
-    logging.info(f"Missing Data Report: {missing_yields} / {total_records} aggregated district-years have null yields.")
-    if missing_yields > 0:
-        logging.warning("WARNING: Missing yield data detected in the aggregated WOFOST output.")
-
-    return df_wofost, df_agg
 
 
-def phase_3_model_behavior_validation(df_genes, df_ic, df_agg_wofost):
+def analyze_internal_dynamics(df_sim):
     """
-    Performs Phase 3 checks on the model's behavior (input vs. output).
+    Plots internal model states.
+    Dynamically picks relevant numeric columns from the CSV.
     """
-    if df_agg_wofost is None: logging.error("Skipping Phase 3 due to missing WOFOST output data."); return
+    logging.info("Plotting Internal Dynamics...")
 
-    logging.info("--- Phase 3: Running Model Behavior Validation ---")
+    # Define priority columns we want to see if they exist
+    # Based on your CSV header
+    potential_cols = [
+        'cumulative_water_stress',
+        'max_lai_achieved',
+        'spring_mud_days',
+        'summer_heavy_rain_events',
+        'harvest_respiration_gdd'
+    ]
 
-    df_merged_ic = pd.merge(df_ic, df_agg_wofost, on=['year', 'district_no'])
+    # Filter to what actually exists
+    valid_cols = [c for c in potential_cols if c in df_sim.columns]
 
-    # 1. The Water Stress Test
-    plt.figure(figsize=(10, 6));
-    sns.scatterplot(data=df_merged_ic, x='WAV', y='drought_stress_index')
-    plt.title('Water Stress Test: Initial Water vs. Drought Stress');
-    plt.xlabel('Initial Available Water (WAV, cm)');
-    plt.ylabel('Drought Stress Index')
-    plot_path = OUTPUT_DIR / "P3_water_stress_test.png";
-    plt.savefig(plot_path);
-    plt.close();
-    logging.info(f"Saved plot to {plot_path}")
-
-    # 2. The Genetic Gain Test
-    df_genes_reset = df_genes.reset_index().rename(columns={'index': 'year'});
-    df_merged_genes = pd.merge(df_genes_reset, df_agg_wofost, on='year')
-    plt.figure(figsize=(10, 6));
-    sns.scatterplot(data=df_merged_genes, x='AMAX_FACTOR', y='yield_potential_dry_kgha')
-    plt.title('Genetic Gain Test: AMAX_FACTOR vs. Potential Yield');
-    plt.xlabel('AMAX_FACTOR (Genetic Gain Multiplier)');
-    plot_path = OUTPUT_DIR / "P3_genetic_gain_test.png";
-    plt.savefig(plot_path);
-    plt.close();
-    logging.info(f"Saved plot to {plot_path}")
-
-    # 3. The Sowing Date Test
-    plt.figure(figsize=(10, 6));
-    sns.scatterplot(data=df_merged_ic, x='sowing_date_doy', y='wofost_forecast_yield_fresh_dt')
-    plt.title('Sowing Date Test: Sowing Date vs. Final Yield');
-    plt.xlabel('Sowing Date (Day of Year)');
-    plt.ylabel('Final Yield (Fresh dt/ha)')
-    plot_path = OUTPUT_DIR / "P3_sowing_date_test.png";
-    plt.savefig(plot_path);
-    plt.close();
-    logging.info(f"Saved plot to {plot_path}")
-    # 4. The Per-Year Performance Test (with Potential Yield)
-    logging.info("Generating Per-Year Performance Plot...")
-    try:
-        # Load the static data which contains the actual yields
-        static_data_path = PROCESSED_DATA_DIR / 'StaticSiteData.csv'
-        df_static = pd.read_csv(static_data_path, dtype={'district_no': str})
-
-        df_actuals = df_static[['year', 'district_no', 'kreisYield']].rename(columns={'kreisYield': 'actual_yield'})
-
-        # Merge with your aggregated simulation results (df_agg_wofost)
-        df_merged_perf = pd.merge(df_agg_wofost, df_actuals, on=['year', 'district_no'])
-
-        # --- NEW: Convert Potential Yield to fresh dt/ha ---
-        # Get the DMC value from the config
-        dmc = config.WOFOST_CONFIG['CONSTANTS']['DMC_SUGARBEET']
-        # 'yield_potential_dry_kgha' is from df_agg_wofost (in dry kg/ha)
-        df_merged_perf['potential_yield_fresh_dt'] = (df_merged_perf['yield_potential_dry_kgha'] / dmc) / 100.0
-
-        # Now, aggregate all three yield types by year
-        df_yearly_perf = df_merged_perf.groupby('year').agg(
-            actual_yield_mean=('actual_yield', 'mean'),
-            forecast_yield_mean=('wofost_forecast_yield_fresh_dt', 'mean'),
-            potential_yield_mean=('potential_yield_fresh_dt', 'mean')  # <-- ADDED THIS LINE
-        ).reset_index()
-
-        # Melt the DataFrame for easy plotting with seaborn
-        df_yearly_perf_melted = df_yearly_perf.melt('year', var_name='Yield Type', value_name='Yield (dt/ha)')
-
-        # Create the plot
-        plt.figure(figsize=(15, 7))
-        sns.lineplot(data=df_yearly_perf_melted, x='year', y='Yield (dt/ha)', hue='Yield Type', marker='o',
-                     style='Yield Type')
-        plt.title('Per-Year Performance: Actual vs. Forecast vs. Potential Yield')  # <-- UPDATED TITLE
-        plt.ylabel('Mean Yield (dt/ha)')
-        plt.xlabel('Year')
-        plt.legend(title='Yield Type')
-        plt.grid(True, which='both', linestyle='--', linewidth=0.5)
-
-        plot_path = OUTPUT_DIR / "P3_per_year_performance_test.png"
-        plt.savefig(plot_path)
-        plt.close()
-        logging.info(f"Saved plot to {plot_path}")
-
-    except FileNotFoundError:
-        logging.warning(f"Could not find StaticSiteData.csv at {static_data_path}. Skipping Per-Year Performance Test.")
-    except Exception as e:
-        logging.error(f"Failed to generate Per-Year Performance plot. Error: {e}")
-
-    except FileNotFoundError:
-        logging.warning(f"Could not find StaticSiteData.csv at {static_data_path}. Skipping Per-Year Performance Test.")
-    except Exception as e:
-        logging.error(f"Failed to generate Per-Year Performance plot. Error: {e}")
-
-
-def phase_4_spatial_analysis(df_agg_wofost, df_ic, gdf_districts):
-    """
-    Performs Phase 4 checks by creating spatial plots (choropleth maps).
-    """
-    # --- MODIFIED: Check for all data inputs ---
-    if df_agg_wofost is None or df_ic is None:
-        logging.error("Skipping Phase 4 due to missing aggregated data.")
-        return
-    if gdf_districts is None:
-        logging.error("Skipping Phase 4 due to missing GeoJSON data.")
+    if not valid_cols:
+        logging.warning("No internal dynamic columns found to plot.")
         return
 
-    logging.info("--- Phase 4: Running Spatial Analysis ---")
-    # Average metrics over all years for a stable map
-    df_spatial_yield = df_agg_wofost.groupby('district_no')['wofost_forecast_yield_fresh_dt'].mean().reset_index()
-    df_spatial_stress = df_agg_wofost.groupby('district_no')['drought_stress_index'].mean().reset_index()
-    df_spatial_sowing = df_ic.groupby('district_no')['sowing_date_doy'].mean().reset_index()
+    # Create grid
+    n_cols = len(valid_cols)
+    rows = (n_cols // 3) + 1
+    fig, axes = plt.subplots(rows, 3, figsize=(18, 5 * rows))
+    axes = axes.flatten()
 
-    gdf_yield = pd.merge(gdf_districts, df_spatial_yield, on='district_no');
-    gdf_stress = pd.merge(gdf_districts, df_spatial_stress, on='district_no');
-    gdf_sowing = pd.merge(gdf_districts, df_spatial_sowing, on='district_no')
+    for i, col in enumerate(valid_cols):
+        ax = axes[i]
+        # Drop NAs and Infs
+        data = df_sim[col].replace([np.inf, -np.inf], np.nan).dropna()
 
-    # Plot Maps
-    fig, ax = plt.subplots(1, 1, figsize=(10, 10));
-    gdf_yield.plot(column='wofost_forecast_yield_fresh_dt', ax=ax, legend=True, cmap='viridis',
-                   legend_kwds={'label': "Mean Yield (Fresh dt/ha)", 'orientation': "horizontal"});
-    ax.set_title('Mean Forecasted Yield by District');
-    ax.set_axis_off();
-    plot_path = OUTPUT_DIR / "P4_map_mean_yield.png";
-    plt.savefig(plot_path, dpi=300);
-    plt.close();
-    logging.info(f"Saved map to {plot_path}")
-    fig, ax = plt.subplots(1, 1, figsize=(10, 10));
-    gdf_stress.plot(column='drought_stress_index', ax=ax, legend=True, cmap='plasma',
-                    legend_kwds={'label': "Mean Drought Stress Index", 'orientation': "horizontal"});
-    ax.set_title('Mean Drought Stress by District');
-    ax.set_axis_off();
-    plot_path = OUTPUT_DIR / "P4_map_drought_stress.png";
-    plt.savefig(plot_path, dpi=300);
-    plt.close();
-    logging.info(f"Saved map to {plot_path}")
-    fig, ax = plt.subplots(1, 1, figsize=(10, 10));
-    gdf_sowing.plot(column='sowing_date_doy', ax=ax, legend=True, cmap='cividis',
-                    legend_kwds={'label': "Mean Sowing Date (Day of Year)", 'orientation': "horizontal"});
-    ax.set_title('Mean Sowing Date by District');
-    ax.set_axis_off();
-    plot_path = OUTPUT_DIR / "P4_map_sowing_date.png";
-    plt.savefig(plot_path, dpi=300);
-    plt.close();
-    logging.info(f"Saved map to {plot_path}")
+        if not data.empty:
+            sns.histplot(data, bins=30, kde=True, ax=ax, color='orange')
+            ax.set_title(f"{col}")
+            mean_val = data.mean()
+            ax.axvline(mean_val, color='red', linestyle='--', label=f'Mean: {mean_val:.1f}')
+            ax.legend()
+
+    # Turn off unused axes
+    for j in range(i + 1, len(axes)):
+        axes[j].axis('off')
+
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "02_internal_dynamics.png")
+    plt.close()
 
 
-# File: src/02_models/Wofost7.1/validation_dashboard.py
+def process_ensemble(df_sim):
+    """Aggregates ensemble to mean."""
+    DMC = CONFIG['CONSTANTS']['DMC_SUGARBEET']
 
-def phase_5_spatial_trend_analysis(df_agg_wofost, gdf_districts):
-    """
-    Performs Phase 5 checks by creating spatial plots of the MODEL ERROR (bias)
-    over time using a 'small multiples' approach.
-    """
-    if df_agg_wofost is None:
-        logging.error("Skipping Phase 5 due to missing aggregated data.")
-        return
-    if gdf_districts is None:
-        logging.error("Skipping Phase 5 due to missing GeoJSON data.")
-        return
+    # Safety check for yield column
+    if 'yield_water_limited' not in df_sim.columns:
+        # Try fallback names if schema changed
+        if 'yield_wlp' in df_sim.columns:
+            df_sim.rename(columns={'yield_wlp': 'yield_water_limited'}, inplace=True)
+        else:
+            logging.error("CRITICAL: No 'yield_water_limited' column found.")
+            sys.exit(1)
 
-    logging.info("--- Phase 5: Running Spatial Error Trend Analysis ---")
+    df_sim['yield_fresh_dt'] = (df_sim['yield_water_limited'] / DMC) / 100.0
 
-    try:
-        # 1. Load the actual yields to calculate error
-        static_data_path = PROCESSED_DATA_DIR / 'StaticSiteData.csv'
-        df_static = pd.read_csv(static_data_path, dtype={'district_no': str})
-        df_actuals = df_static[['year', 'district_no', 'kreisYield']].rename(columns={'kreisYield': 'actual_yield'})
+    # Aggregate
+    agg_dict = {'yield_fresh_dt': 'mean'}
 
-        # 2. Merge actuals with aggregated forecast data
-        df_merged = pd.merge(df_agg_wofost, df_actuals, on=['year', 'district_no'])
+    # Dynamically add means for other numeric columns
+    numeric_cols = df_sim.select_dtypes(include=np.number).columns
+    for c in numeric_cols:
+        if c not in ['yield_fresh_dt', 'year', 'member']:
+            agg_dict[c] = 'mean'
 
-        # 3. Calculate the Error (Bias)
-        # (Forecast - Actual). Positive = Over-prediction, Negative = Under-prediction
-        df_merged['model_error_dt'] = df_merged['wofost_forecast_yield_fresh_dt'] - df_merged['actual_yield']
+    # Group
+    df_agg = df_sim.groupby(['year', 'district_no']).agg(agg_dict).reset_index()
+    df_agg.rename(columns={'yield_fresh_dt': 'sim_yield_mean'}, inplace=True)
 
-        # 4. Define time periods
-        min_year = df_merged['year'].min()
-        max_year = df_merged['year'].max()
+    return df_agg
 
-        bins = [1980, 1990, 2000, 2010, max_year]
-        labels = ["1981-1990", "1991-2000", "2001-2010", f"2011-{max_year}"]
 
-        df_merged['time_period'] = pd.cut(df_merged['year'], bins=bins, labels=labels, right=True)
+def plot_calibration(df_merged):
+    """Generates Calibration Plots (Slope & Bias)."""
+    logging.info("Generating Calibration Plots...")
 
-        # 5. Aggregate ERROR by district AND time period
-        df_spatial_error = df_merged.groupby(['district_no', 'time_period'])['model_error_dt'].mean().reset_index()
+    df_clean = df_merged.dropna(subset=['actual_yield', 'sim_yield_mean'])
+    if df_clean.empty: return
 
-        # 6. Merge with geodataframe
-        gdf_trend = pd.merge(gdf_districts, df_spatial_error, on='district_no')
+    bias = (df_clean['sim_yield_mean'] - df_clean['actual_yield']).mean()
 
-        # 7. Create the plot with a diverging colormap
+    # 1. Trend
+    yearly = df_clean.groupby('year')[['actual_yield', 'sim_yield_mean']].mean().reset_index()
+    plt.figure(figsize=(14, 7))
+    plt.plot(yearly['year'], yearly['actual_yield'], 'k-o', label='Actual')
+    plt.plot(yearly['year'], yearly['sim_yield_mean'], 'b--', label='WOFOST Sim')
 
-        # --- IMPORTANT: Center the colormap ---
-        # Find the max absolute error to center the map at 0
-        vmax = abs(gdf_trend['model_error_dt']).max()
-        vmin = -vmax
+    if len(yearly) > 1:
+        s_act = np.polyfit(yearly['year'], yearly['actual_yield'], 1)[0]
+        s_sim = np.polyfit(yearly['year'], yearly['sim_yield_mean'], 1)[0]
+        plt.title(f"Trend Check\nSlope Actual: {s_act:.2f} | Slope Sim: {s_sim:.2f}")
 
-        fig, axes = plt.subplots(2, 2, figsize=(20, 18))
-        fig.suptitle('Mean Model Error (Forecast - Actual) by District and Decade', fontsize=20, y=0.95)
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.savefig(OUTPUT_DIR / "03_calibration_trend.png")
+    plt.close()
 
-        axes_flat = axes.flatten()
+    # 2. Bias
+    plt.figure(figsize=(10, 6))
+    residuals = df_clean['sim_yield_mean'] - df_clean['actual_yield']
+    sns.histplot(residuals, bins=30, kde=True, color='purple')
+    plt.axvline(bias, color='r', label=f'Bias: {bias:.1f}')
+    plt.title(f"Bias Distribution (Target: 0)")
+    plt.legend()
+    plt.savefig(OUTPUT_DIR / "04_calibration_bias.png")
+    plt.close()
 
-        for i, period in enumerate(labels):
-            ax = axes_flat[i]
-            gdf_period = gdf_trend[gdf_trend['time_period'] == period]
-
-            if gdf_period.empty:
-                ax.set_title(f"{period}\n(No Data)")
-                ax.set_axis_off()
-                continue
-
-            gdf_period.plot(
-                column='model_error_dt',
-                ax=ax,
-                legend=False,
-                cmap='RdBu_r',  # Red-White-Blue diverging map
-                vmin=vmin,
-                vmax=vmax
-            )
-            ax.set_title(period, fontsize=16)
-            ax.set_axis_off()
-
-        # Add a single shared colorbar
-        sm = plt.cm.ScalarMappable(cmap='RdBu_r', norm=plt.Normalize(vmin=vmin, vmax=vmax))
-        sm._A = []
-        cbar_ax = fig.add_axes([0.25, 0.05, 0.5, 0.03])  # [left, bottom, width, height]
-        cbar = fig.colorbar(sm, cax=cbar_ax, orientation='horizontal')
-        cbar.set_label('Mean Error (dt/ha) | Blue = Under-predict, Red = Over-predict')
-
-        plt.tight_layout(rect=[0, 0.08, 1, 0.95])
-
-        plot_path = OUTPUT_DIR / "P5_map_spatial_error_trend.png"  # New name
-        plt.savefig(plot_path, dpi=300)
-        plt.close()
-        logging.info(f"Saved error map to {plot_path}")
-
-    except FileNotFoundError:
-        logging.warning(f"Could not find StaticSiteData.csv at {static_data_path}. Skipping Phase 5.")
-    except Exception as e:
-        logging.error(f"Failed to generate Phase 5 plot. Error: {e}", exc_info=True)
 
 def main():
-    """
-    Main function to run the validation dashboard.
-    """
-    logging.info("--- Starting Validation Dashboard ---")
-    genes_path = PROCESSED_DATA_DIR / 'GeneticGainFactors.json'
-    initial_conditions_path = PROCESSED_DATA_DIR / 'InitialConditions.csv'
-    wofost_output_path = config.WOFOST_CONFIG['FILE_PATHS'][
-                             'OUTPUT_DIR'] / "forecast_ensemble_results_raw.csv"
-    logging.info(f"Output will be saved to: {OUTPUT_DIR}")
+    df_sim_raw, df_act, df_ic = load_all_data()
 
-    # --- Run Phases ---
-    df_genes, df_ic = phase_1_input_sanity_checks(genes_path, initial_conditions_path)
-    df_full_wofost, df_agg_wofost = phase_2_output_sanity_checks(wofost_output_path)
-    phase_3_model_behavior_validation(df_genes, df_ic, df_agg_wofost)
+    # Plotting
+    analyze_inputs(df_ic)
+    analyze_internal_dynamics(df_sim_raw)
 
-    # --- NEW: Load Geo-data once in main ---
-    gdf_districts = None
-    try:
-        gdf_districts = gpd.read_file(config.DISTRICTS_GEOJSON_PATH).rename(columns={'id': 'district_no'})
-        gdf_districts['district_no'] = gdf_districts['district_no'].astype(str).str.zfill(5)
-    except FileNotFoundError:
-        logging.error("FATAL: GeoJSON file for districts not found. Skipping all spatial analysis (Phase 4 & 5).")
+    # Process & Validate
+    df_sim_agg = process_ensemble(df_sim_raw)
+    df_merged = pd.merge(df_sim_agg, df_act, on=['year', 'district_no'], how='inner')
 
-    # Pass gdf_districts to both functions
-    phase_4_spatial_analysis(df_agg_wofost, df_ic, gdf_districts)
-    phase_5_spatial_trend_analysis(df_agg_wofost, gdf_districts) # <-- NEW FUNCTION CALL
+    if not df_merged.empty:
+        plot_calibration(df_merged)
+        # Save CSV
+        df_merged.to_csv(OUTPUT_DIR / "wofost_validation_merged.csv", index=False)
 
-    logging.info("--- Validation Dashboard Complete ---")
+        # Log Metrics
+        bias = (df_merged['sim_yield_mean'] - df_merged['actual_yield']).mean()
+        r2 = r2_score(df_merged['actual_yield'], df_merged['sim_yield_mean'])
+        logging.info(f"--- RESULTS ---")
+        logging.info(f"R2: {r2:.3f}")
+        logging.info(f"Bias: {bias:.1f} dt/ha")
+        logging.info(f"Full report in: {OUTPUT_DIR}")
+    else:
+        logging.error("No overlap between simulation and actuals.")
 
 
 if __name__ == "__main__":

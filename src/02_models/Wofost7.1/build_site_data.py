@@ -33,7 +33,7 @@ HISTORICAL_YIELD_PATH = INTERMEDIATE_DATA_DIR / 'sugarbeet_yield.csv'
 
 # --- Output File Path ---
 FINAL_OUTPUT_PATH = PROCESSED_DATA_DIR / 'StaticSiteData.csv'
-
+cap = config.WOFOST_CONFIG['CONSTANTS'].get('MAX_ROOTING_DEPTH_GLOBAL_CAP_CM', 120.0)
 
 def main():
     """
@@ -103,7 +103,9 @@ def main():
     key_cols = ['district_no', 'year', 'kreisYield', 'latitude', 'longitude']
     physics_cols = [col for col in df_soil_physics.columns if col != 'district_no']
     final_cols = key_cols + physics_cols
+    df_final['RDMSOL'] = df_final['RDMSOL'].clip(upper=cap)
     df_final = df_final[final_cols]
+    logging.info(f"Applied Global Root Depth Cap: {cap} cm")
 
     logging.info(f"Saving final merged data to '{FINAL_OUTPUT_PATH}'")
     df_final.to_csv(FINAL_OUTPUT_PATH, index=False, float_format='%.4f')

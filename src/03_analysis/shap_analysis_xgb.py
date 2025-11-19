@@ -1,13 +1,7 @@
-# FILE: src/03_analysis/shap_analysis_xgb.py
+# FILE: src/03_analysis/shap_analysis_standalone.py
 # DESCRIPTION:
-# This script loads the three final quantile models (lower, median, upper)
-# and performs a SHAP (SHapley Additive exPlanations) analysis on each.
-#
-# --- FIXED ---
-# 1. Solved "feature_names mismatch" ValueError by extracting the
-#    feature list *directly from the loaded model* and using it to
-#    order the input DataFrame. This ensures a perfect match.
-# 2. Kept the feature engineering logic to create the required columns.
+# Performs SHAP (SHapley Additive exPlanations) analysis on the STANDALONE XGBoost model.
+# Aligned with 'train_standalone_xgb_model.py' (Predicts Residual from Rolling Trend).
 
 import pandas as pd
 import os
@@ -28,79 +22,70 @@ from src import config
 
 warnings.filterwarnings("ignore")
 
-# Use the config dictionaries from the central config file
-XGB_CONFIG = config.XGBOOST_TRAINING_CONFIG
+# --- CONFIGURATION ---
+# Use the Standalone config
+XGB_CONFIG = config.STANDALONE_XGB_CONFIG
 SHAP_CONFIG = config.SHAP_ANALYSIS_CONFIG
+
+# Update output directory specifically for Standalone analysis
+OUTPUT_DIR = SHAP_CONFIG['SHAP_OUTPUT_DIR'] / "standalone_xgb"
 
 
 def load_and_prep_data(model_feature_names):
     """
     Loads and prepares the training data, ensuring the final DataFrame
     has columns in the exact order specified by model_feature_names.
+    Matches logic in train_standalone_xgb_model.py.
     """
     print(f"Loading data from {XGB_CONFIG['DATA_PATH']}...")
     df = pd.read_csv(XGB_CONFIG['DATA_PATH'])
 
-    # 1. Perform the rename (the model expects 'stage1_forecast')
-    df.rename(columns={'wofost_forecast_yield_fresh_dt': 'stage1_forecast'}, inplace=True)
+    # --- REPLICATE TARGET ENGINEERING FOR FILTERING ---
+    # We need to calculate the baseline/target to drop NaNs exactly like the training script.
+    baseline_col = 'yield_rolling_trend'
+    target_col = 'trend_residual'
 
-    # 2. Calculate the residual target (needed for .dropna)
-    df['forecast_residual'] = df['kreisYield'] - df['stage1_forecast']
-    df.dropna(subset=['stage1_forecast', 'forecast_residual'], inplace=True)
+    df.sort_values(by=['district_no', 'year'], inplace=True)
 
-    # --- RE-CREATE MISSING INTERACTION FEATURES ---
-    # We must create any features the model expects that aren't in the CSV.
-    print("Engineering interaction features...")
-    try:
-        if 'lat_x_summer_temp' in model_feature_names and 'lat_x_summer_temp' not in df.columns:
-            df['lat_x_summer_temp'] = df['lat'] * df['summer_temp_anomaly_mean']
+    # 5-Year Rolling Average (Lagged to prevent leak)
+    df[baseline_col] = df.groupby('district_no')['kreisYield'].transform(
+        lambda x: x.rolling(window=5, min_periods=3).mean().shift(1)
+    )
 
-        if 'sandy_soil_x_drought' in model_feature_names and 'sandy_soil_x_drought' not in df.columns:
-            df['sandy_soil_x_drought'] = df['avg_sand_0_30cm'] * df['summer_precip_anomaly_mean']
+    # Calculate Target (Residual)
+    df[target_col] = df['kreisYield'] - df[baseline_col]
 
-        if 'gdd_x_fertilizer_price' in model_feature_names and 'gdd_x_fertilizer_price' not in df.columns:
-            df['gdd_x_fertilizer_price'] = df['antecedent_gdd_sum_anomaly'] * df[
-                'fertilizer_price_index_lag1_anomaly_capped']
-
-        if 'hot_dry_interaction' in model_feature_names and 'hot_dry_interaction' not in df.columns:
-            df['hot_dry_interaction'] = df['summer_temp_anomaly_mean'] * df['summer_precip_anomaly_mean']
-
-        if 'forecast_hot_dry_risk_p90' in model_feature_names and 'forecast_hot_dry_risk_p90' not in df.columns:
-            df['forecast_hot_dry_risk_p90'] = df['summer_temp_anomaly_p90'] * df['summer_precip_anomaly_p10']
-
-        if 'wofost_forecast_x_profit_margin' in model_feature_names and 'wofost_forecast_x_profit_margin' not in df.columns:
-            # Use the RENAMED column 'stage1_forecast'
-            df['wofost_forecast_x_profit_margin'] = df['stage1_forecast'] * df['profit_margin_proxy_lag1']
-
-    except KeyError as e:
-        print(f"WARNING: Could not create interaction features. Base column missing: {e}")
-        pass
+    # Drop rows where target or baseline are missing (Matches training logic)
+    df.dropna(subset=[target_col, baseline_col], inplace=True)
 
     # --- FINAL STEP: Select features using the model's exact list ---
     try:
         # This guarantees the columns and their order match the model
+        # The Standalone training script relies on the CSV having these columns pre-calculated.
+        missing_cols = [col for col in model_feature_names if col not in df.columns]
+        if missing_cols:
+            raise KeyError(f"The following features expected by the model are missing from the CSV: {missing_cols}")
+
         X_train = df[model_feature_names]
+
+        # Ensure no NaNs in features (Standard XGBoost training prep)
+        X_train.dropna(inplace=True)
+
     except KeyError as e:
         print(f"--- FATAL ERROR ---")
-        print(f"Still missing columns: {e}")
-        missing_cols = [col for col in model_feature_names if col not in df.columns]
-        print(f"Columns in model but NOT in DataFrame after engineering: {missing_cols}")
+        print(f"Column mismatch: {e}")
         raise e
 
-    print(f"Data loaded and features engineered. Found {len(X_train)} samples.")
+    print(f"Data loaded and prepared. Found {len(X_train)} samples.")
     return X_train
 
 
 def run_analysis():
     """Main function to run the SHAP analysis loop."""
-    print("--- Starting SHAP Analysis for Final Quantile Models ---")
+    print("--- Starting SHAP Analysis for Standalone XGBoost Models ---")
 
-    shap_output_dir = SHAP_CONFIG['SHAP_OUTPUT_DIR']
-    os.makedirs(shap_output_dir, exist_ok=True)
-    print(f"SHAP plots will be saved to: {shap_output_dir}")
-
-    # --- LOOP MOVED UP ---
-    # We must load the model *first* to get its feature list
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    print(f"SHAP plots will be saved to: {OUTPUT_DIR}")
 
     for name, alpha in XGB_CONFIG['QUANTILES'].items():
         print(f"\n--- Analyzing {name.upper()} Model (Quantile: {alpha}) ---")
@@ -113,36 +98,33 @@ def run_analysis():
         print(f"Loading model: {model_path}")
         model = joblib.load(model_path)
 
-        # --- Base Score Patch ---
+        # --- Base Score Patch & Feature Name Extraction ---
         try:
             booster = model.get_booster()
 
-            # --- CRITICAL FIX: Get feature names FROM THE MODEL ---
+            # --- CRITICAL: Get feature names FROM THE MODEL ---
             model_feature_names = booster.feature_names
 
+            # Patch base_score if needed (fix for JSON serialization issues in older XGB versions)
             config_str = booster.save_config()
             config_json = json.loads(config_str)
             base_score_val = config_json.get('learner', {}).get('learner_model_param', {}).get('base_score')
             if base_score_val and isinstance(base_score_val, str):
                 parsed_score = float(base_score_val.strip('[]'))
-                print(f"Warning: Model's internal 'base_score' was a string '{base_score_val}'.")
-                print(f"Patching booster config with float: {parsed_score}")
                 config_json['learner']['learner_model_param']['base_score'] = parsed_score
                 booster.load_config(json.dumps(config_json))
                 model.base_score = parsed_score
         except Exception as e:
-            print(f"Error: Could not parse or patch model.base_score. SHAP analysis might fail. Error: {e}")
-            if isinstance(model.base_score, str):
-                try:
-                    model.base_score = float(model.base_score.strip('[]'))
-                except:
-                    pass
+            print(f"Warning: Could not parse/patch model metadata. Analysis might fail. Error: {e}")
+            # Fallback for simple list mismatch
+            if hasattr(model, 'feature_names_in_'):
+                model_feature_names = list(model.feature_names_in_)
         # --- End of Patch ---
 
-        # --- Load data *after* getting feature names ---
-        # Pass the model's feature list to the load function
+        # --- Load data using the Model's feature list ---
         X_train = load_and_prep_data(model_feature_names)
 
+        # Subsample if dataset is too large for SHAP
         shap_sample_size = SHAP_CONFIG['SHAP_SAMPLE_SIZE']
         if len(X_train) > shap_sample_size:
             print(f"Dataset is large ({len(X_train)} samples). Subsampling to {shap_sample_size} for SHAP analysis.")
@@ -151,18 +133,20 @@ def run_analysis():
             X_train_shap = X_train
 
         print("Initializing SHAP Explainer...")
+        # TreeExplainer is optimized for XGBoost
         explainer = shap.Explainer(model.predict, X_train_shap)
 
-        print(f"Calculating SHAP values for {len(X_train_shap)} samples... (This may take a moment)")
+        print(f"Calculating SHAP values for {len(X_train_shap)} samples...")
         shap_values = explainer(X_train_shap)
         print("SHAP values calculated.")
 
+        # 1. Global Feature Importance (Bar Plot)
         print("Generating Global Feature Importance (bar) plot...")
         try:
             plt.figure(figsize=(10, 16))
-            plt.title(f'SHAP Global Feature Importance - {name.upper()} Model', fontsize=16, pad=20)
+            plt.title(f'SHAP Global Feature Importance - {name.upper()} (Standalone)', fontsize=16, pad=20)
             shap.summary_plot(shap_values, X_train_shap, plot_type='bar', show=False, max_display=30)
-            save_path = os.path.join(shap_output_dir, f'shap_global_importance_bar_{name}.png')
+            save_path = os.path.join(OUTPUT_DIR, f'shap_global_importance_bar_{name}.png')
             plt.savefig(save_path, dpi=150, bbox_inches='tight')
             plt.close()
             print(f"✅ Saved bar plot to {save_path}")
@@ -170,12 +154,13 @@ def run_analysis():
             print(f"❌ Failed to generate bar plot for {name}: {e}")
             plt.close()
 
+        # 2. Feature Distribution (Beeswarm Plot)
         print("Generating Feature Distribution (beeswarm) plot...")
         try:
             plt.figure(figsize=(10, 16))
-            plt.title(f'SHAP Feature Distribution - {name.upper()} Model', fontsize=16, pad=20)
+            plt.title(f'SHAP Feature Distribution - {name.upper()} (Standalone)', fontsize=16, pad=20)
             shap.summary_plot(shap_values, X_train_shap, plot_type='dot', show=False, max_display=30)
-            save_path = os.path.join(shap_output_dir, f'shap_distribution_beeswarm_{name}.png')
+            save_path = os.path.join(OUTPUT_DIR, f'shap_distribution_beeswarm_{name}.png')
             plt.savefig(save_path, dpi=150, bbox_inches='tight')
             plt.close()
             print(f"✅ Saved beeswarm plot to {save_path}")
