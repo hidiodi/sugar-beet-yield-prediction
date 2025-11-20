@@ -26,17 +26,17 @@ SCRIPTS_TO_RUN = [
     "src/02_models/Wofost7.1/run_wofost_pipeline.py",
     "src/02_models/Wofost7.1/validation_dashboard.py",
     #"src/02_models/Wofost7.1/create_trendModel.py",
-    #"src/01_data/FeatureEngineering/build_stage1_features.py",
+    "src/01_data/FeatureEngineering/build_stage1_features.py",
     #"src/03_analysis/basic_analysis/analyze_stage1_features.py",
-    #"src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
-    #"src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
-    #"src/02_models/XGBoost/regression_model/ModelScripts/train_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
-    #"src/02_models/XGBoost/regression_model/Testing/backtest_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
+    "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
+    "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
+    "src/02_models/XGBoost/regression_model/ModelScripts/train_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
+    "src/02_models/XGBoost/regression_model/Testing/backtest_standalone_xgb_model.py", # uses wofost as a simple input and trains with yield as target
     #"src/02_models/experimental_models/backtest_adaptive_cqr_model.py",
     #"src/02_models/NGboost/train_final_ngboost_model.py",
     #"src/02_models/NGboost/backtest_final_ngboost_model.py",
     #"src/02_models/FinalEnsemble/backtest_final_ensemble.py",
-    #"src/03_analysis/basic_analysis/compare_model_versions.py",
+    "src/03_analysis/basic_analysis/compare_model_versions.py",
     #"src/02_models/XGBoost/regression_model/Tuning/tune_quantiles.py",
     #"src/03_analysis/shap_analysis_xgb.py",
     #"src/03_analysis/run_hybrid_analysis_pipeline.py",
@@ -84,7 +84,7 @@ WEATHER_END_YEAR = 2024
 # --- WOFOST Model Configuration ---
 WOFOST_CONFIG = {
     # max range 1982 - 2024 and None to run all districts
-    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': 5,
+    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': None,
     'FILE_PATHS': {
         'HISTORICAL_DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
         'CORRECT_WEATHER_DIR': DATA_DIR / '04_feature/weather_district_daily',
