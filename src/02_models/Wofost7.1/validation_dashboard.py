@@ -2,6 +2,7 @@
 # Description: Validation Dashboard (v3.1 - Dynamic Columns).
 #              - Adapts to exact CSV columns (No KeyErrors).
 #              - Visualizes the metrics YOU actually saved (Mud days, Frost, Respiration).
+#              - ADDED: Comparative Performance Diagnosis (Side-by-Side Graph).
 
 import pandas as pd
 import numpy as np
@@ -208,6 +209,125 @@ def plot_calibration(df_merged):
     plt.close()
 
 
+def generate_comparative_diagnosis(df_sim_raw, df_act):
+    """
+    NEW FUNCTION: Generates the side-by-side Performance Diagnosis Graph.
+    Self-contained: Loads historical data and calculates percentiles locally.
+    """
+    logging.info("Generating 05_comparative_performance_diagnosis.png ...")
+
+    DMC = CONFIG['CONSTANTS']['DMC_SUGARBEET']
+
+    # 1. Load Historical Data (Specific to this graph)
+    hist_path = CONFIG['FILE_PATHS']['OUTPUT_DIR'] / "historical_validation_results.csv"
+    if not hist_path.exists():
+        logging.warning(f"Historical file not found: {hist_path}. Skipping Comparative Graph.")
+        return
+
+    df_hist = pd.read_csv(hist_path, dtype={'district_no': str})
+    df_hist['district_no'] = df_hist['district_no'].astype(str).str.zfill(5)
+    df_hist['year'] = df_hist['year'].astype(int)
+
+    # 2. Prepare Forecast Stats (Mean + Percentiles + Potential)
+    # We process df_sim_raw locally here to get percentiles without changing process_ensemble
+    df_sim = df_sim_raw.copy()
+    if 'yield_water_limited' not in df_sim.columns: df_sim.rename(columns={'yield_wlp': 'yield_water_limited'},
+                                                                  inplace=True)
+    if 'yield_potential' not in df_sim.columns: df_sim['yield_potential'] = 0
+
+    # Convert Units (kg DM -> dt Fresh)
+    df_sim['yield_fresh'] = (df_sim['yield_water_limited'] / DMC) / 100.0
+    df_sim['pot_fresh'] = (df_sim['yield_potential'] / DMC) / 100.0
+
+    # Aggregate
+    def q10(x):
+        return x.quantile(0.10)
+
+    def q90(x):
+        return x.quantile(0.90)
+
+    df_agg = df_sim.groupby(['year', 'district_no']).agg({
+        'yield_fresh': ['mean', q10, q90],
+        'pot_fresh': 'mean'
+    }).reset_index()
+
+    # Flatten columns
+    df_agg.columns = ['year', 'district_no', 'fc_mean', 'fc_p10', 'fc_p90', 'pot_mean']
+
+    # 3. Prepare Historical Data
+    # Convert lintul_yield_perfect_weather (kg DM) -> dt Fresh
+    if 'lintul_yield_perfect_weather' in df_hist.columns:
+        df_hist['perf_yield'] = (df_hist['lintul_yield_perfect_weather'] / DMC) / 100.0
+    else:
+        df_hist['perf_yield'] = np.nan
+
+    # 4. Merge All with Actuals
+    df_merged = pd.merge(df_agg, df_act, on=['year', 'district_no'], how='inner')
+    df_merged = pd.merge(df_merged, df_hist[['year', 'district_no', 'perf_yield']], on=['year', 'district_no'],
+                         how='left')
+
+    df_plot = df_merged.dropna(subset=['actual_yield'])
+    if df_plot.empty: return
+
+    # 5. Plotting (Side-by-Side)
+    fig, axes = plt.subplots(1, 2, figsize=(22, 9))
+    fig.suptitle(f"WOFOST Performance Diagnosis ({df_plot['year'].min()}-{df_plot['year'].max()})", fontsize=16)
+
+    # Determine limits
+    all_vals = list(df_plot['actual_yield']) + list(df_plot['fc_mean'])
+    if 'perf_yield' in df_plot.columns: all_vals += list(df_plot['perf_yield'].dropna())
+    min_val, max_val = min(all_vals) * 0.9, max(all_vals) * 1.05
+
+    # -- LEFT: Perfect Weather --
+    ax0 = axes[0]
+    if 'perf_yield' in df_plot.columns:
+        sub = df_plot.dropna(subset=['perf_yield'])
+        if not sub.empty:
+            mae = mean_absolute_error(sub['actual_yield'], sub['perf_yield'])
+            r2 = r2_score(sub['actual_yield'], sub['perf_yield'])
+            ax0.scatter(sub['actual_yield'], sub['pot_mean'], c='red', marker='x', alpha=0.5,
+                        label='Mean Potential Yield (PP)')
+            ax0.scatter(sub['actual_yield'], sub['perf_yield'], c='steelblue', alpha=0.7,
+                        label='Simulated (Perfect Weather)')
+            ax0.set_title(f"Perfect Weather\nMAE={mae:.2f}, R2={r2:.3f}", fontsize=14)
+    ax0.plot([min_val, max_val], [min_val, max_val], 'r--', label='1:1 Line')
+    ax0.set_xlabel("Actual Yield (dt/ha)")
+    ax0.set_ylabel("Simulated Yield (dt/ha)")
+    ax0.set_xlim(min_val, max_val);
+    ax0.set_ylim(min_val, max_val)
+    ax0.grid(True, alpha=0.3);
+    ax0.legend()
+
+    # -- RIGHT: Forecast Ensemble --
+    ax1 = axes[1]
+    mae = mean_absolute_error(df_plot['actual_yield'], df_plot['fc_mean'])
+    r2 = r2_score(df_plot['actual_yield'], df_plot['fc_mean'])
+
+    ax1.scatter(df_plot['actual_yield'], df_plot['pot_mean'], c='red', marker='x', alpha=0.3,
+                label='Mean Potential Yield (PP)')
+
+    # Error bars
+    y_err_low = (df_plot['fc_mean'] - df_plot['fc_p10']).clip(lower=0)
+    y_err_high = (df_plot['fc_p90'] - df_plot['fc_mean']).clip(lower=0)
+    ax1.errorbar(df_plot['actual_yield'], df_plot['fc_mean'], yerr=[y_err_low, y_err_high], fmt='none',
+                 ecolor='lightgrey', alpha=0.6, zorder=1)
+
+    ax1.scatter(df_plot['actual_yield'], df_plot['fc_mean'], c='orange', marker='s', edgecolor='grey', alpha=0.9,
+                zorder=2, label='Ensemble Mean & 10-90th Pct.')
+
+    ax1.plot([min_val, max_val], [min_val, max_val], 'r--', label='1:1 Line')
+    ax1.set_title(f"Forecast Weather (Ensemble Range)\nMean MAE={mae:.2f}, Mean R2={r2:.3f}", fontsize=14)
+    ax1.set_xlabel("Actual Yield (dt/ha)")
+    ax1.set_xlim(min_val, max_val);
+    ax1.set_ylim(min_val, max_val)
+    ax1.grid(True, alpha=0.3);
+    ax1.legend()
+
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "05_comparative_performance_diagnosis.png", dpi=300)
+    plt.close()
+
+
 def main():
     df_sim_raw, df_act, df_ic = load_all_data()
 
@@ -221,6 +341,11 @@ def main():
 
     if not df_merged.empty:
         plot_calibration(df_merged)
+
+        # --- CALL NEW GRAPH GENERATOR ---
+        generate_comparative_diagnosis(df_sim_raw, df_act)
+        # --------------------------------
+
         # Save CSV
         df_merged.to_csv(OUTPUT_DIR / "wofost_validation_merged.csv", index=False)
 
