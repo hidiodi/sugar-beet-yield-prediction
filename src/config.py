@@ -19,7 +19,7 @@ PIPELINE_NAME = "Main Hybrid Model Pipeline"
 SCRIPTS_TO_RUN = [
     #"src/01_data/download_all_data_pipeline.py",
     #"src/01_data/process_input_data_pipeline.py",
-    #"src/02_models/Wofost7.1/build_initial_conditions.py",
+    "src/02_models/Wofost7.1/build_initial_conditions.py",
     "src/02_models/Wofost7.1/build_site_data.py",
     "src/02_models/Wofost7.1/build_genetic_parameters.py",
     "src/02_models/Wofost7.1/build_forecast_weather.py",
@@ -84,7 +84,7 @@ WEATHER_END_YEAR = 2024
 # --- WOFOST Model Configuration ---
 WOFOST_CONFIG = {
     # max range 1982 - 2024 and None to run all districts
-    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': 10,
+    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': 5,
     'FILE_PATHS': {
         'HISTORICAL_DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
         'CORRECT_WEATHER_DIR': DATA_DIR / '04_feature/weather_district_daily',
@@ -112,7 +112,7 @@ WOFOST_CONFIG = {
     'GENERIC_SITE': {'LATITUDE': 52.0, 'LONGITUDE': 10.0, 'ELEVATION': 50.0},
     'ANALOG_YEAR_CONFIG': {'NUM_ANALOGS': 5, 'MIN_YEARS_FOR_FIT': 10, },
     'CONSTANTS': {
-        'DMC_SUGARBEET': 0.25,
+        'DMC_SUGARBEET': 0.225,
         'INITIAL_ROOTING_DEPTH_CM': 10.0,
         'SOIL_PARTICLE_DENSITY': 2.65,
         'HARVEST_LOSS_FACTOR': 0.95,

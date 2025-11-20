@@ -23,8 +23,8 @@ CONFIG = config.WOFOST_CONFIG
 FORECAST_PARTS_DIR = config.PROCESSED_DATA_DIR / 'forecast_weather_parts'
 
 ANALOG_WEIGHTS = {
-    'spring_temp': 1.0, 'spring_precip': 0.3,
-    'summer_temp': 1.2, 'summer_precip': 0.3
+    'spring_temp': 1.0, 'spring_precip': 0.5,
+    'summer_temp': 0.6, 'summer_precip': 0.2
 }
 
 

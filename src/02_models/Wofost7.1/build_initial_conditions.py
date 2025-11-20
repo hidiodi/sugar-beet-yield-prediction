@@ -1,6 +1,6 @@
 # File: src/02_models/Wofost7.1/build_initial_conditions.py
 # Description: Generates InitialConditions.csv.
-#              - ERA5 Soil Moisture (WAV)
+#              - ERA5 Soil Moisture (WAV) -> NOW FORCED TO FIELD CAPACITY (Fix v6.1)
 #              - Satellite NDVI Anomalies
 #              - Forecast-Based Sowing Dates (SMART ESP VERSION)
 #                * Uses the 50-member ensemble forecast available on March 1st.
@@ -101,7 +101,7 @@ class DynamicSowingManager:
 
 
 def _precalculate_wav_from_era5(gdf_districts, static_df):
-    logging.info("--- Pre-calculating WAV from ERA5-Land data ---")
+    logging.info("--- Pre-calculating WAV (Forced to Field Capacity) ---")
     era5_files = sorted(list(ERA5_SOIL_DATA_DIR.glob("*_FEBRUARY.nc")))
 
     if not era5_files:
@@ -113,7 +113,9 @@ def _precalculate_wav_from_era5(gdf_districts, static_df):
 
     all_years_results = []
 
-    pbar = tqdm(era5_files, desc="Processing ERA5-Land Files")
+    # Note: We iterate files primarily to get the Year/District structure.
+    # The actual swvl1 value will be overridden by Field Capacity logic.
+    pbar = tqdm(era5_files, desc="Scanning ERA5 Files for Structure")
     for nc_file in pbar:
         year_match = re.search(r'_(\d{4})_FEBRUARY', nc_file.name)
         if not year_match: continue
@@ -135,25 +137,18 @@ def _precalculate_wav_from_era5(gdf_districts, static_df):
                     if not extracted: continue
                     actual_nc_path = extracted[0]
 
+                # We open the dataset to confirm validity and get districts,
+                # even if we don't use the exact soil moisture value.
                 with xr.open_dataset(actual_nc_path, engine='netcdf4') as rds:
                     # Check for swvl1 variable
                     if 'swvl1' not in rds:
                         continue
 
-                    da = rds['swvl1'].squeeze(drop=True)
-                    da = da.rio.set_spatial_dims(x_dim="longitude", y_dim="latitude").rio.write_crs("EPSG:4326")
-
+                    # Minimal processing to get list of valid districts for this year
                     year_results = []
                     for _, district in gdf_districts.iterrows():
-                        try:
-                            clipped = da.rio.clip([district.geometry], gdf_districts.crs, drop=True)
-                            mean_swvl1 = clipped.mean().item()
-                        except (rioxarray.exceptions.NoDataInBounds, ValueError):
-                            centroid = district.geometry.centroid
-                            mean_swvl1 = da.sel(longitude=centroid.x, latitude=centroid.y, method='nearest').item()
-
-                        if pd.notna(mean_swvl1):
-                            year_results.append({'district_no': district['district_no'], 'mean_feb_swvl1': mean_swvl1})
+                        # Placeholder value, we use Field Capacity later
+                        year_results.append({'district_no': district['district_no'], 'mean_feb_swvl1': 0.5})
 
                     if year_results:
                         df = pd.DataFrame(year_results)
@@ -164,14 +159,18 @@ def _precalculate_wav_from_era5(gdf_districts, static_df):
             continue
 
     if not all_years_results:
-        # If this fails, we create a dummy DF to allow testing to proceed if desired,
-        # or exit. Given strict mode, we exit.
         logging.error("FATAL: No soil moisture data could be processed.")
         sys.exit(1)
 
     full_swvl1_df = pd.concat(all_years_results, ignore_index=True)
-    final_df = pd.merge(full_swvl1_df, static_df[['district_no', 'SMW', 'RDMSOL']], on='district_no')
-    final_df['WAV'] = (final_df['mean_feb_swvl1'] - final_df['SMW']) * final_df['RDMSOL']
+
+    # --- FIX: Force Field Capacity ---
+    # We include SMFCF in the merge to calculate full bucket size.
+    final_df = pd.merge(full_swvl1_df, static_df[['district_no', 'SMW', 'SMFCF', 'RDMSOL']], on='district_no')
+
+    logging.warning("!!! CRITICAL FIX: Initializing Soil at FIELD CAPACITY (Ignoring ERA5 skin layer) !!!")
+    # WAV = (Field Capacity - Wilting Point) * Rooting Depth
+    final_df['WAV'] = (final_df['SMFCF'] - final_df['SMW']) * final_df['RDMSOL']
     final_df['WAV'] = final_df['WAV'].clip(lower=0.0)
 
     return final_df[['year', 'district_no', 'WAV']]
@@ -273,7 +272,7 @@ def process_forecast_sowing_date(file_path, sowing_manager):
 
 
 def main():
-    logging.info("--- Building InitialConditions.csv (Trafficability + ERA5 + Satellite) ---")
+    logging.info("--- Building InitialConditions.csv (Trafficability + Field Capacity + Satellite) ---")
 
     try:
         with open(CONFIG['FILE_PATHS']['CROP_YAML'], 'r') as f:
@@ -326,7 +325,7 @@ def main():
         logging.error(f"Initial Data Load Failed: {e}", exc_info=True)
         sys.exit(1)
 
-    # 2. Calculate ERA5 WAV
+    # 2. Calculate WAV (Forced Field Capacity)
     df_wav = _precalculate_wav_from_era5(gdf_districts, static_df)
 
     # 3. Calculate Sowing Dates (Forecast-Driven)
@@ -368,6 +367,8 @@ def main():
     # 5. Adjust WAV
     df_final['winter_cropland_ndvi_anomaly'] = df_final['winter_cropland_ndvi_anomaly'].fillna(0)
     df_final['WAV'] = df_final['WAV'] + (df_final['winter_cropland_ndvi_anomaly'] * NDVI_ANOMALY_SENSITIVITY)
+    # Ensure WAV doesn't exceed full saturation (approx SMFCF * RDMSOL, simplistic check)
+    # We rely on run_wofost_pipeline handling oversaturation via drainage if needed, but for WAV init, just clip lower.
     df_final['WAV'] = df_final['WAV'].clip(lower=0)
 
     # 6. Constants
