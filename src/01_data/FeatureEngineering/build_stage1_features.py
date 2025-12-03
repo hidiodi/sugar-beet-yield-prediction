@@ -245,36 +245,65 @@ def main():
     if not df_sowing.empty:
         df = pd.merge(df, df_sowing, on=['district_no', 'year'], how='left')
 
-    # Fill missing sowing dates with a median (e.g., April 15 -> DOY 105) just in case
-        # Here, we interact directly:
-    if 'sowing_doy' in df.columns and 'summer_days_tmax_gt_30c' in df.columns:
-    # Interaction: Late Sowing (High DOY) * High Heat = Maximum Stress Signal
-        df['late_sowing_x_summer_heat'] = df['sowing_doy'] * df['summer_days_tmax_gt_30c']
-    else:
-        df['late_sowing_x_summer_heat'] = 0
+        # ... inside Feature Generation block in main() ...
 
-    # Create an "Early Sowing Factor" (Higher is Better/Earlier)
-    # Using 150 (approx end of May) as a baseline.
-    # DOY 80 (Early) -> Factor 70. DOY 100 (Late) -> Factor 50.
+        # RE-CALCULATE inputs locally
+        if 'sowing_doy' in df.columns:
+            sowing_factor = (150 - df['sowing_doy']).clip(lower=0)
+        else:
+            sowing_factor = 0
+
+        if 'summer_solar_rad_anomaly_forecast' in df.columns:
+            # Use ABS to get magnitude of energy
+            rad_magnitude = df['summer_solar_rad_anomaly_forecast'].abs()
+        else:
+            rad_magnitude = 0
+
+        if 'summer_days_tmax_gt_30c' in df.columns:
+            heat_days = df['summer_days_tmax_gt_30c']
+        else:
+            heat_days = pd.Series(0, index=df.index)
+
+        # THE "HEAT-GATED" KILL SWITCH
+        # We stop trusting the forecast water balance.
+        # We trust the Temperature Forecast (which we know is accurate for 2018).
+
+        # Logic:
+        # 1. If Heat Days > 5 (Stressful): Radiation amplifies stress -> Negative.
+        # 2. If Heat Days <= 5 (Optimal): Radiation fuels growth -> Positive.
+
+        direction_multiplier = np.where(heat_days > 5, -1.0, 1.0)
+
+        # Weight the penalty by how hot it actually is
+        # If 10 days hot: -1.0 * (1 + 10/10) = -2.0 multiplier
+        penalty_weight = np.where(heat_days > 5, (1.0 + heat_days / 10.0), 1.0)
+
+        df['solar_capture_potential'] = sowing_factor * rad_magnitude * direction_multiplier * penalty_weight
+
+# "Is this a Crash Year?" (Solar Potential < -200)
+    df['is_heat_crash'] = (df['solar_capture_potential'] < -200).astype(int)
+
+    # "Is this a Bumper Year?" (Solar Potential > 100)
+    df['is_solar_bumper'] = (df['solar_capture_potential'] > 100).astype(int)
+
+    # 14. Growing Season Length (The Time Factor)
+    # Even if sowing was late, did they harvest late?
+    # We estimate Harvest DOY as 295 (Oct 22) - standard sugar beet campaign start.
     if 'sowing_doy' in df.columns:
-        df['early_sowing_factor'] = (150 - df['sowing_doy']).clip(lower=0)
+        df['growing_season_length'] = 295 - df['sowing_doy']
     else:
-        df['early_sowing_factor'] = 0
+        df['growing_season_length'] = 0
 
-    # Interaction: Effective Winter Water
-    # 2018: High Precip * Low Factor = Low Effective Water (Corrects the "Full Tank" paradox)
-    if 'winter_precip_sum' in df.columns:
-        df['effective_winter_water'] = df['winter_precip_sum'] * df['early_sowing_factor']
+    # 15. Trend Interaction (The Scaler)
+    # If the Trend predicts 900, a 10% loss is -90.
+    # If the Trend predicts 500, a 10% loss is -50.
+    # We let the model scale the stress relative to the expected yield.
+    if 'stage1_forecast' in df.columns:
+        df['trend_x_crash'] = df['stage1_forecast'] * df['is_heat_crash']
+        df['trend_x_bumper'] = df['stage1_forecast'] * df['is_solar_bumper']
     else:
-        df['effective_winter_water'] = 0
-
-    # 12. "Solar Capture Potential" (The 2014 Boost)
-    # Sugar is made from Light, but only if there are leaves to catch it.
-    # 2014: Early Sowing (Big Canopy) + High Radiation (Forecast) = Massive Yield.
-    if 'summer_solar_rad_anomaly_forecast' in df.columns:
-        df['solar_capture_potential'] = df['early_sowing_factor'] * df['summer_solar_rad_anomaly_forecast']
-    else:
-        df['solar_capture_potential'] = 0
+        df['trend_x_crash'] = 0
+        df['trend_x_bumper'] = 0
 
     # 3. Forecasts
     df_fcst = load_forecasts_with_mapping(paths['ECMWF_FORECAST_FEATURES_CSV'])
