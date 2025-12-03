@@ -173,6 +173,12 @@ def main():
     df = pd.merge(df, gdf_states, on='district_no', how='left')
     df['state_encoded'], _ = pd.factorize(df['state'])
 
+    # --- START INTEGRATION: GDR FLAG ---
+    # States 12-16 are the "New States" (former GDR)
+    # 11: Berlin, 12: Brandenburg, 13: MV, 14: Sachsen, 15: Sachsen-Anhalt, 16: Thüringen
+    # (Note:  and is technically mixed, so we exclude it for a clean "East" signal)
+    df['is_gdr'] = (df['district_no'].str[:2].astype(int) >= 11).astype(int)
+
     # 8. Feature Generation
     df.rename(columns={'latitude': 'lat', 'longitude': 'lon'}, inplace=True)
     df['year_trend'] = df['year'] - df['year'].min()

@@ -262,7 +262,8 @@ XGBOOST_TRAINING_CONFIG = {
         'summer_temp_prob_warm_forecast_sq',
         'spring_precip_prob_wet_forecast_sq',
         'summer_precip_prob_wet_forecast_sq',
-        'summer_precip_anomaly_forecast_sq'
+        'summer_precip_anomaly_forecast_sq',
+        'is_gdr'
     ],
     'BEST_PARAMS_LOWER': {
         'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,
