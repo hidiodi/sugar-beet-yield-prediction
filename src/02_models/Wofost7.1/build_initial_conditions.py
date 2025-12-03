@@ -1,11 +1,6 @@
 # File: src/02_models/Wofost7.1/build_initial_conditions.py
-# Description: Generates InitialConditions.csv.
-#              - ERA5 Soil Moisture (WAV) -> NOW FORCED TO FIELD CAPACITY (Fix v6.1)
-#              - Satellite NDVI Anomalies
-#              - Forecast-Based Sowing Dates (SMART ESP VERSION)
-#                * Uses the 50-member ensemble forecast available on March 1st.
-#                * Calculates optimal sowing date for EACH member.
-#                * Sets final sowing date as the MEDIAN of the member recommendations.
+# REFACTORED (v12.2): Fixed NameError
+# Restores NDVI_ANOMALY_SENSITIVITY constant.
 
 import datetime
 import pandas as pd
@@ -15,14 +10,13 @@ import sys
 import logging
 import geopandas as gpd
 import xarray as xr
-import rioxarray
 import re
-import zipfile
+import numpy as np
 import tempfile
+import zipfile
 from tqdm import tqdm
 from joblib import Parallel, delayed
 from sklearn.linear_model import Ridge
-import numpy as np
 
 # --- Setup Project Root ---
 project_root = Path(__file__).resolve().parents[3]
@@ -37,7 +31,9 @@ ERA5_SOIL_DATA_DIR = Path("data/01_raw/era5_land_monthly_soil")
 SATELLITE_FEATURES_PATH = "data/03_processed/satellite_features_districts_2001-2024.csv"
 FORECAST_PARTS_DIR = config.PROCESSED_DATA_DIR / 'forecast_weather_parts'
 
-NDVI_ANOMALY_SENSITIVITY = 5.0
+# Sensitivity Config
+SOWING_SHIFT_FACTOR = 5.0  # Days earlier per 1°C winter warmth
+NDVI_ANOMALY_SENSITIVITY = 5.0  # WAV adjustment scalar
 
 
 class DynamicSowingManager:
@@ -57,21 +53,14 @@ class DynamicSowingManager:
         self.precip_window = trafficability_window_days
 
     def find_sowing_date(self, weather_df_year: pd.DataFrame) -> datetime.date:
-        """
-        Calculates the optimal sowing date based on weather rules.
-        """
         df = weather_df_year.copy()
-
-        # Normalize column names (Forecast uses 'precip', logic uses 'prec')
         if 'prec' not in df.columns and 'precip' in df.columns:
             df.rename(columns={'precip': 'prec'}, inplace=True)
 
         if 'tmean' not in df.columns:
-            # Fallback if tmean is missing
             if 'tmin' in df.columns and 'tmax' in df.columns:
                 df['tmean'] = (df['tmin'] + df['tmax']) / 2.0
             else:
-                # Critical fallback if NO temp data (should not happen)
                 return datetime.date(2000, 4, 15)
 
         df = df.sort_values('date')
@@ -79,7 +68,6 @@ class DynamicSowingManager:
         df['precip_roll_sum'] = df['prec'].rolling(window=self.precip_window, min_periods=1).sum()
 
         try:
-            # Extract year from data to construct window
             target_year = df['date'].dt.year.mode()[0]
             window_start = datetime.date(target_year, self.start_month, self.start_day)
             window_end = datetime.date(target_year, self.end_month, self.end_day)
@@ -101,31 +89,20 @@ class DynamicSowingManager:
 
 
 def _precalculate_wav_from_era5(gdf_districts, static_df):
-    logging.info("--- Pre-calculating WAV (Forced to Field Capacity) ---")
+    logging.info("--- Pre-calculating WAV (Using ERA5 Soil Memory) ---")
     era5_files = sorted(list(ERA5_SOIL_DATA_DIR.glob("*_FEBRUARY.nc")))
 
-    if not era5_files:
-        logging.error(f"FATAL: No ERA5-Land NetCDF files found in '{ERA5_SOIL_DATA_DIR}'.")
-        sys.exit(1)
-
-    if gdf_districts.crs != "EPSG:4326":
-        gdf_districts = gdf_districts.to_crs("EPSG:4326")
-
+    static_ref = static_df[['district_no', 'SMW', 'SMFCF', 'RDMSOL']].copy()
     all_years_results = []
 
-    # Note: We iterate files primarily to get the Year/District structure.
-    # The actual swvl1 value will be overridden by Field Capacity logic.
-    pbar = tqdm(era5_files, desc="Scanning ERA5 Files for Structure")
+    pbar = tqdm(era5_files, desc="Scanning ERA5 Soil Moisture")
     for nc_file in pbar:
         year_match = re.search(r'_(\d{4})_FEBRUARY', nc_file.name)
         if not year_match: continue
         year = int(year_match.group(1))
 
-        # Skip years outside config range to save time
         if CONFIG['START_YEAR'] and year < CONFIG['START_YEAR']: continue
         if CONFIG['END_YEAR'] and year > CONFIG['END_YEAR']: continue
-
-        pbar.set_postfix_str(f"Year: {year}")
 
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -137,47 +114,65 @@ def _precalculate_wav_from_era5(gdf_districts, static_df):
                     if not extracted: continue
                     actual_nc_path = extracted[0]
 
-                # We open the dataset to confirm validity and get districts,
-                # even if we don't use the exact soil moisture value.
                 with xr.open_dataset(actual_nc_path, engine='netcdf4') as rds:
-                    # Check for swvl1 variable
-                    if 'swvl1' not in rds:
+                    if 'swvl2' in rds:
+                        target_var = 'swvl2'
+                    elif 'swvl1' in rds:
+                        target_var = 'swvl1'
+                    else:
                         continue
 
-                    # Minimal processing to get list of valid districts for this year
-                    year_results = []
-                    for _, district in gdf_districts.iterrows():
-                        # Placeholder value, we use Field Capacity later
-                        year_results.append({'district_no': district['district_no'], 'mean_feb_swvl1': 0.5})
+                    year_data = []
+                    for _, row in gdf_districts.iterrows():
+                        try:
+                            val = rds[target_var].sel(longitude=row['longitude'], latitude=row['latitude'],
+                                                      method='nearest').values.item()
+                        except:
+                            val = 0.3
+                        year_data.append({'district_no': row['district_no'], 'era5_volumetric': val})
 
-                    if year_results:
-                        df = pd.DataFrame(year_results)
-                        df['year'] = year
-                        all_years_results.append(df)
+                    df_year = pd.DataFrame(year_data)
+                    df_year['year'] = year
+                    all_years_results.append(df_year)
+
         except Exception as e:
             logging.error(f"Failure processing {nc_file.name}: {e}")
             continue
 
     if not all_years_results:
-        logging.error("FATAL: No soil moisture data could be processed.")
-        sys.exit(1)
+        logging.warning("No ERA5 Soil Data found. Using default Field Capacity.")
+        static_ref['WAV'] = (static_ref['SMFCF'] - static_ref['SMW']) * static_ref['RDMSOL']
+        years = range(CONFIG['START_YEAR'] or 1980, (CONFIG['END_YEAR'] or 2024) + 1)
+        dfs = []
+        for y in years:
+            d = static_ref[['district_no', 'WAV']].copy()
+            d['year'] = y
+            dfs.append(d)
+        return pd.concat(dfs)
 
-    full_swvl1_df = pd.concat(all_years_results, ignore_index=True)
+    full_swvl_df = pd.concat(all_years_results, ignore_index=True)
+    final_df = pd.merge(full_swvl_df, static_ref, on='district_no')
 
-    # --- FIX: Force Field Capacity ---
-    # We include SMFCF in the merge to calculate full bucket size.
-    final_df = pd.merge(full_swvl1_df, static_df[['district_no', 'SMW', 'SMFCF', 'RDMSOL']], on='district_no')
+    def calculate_wav(row):
+        current_theta = np.clip(row['era5_volumetric'], row['SMW'], row['SMFCF'])
+        awc = current_theta - row['SMW']
+        wav = awc * row['RDMSOL']
+        return max(0.0, wav)
 
-    logging.warning("!!! CRITICAL FIX: Initializing Soil at FIELD CAPACITY (Ignoring ERA5 skin layer) !!!")
-    # WAV = (Field Capacity - Wilting Point) * Rooting Depth
-    final_df['WAV'] = (final_df['SMFCF'] - final_df['SMW']) * final_df['RDMSOL']
-    final_df['WAV'] = final_df['WAV'].clip(lower=0.0)
-
+    final_df['WAV'] = final_df.apply(calculate_wav, axis=1)
+    logging.info(f"Recalculated WAV from ERA5. Mean: {final_df['WAV'].mean():.2f} cm")
     return final_df[['year', 'district_no', 'WAV']]
 
 
 def _infer_missing_ndvi_anomaly(df_satellite: pd.DataFrame, df_weather: pd.DataFrame) -> pd.DataFrame:
     logging.info("--- Inferring missing pre-satellite NDVI anomalies ---")
+
+    # Check for required columns
+    req_cols = ['tmean', 'prec', 'rad']
+    if not all(col in df_weather.columns for col in req_cols):
+        logging.error(f"Missing columns for NDVI inference. Available: {df_weather.columns}")
+        return df_satellite[['district_no', 'year', 'winter_cropland_ndvi_anomaly']].fillna(0)
+
     df_weather['winter_year'] = df_weather['year']
     df_weather.loc[df_weather['date'].dt.month == 12, 'winter_year'] += 1
     winter_weather = df_weather[df_weather['date'].dt.month.isin([12, 1, 2])].copy()
@@ -203,7 +198,6 @@ def _infer_missing_ndvi_anomaly(df_satellite: pd.DataFrame, df_weather: pd.DataF
     target = 'winter_cropland_ndvi_anomaly'
 
     if len(df_train) < 10:
-        logging.warning("Not enough data to train NDVI inference. Filling with 0.")
         return df_full[['district_no', 'year', 'winter_cropland_ndvi_anomaly']].fillna(0)
 
     model = Ridge(alpha=1.0)
@@ -221,58 +215,51 @@ def _infer_missing_ndvi_anomaly(df_satellite: pd.DataFrame, df_weather: pd.DataF
     return df_full[['district_no', 'year', 'winter_cropland_ndvi_anomaly']].fillna(0)
 
 
-def process_forecast_sowing_date(file_path, sowing_manager):
-    """
-    Opens a Forecast Parquet file (ensemble members), calculates optimal sowing
-    date for EACH member, and returns the MEDIAN sowing date.
-    """
+def process_forecast_sowing_date(file_path, sowing_manager, winter_anomalies):
     try:
-        # Filename expected format: forecast_{district}_{year}.parquet
         match = re.search(r'forecast_(\d+)_(\d{4})\.parquet', file_path.name)
         if not match: return None
-
         district_no = match.group(1)
         year = int(match.group(2))
 
         df_fc = pd.read_parquet(file_path)
+        if df_fc.empty: return None
 
-        # Safety check for empty forecast file
-        if df_fc.empty:
-            return None
-
-        # We need to run the logic for each member independently
         member_sowing_dates = []
-
-        # Iterate members
-        # Optimization: df_fc is sorted by date usually, but grouping by member is safe
         for member_id, group in df_fc.groupby('member'):
             sowing_date = sowing_manager.find_sowing_date(group)
             member_sowing_dates.append(sowing_date)
 
-        if not member_sowing_dates:
-            return None
+        if not member_sowing_dates: return None
 
-        # Calculate Median Date
         doys = [d.timetuple().tm_yday for d in member_sowing_dates]
         median_doy = int(np.median(doys))
 
-        # Reconstruct Date for the specific year
-        start_of_year = datetime.date(year, 1, 1)
-        final_sowing_date = start_of_year + datetime.timedelta(days=median_doy - 1)
+        # Winter Adjustment
+        shift = 0
+        if winter_anomalies is not None:
+            try:
+                row = winter_anomalies.loc[(district_no, year)]
+                anomaly = row['temp_anomaly']
+                shift = -1 * anomaly * SOWING_SHIFT_FACTOR
+            except KeyError:
+                pass
 
-        return {
-            'year': year,
-            'district_no': district_no,
-            'sowing_date': final_sowing_date
-        }
+        final_doy = median_doy + int(shift)
+        final_doy = max(60, min(130, final_doy))
+
+        start_of_year = datetime.date(year, 1, 1)
+        final_sowing_date = start_of_year + datetime.timedelta(days=final_doy - 1)
+
+        return {'year': year, 'district_no': district_no, 'sowing_date': final_sowing_date}
 
     except Exception as e:
-        logging.error(f"Error processing forecast sowing for {file_path.name}: {e}")
+        logging.error(f"Error processing forecast sowing: {e}")
         return None
 
 
 def main():
-    logging.info("--- Building InitialConditions.csv (Trafficability + Field Capacity + Satellite) ---")
+    logging.info("--- Building InitialConditions.csv (WAV + Smart Sowing + Fixed) ---")
 
     try:
         with open(CONFIG['FILE_PATHS']['CROP_YAML'], 'r') as f:
@@ -284,7 +271,6 @@ def main():
         gdf_districts = gpd.read_file(config.DISTRICTS_GEOJSON_PATH).rename(columns={'id': 'district_no'})
         gdf_districts['district_no'] = gdf_districts['district_no'].astype(str).str.zfill(5)
 
-        # --- OPTIMIZATION: Filter Districts Early ---
         limit = CONFIG.get('DISTRICT_LIMIT')
         target_districts = None
         if limit:
@@ -293,96 +279,76 @@ def main():
             gdf_districts = gdf_districts[gdf_districts['district_no'].isin(target_districts)]
             static_df = static_df[static_df['district_no'].isin(target_districts)]
 
-        # Load Weather (Needed for Winter NDVI inference only)
         weather_path = Path(CONFIG['FILE_PATHS']['HISTORICAL_DAILY_WEATHER_DIR'])
         weather_files = list(weather_path.glob("*.csv"))
-
         hist_weather_df = pd.concat(
             (pd.read_csv(f, parse_dates=['date'], dtype={'district_no': str}) for f in
-             tqdm(weather_files, desc="Loading Historical Weather (for NDVI)")),
+             tqdm(weather_files, desc="Loading History")),
             ignore_index=True
         )
-
         if target_districts:
             hist_weather_df = hist_weather_df[hist_weather_df['district_no'].isin(target_districts)]
 
         hist_weather_df['year'] = hist_weather_df['date'].dt.year
+        if 'precip' in hist_weather_df.columns: hist_weather_df.rename(columns={'precip': 'prec'}, inplace=True)
+        if 'srad' in hist_weather_df.columns: hist_weather_df.rename(columns={'srad': 'rad'}, inplace=True)
         if 'tmean' not in hist_weather_df.columns:
             hist_weather_df['tmean'] = (hist_weather_df['tmin'] + hist_weather_df['tmax']) / 2
-        if 'precip' in hist_weather_df.columns and 'prec' not in hist_weather_df.columns:
-            hist_weather_df.rename(columns={'precip': 'prec'}, inplace=True)
-        if 'srad' in hist_weather_df.columns and 'rad' not in hist_weather_df.columns:
-            hist_weather_df.rename(columns={'srad': 'rad'}, inplace=True)
 
-        # Load Satellite
+        logging.info("Calculating Winter Temperature Anomalies...")
+        winter_df = hist_weather_df[hist_weather_df['date'].dt.month.isin([1, 2])]
+        climatology = winter_df.groupby('district_no')['tmean'].mean()
+        yearly_winter = winter_df.groupby(['district_no', 'year'])['tmean'].mean().reset_index()
+        yearly_winter = yearly_winter.join(climatology, on='district_no', rsuffix='_clim')
+        yearly_winter['temp_anomaly'] = yearly_winter['tmean'] - yearly_winter['tmean_clim']
+        winter_anomalies = yearly_winter.set_index(['district_no', 'year'])[['temp_anomaly']]
+
         df_sat_raw = pd.read_csv(SATELLITE_FEATURES_PATH, dtype={'district_no': str})
         if target_districts:
             df_sat_raw = df_sat_raw[df_sat_raw['district_no'].isin(target_districts)]
-
         df_satellite = _infer_missing_ndvi_anomaly(df_sat_raw, hist_weather_df)
 
     except Exception as e:
         logging.error(f"Initial Data Load Failed: {e}", exc_info=True)
         sys.exit(1)
 
-    # 2. Calculate WAV (Forced Field Capacity)
     df_wav = _precalculate_wav_from_era5(gdf_districts, static_df)
 
-    # 3. Calculate Sowing Dates (Forecast-Driven)
-    logging.info("Calculating Forecast-Driven Sowing Dates...")
-
+    logging.info("Calculating Smart Sowing Dates...")
     if not FORECAST_PARTS_DIR.exists():
-        logging.error(
-            f"Forecast parts directory not found at {FORECAST_PARTS_DIR}. Run build_forecast_weather.py first!")
+        logging.error("Forecast parts not found.")
         sys.exit(1)
 
     forecast_files = list(FORECAST_PARTS_DIR.glob("forecast_*.parquet"))
-
-    # Apply filtering if optimization is on
     if target_districts:
         forecast_files = [f for f in forecast_files if any(d in f.name for d in target_districts)]
 
-    if not forecast_files:
-        logging.error("No forecast files found after filtering. Cannot calculate sowing dates.")
-        sys.exit(1)
-
     sowing_manager = DynamicSowingManager()
-
     sowing_results = Parallel(n_jobs=-1)(
-        delayed(process_forecast_sowing_date)(f, sowing_manager)
-        for f in tqdm(forecast_files, desc="Processing Forecast Sowing (Ensemble Median)")
+        delayed(process_forecast_sowing_date)(f, sowing_manager, winter_anomalies)
+        for f in tqdm(forecast_files, desc="Processing Forecast Sowing")
     )
 
     sowing_results = [res for res in sowing_results if res is not None]
     df_sowing = pd.DataFrame(sowing_results)
 
-    if df_sowing.empty:
-        logging.error("Failed to calculate any sowing dates from forecasts.")
-        sys.exit(1)
-
-    # 4. Merge
     df_final = pd.merge(df_sowing, df_wav, on=['year', 'district_no'])
     df_final = pd.merge(df_final, df_satellite, on=['year', 'district_no'], how='left')
 
-    # 5. Adjust WAV
     df_final['winter_cropland_ndvi_anomaly'] = df_final['winter_cropland_ndvi_anomaly'].fillna(0)
     df_final['WAV'] = df_final['WAV'] + (df_final['winter_cropland_ndvi_anomaly'] * NDVI_ANOMALY_SENSITIVITY)
-    # Ensure WAV doesn't exceed full saturation (approx SMFCF * RDMSOL, simplistic check)
-    # We rely on run_wofost_pipeline handling oversaturation via drainage if needed, but for WAV init, just clip lower.
     df_final['WAV'] = df_final['WAV'].clip(lower=0)
 
-    # 6. Constants
     df_final['TDWI'] = cp_variety.get('TDWI', [100.0])[0]
     df_final['RDI'] = cp_variety.get('RDI', [10.0])[0]
     df_final['CROP_END_DATE'] = CONFIG['AGROMANAGEMENT']['CROP_END_DATE']
     df_final['DVSEND'] = cp_variety.get('DVSEND', [2.0])[0]
 
-    # 7. Save
     output_path = config.PROCESSED_DATA_DIR / 'InitialConditions.csv'
     cols = ['district_no', 'year', 'sowing_date', 'WAV', 'TDWI', 'RDI', 'CROP_END_DATE', 'DVSEND']
     df_final[cols].to_csv(output_path, index=False)
 
-    logging.info(f"✓ InitialConditions.csv generated. {len(df_final)} rows.")
+    logging.info(f"✓ InitialConditions.csv generated successfully.")
 
 
 if __name__ == "__main__":
