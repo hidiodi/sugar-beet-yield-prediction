@@ -1,11 +1,8 @@
 # File: src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py
-# REFACTORED (v10.0): Anomaly Hunter (Residuals + No Lag)
-# Strategy:
-#   - Target: Residual (Actual - Trend).
-#   - Features: PURELY Physical/Weather/Economic. NO LAGS allowed.
-#   - Goal: Force model to explain "Why is this year different?" using only causality.
+# REFACTORED (v16.0): Naive Baseline for Early Years (No Leaks)
 
 import pandas as pd
+import numpy as np
 from xgboost import XGBRegressor
 import joblib
 import sys
@@ -20,91 +17,78 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 TRAIN_CONFIG = config.XGBOOST_TRAINING_CONFIG
 
 
+def fill_missing_trend_causally(df, trend_col, yield_col):
+    """
+    Fills missing trends in early years using an Expanding Mean of previous yields.
+    Strictly Causal: Baseline for Year X is mean(Yields < X).
+    """
+    df_clean = df.copy()
+
+    # Identify rows where Trend is missing
+    missing_mask = df_clean[trend_col].isna()
+    if missing_mask.sum() == 0:
+        return df_clean
+
+    logging.info(f"⚡ Filling {missing_mask.sum()} missing trends using Expanding Mean (Causal)...")
+
+    # Calculate Expanding Mean per District (Shifted by 1 to avoid using current year)
+    # Min periods=1 ensures we get a value as soon as we have 1 historical year
+    naive_trend = df_clean.sort_values('year').groupby('district_no')[yield_col] \
+        .expanding().mean().shift(1).reset_index(level=0, drop=True)
+
+    # Fill only the missing values
+    df_clean.loc[missing_mask, trend_col] = naive_trend.loc[missing_mask]
+
+    # If first year is still NaN (because no history), drop it (can't be helped)
+    remaining_nan = df_clean[trend_col].isna().sum()
+    if remaining_nan > 0:
+        logging.warning(f"  Dropping {remaining_nan} rows (First year of history, no baseline possible).")
+        df_clean = df_clean.dropna(subset=[trend_col])
+
+    return df_clean
+
+
 def train_and_save_models(train_config):
-    logging.info("--- Starting Hybrid Training (Anomaly Hunter Profile) ---")
+    logging.info("--- Starting Hybrid Training (Causal Baseline Mode) ---")
 
     data_path = train_config['DATA_PATH']
     if not data_path.exists(): sys.exit(1)
     df = pd.read_csv(data_path)
 
-    # 1. Target: Residual
     baseline_col = 'stat_trend_forecast'
+
+    # 1. Fill Gaps Causally
+    df = fill_missing_trend_causally(df, baseline_col, 'kreisYield')
+
+    # 2. Define Target
     target_col = 'trend_residual'
     df[target_col] = df['kreisYield'] - df[baseline_col]
-    df.dropna(subset=[baseline_col, target_col, 'trend_vs_phys_gap'], inplace=True)
 
-    # 2. Features: STRICTLY CAUSAL (No Inertia/Lag)
-    feature_cols = [
-        # --- The Physics Signal (Gap between Biology and Statistics) ---
-        'trend_vs_phys_gap',
-        'wofost_skew',
-        'wofost_esp_std',
-
-        # --- Explicit Risks (Relative to Trend) ---
-        # "Is the WOFOST worst-case scenario significantly below the Trend?"
-        'wofost_esp_p10',
-        'wofost_water_stress_mean',
-
-        # --- Mechanisms ---
-        'nitrogen_leaching_index',
-        'toxic_carryover_index',
-        'vector_pressure_local',
-        'winter_pest_kill_days',
-
-        # --- Antecedent Context ---
-        'antecedent_precip_sum',
-        'sowing_potential_days',
-        'winter_cropland_ndvi_anomaly',
-
-        # --- Static Context ---
-        'avg_clay_0_30cm',
-        'avg_sand_0_30cm',
-
-        # --- Economics (Price Signals) ---
-        'fertilizer_price_index_lag1',  # High Price -> Less N -> Lower Yield
-
-        # --- Weather Patterns ---
-        'nao_winter_avg',
-
-        # --- Forecast Probabilities (Risk Detectors) ---
-        'spring_temp_prob_warm_forecast',
-        'spring_precip_prob_wet_forecast',
-        'summer_precip_prob_wet_forecast',
-        'summer_temp_prob_warm_forecast',
-
-        # --- Interactions ---
-        'spring_temp_x_antecedent_rain'
-    ]
-
+    feature_cols = train_config['FEATURE_COLS']
     valid_features = [c for c in feature_cols if c in df.columns]
-    X_train = df[valid_features]
-    y_train = df[target_col]
 
-    logging.info(f"Training on {len(valid_features)} features (NO LAGS).")
+    # 3. Filter Targets ONLY
+    initial_len = len(df)
+    df_train = df.dropna(subset=[target_col])
 
-    # 3. Hyperparameters (Balanced for Signal Detection)
-    xgb_params = {
-        'n_estimators': 1000,
-        'max_depth': 5,
-        'learning_rate': 0.015,
-        'subsample': 0.75,
-        'colsample_bytree': 0.7,
-        'min_child_weight': 10,
-        'gamma': 2.0,  # Filter noise, but allow strong physical signals
-        'n_jobs': -1,
-        'random_state': 42
-    }
+    logging.info(f"Data Retention: {len(df_train)}/{initial_len} rows used for training.")
 
-    for name, cfg in train_config['QUANTILES'].items():
-        logging.info(f"Training {name.upper()}...")
-        model = XGBRegressor(objective='reg:quantileerror', quantile_alpha=cfg, **xgb_params)
+    X_train = df_train[valid_features]
+    y_train = df_train[target_col]
+
+    # 4. Train
+    for name, quantile in train_config['QUANTILES'].items():
+        logging.info(f"Training {name.upper()} model...")
+        params = train_config[f'BEST_PARAMS_{name.upper()}']
+
+        model = XGBRegressor(objective='reg:quantileerror', quantile_alpha=quantile, **params)
         model.fit(X_train, y_train)
 
-        out_path = config.XGBOOST_TRAINING_CONFIG[f'{name.upper()}_MODEL_PATH']
+        out_path = train_config[f'{name.upper()}_MODEL_PATH']
         out_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(model, out_path)
 
-    logging.info("--- Training Complete ---")
+    logging.info("--- Hybrid Training Complete ---")
 
 
 if __name__ == "__main__":

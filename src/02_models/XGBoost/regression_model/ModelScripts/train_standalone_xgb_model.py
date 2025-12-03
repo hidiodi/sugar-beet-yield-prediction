@@ -1,5 +1,7 @@
 # File: src/02_models/XGBoost/regression_model/ModelScripts/train_standalone_xgb_model.py
-# REFACTORED (v10.0): Standalone No-Lag / Residuals
+# REFACTORED (v19.0): End-to-End Prediction (Raw Yield Target)
+# Strategy: Train on 1980-2024. Use Trend as a feature, not a baseline.
+
 import pandas as pd
 from xgboost import XGBRegressor
 import joblib
@@ -14,49 +16,47 @@ from src import config
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 TRAIN_CONFIG = config.STANDALONE_XGB_CONFIG
 
+
 def train_standalone_model(train_config):
-    logging.info("--- Starting Standalone Training (No Lag / Residuals) ---")
+    logging.info("--- Starting Standalone Training (Raw Yield Target) ---")
 
     try:
         df = pd.read_csv(train_config['DATA_PATH'])
-    except FileNotFoundError: sys.exit(1)
+    except FileNotFoundError:
+        logging.error("Data file not found.")
+        sys.exit(1)
 
-    baseline_col = 'stat_trend_forecast'
-    target_col = 'trend_residual'
-    df[target_col] = df['kreisYield'] - df[baseline_col]
+    target_col = train_config['TARGET_COL']  # 'kreisYield'
+    feature_cols = train_config['FEATURE_COLS']
 
-    # Feature List (Must match Hybrid exactly)
-    feature_cols = [
-        'trend_vs_phys_gap',
-        'wofost_skew', 'wofost_esp_std', 'wofost_esp_p10', 'wofost_water_stress_mean',
+    # 1. MAXIMIZE DATA: Filter only where Target is missing
+    # We allow 'stat_trend_forecast' to be NaN (XGBoost handles missing features)
+    initial_len = len(df)
+    df_train = df.dropna(subset=[target_col])
 
-        'nitrogen_leaching_index', 'toxic_carryover_index', 'vector_pressure_local', 'winter_pest_kill_days',
-        'antecedent_precip_sum', 'sowing_potential_days', 'winter_cropland_ndvi_anomaly',
-        'avg_clay_0_30cm', 'avg_sand_0_30cm',
-        'fertilizer_price_index_lag1', 'nao_winter_avg',
-        'spring_temp_prob_warm_forecast', 'spring_precip_prob_wet_forecast',
-        'summer_precip_prob_wet_forecast', 'summer_temp_prob_warm_forecast',
-        'spring_temp_x_antecedent_rain'
-    ]
+    logging.info(f"Target: {target_col}")
+    logging.info(f"Data Retention: {len(df_train)}/{initial_len} rows used for training.")
+    logging.info(f"Note: 1980s data included. Missing features handled by XGBoost.")
 
-    valid_features = [c for c in feature_cols if c in df.columns]
-    df.dropna(subset=[target_col, baseline_col] + valid_features, inplace=True)
-    X_train = df[valid_features]
-    y_train = df[target_col]
+    # 2. Features
+    valid_features = [c for c in feature_cols if c in df_train.columns]
+    X_train = df_train[valid_features]
+    y_train = df_train[target_col]
 
-    xgb_params = {
-        'n_estimators': 1000, 'max_depth': 5, 'learning_rate': 0.015,
-        'subsample': 0.75, 'colsample_bytree': 0.7, 'min_child_weight': 10, 'gamma': 2.0,
-        'n_jobs': -1, 'random_state': 42
-    }
-
+    # 3. Train
     for name, quantile in train_config['QUANTILES'].items():
-        logging.info(f"Training {name.upper()}...")
-        model = XGBRegressor(objective='reg:quantileerror', quantile_alpha=quantile, **xgb_params)
+        logging.info(f"Training {name.upper()} model...")
+        params = train_config[f'BEST_PARAMS_{name.upper()}']
+
+        model = XGBRegressor(objective='reg:quantileerror', quantile_alpha=quantile, **params)
         model.fit(X_train, y_train)
-        joblib.dump(model, train_config[f'{name.upper()}_MODEL_PATH'])
+
+        out_path = train_config[f'{name.upper()}_MODEL_PATH']
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(model, out_path)
 
     logging.info("--- Standalone Training Complete ---")
+
 
 if __name__ == "__main__":
     train_standalone_model(TRAIN_CONFIG)

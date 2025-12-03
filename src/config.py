@@ -27,7 +27,7 @@ SCRIPTS_TO_RUN = [
     #"src/02_models/Wofost7.1/run_wofost_pipeline.py",
     #"src/02_models/Wofost7.1/validation_dashboard.py",
     #"src/02_models/Wofost7.1/create_trendModel.py",
-    #"src/01_data/FeatureEngineering/build_stage1_features.py",
+    "src/01_data/FeatureEngineering/build_stage1_features.py",
     #"src/03_analysis/basic_analysis/analyze_stage1_features.py",
     "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
     "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
@@ -38,7 +38,7 @@ SCRIPTS_TO_RUN = [
     #"src/02_models/NGboost/backtest_final_ngboost_model.py",
     #"src/02_models/FinalEnsemble/backtest_final_ensemble.py",
     "src/03_analysis/basic_analysis/compare_model_versions.py",
-    #"src/03_analysis/hybrid_model_analysis/analyze_hybrid_model.py",
+    "src/03_analysis/hybrid_model_analysis/analyze_hybrid_model.py",
     #"src/02_models/XGBoost/regression_model/Tuning/tune_quantiles.py",
     #"src/03_analysis/shap_analysis_xgb.py",
     #"src/03_analysis/run_hybrid_analysis_pipeline.py",
@@ -86,13 +86,13 @@ WEATHER_END_YEAR = 2024
 # --- WOFOST Model Configuration ---
 WOFOST_CONFIG = {
     # max range 1982 - 2024 and None to run all districts
-    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': 15,
+    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': None,
     'FILE_PATHS': {
         'HISTORICAL_DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
         'CORRECT_WEATHER_DIR': DATA_DIR / '04_feature/weather_district_daily',
         'YIELD_DATA': DATA_DIR / '02_intermediate/sugarbeet_yield.csv',
         'STATIC_SOIL_FEATURES': DATA_DIR / '03_processed/static_features_districts.csv',
-        'INITIAL_CONDITIONS': DATA_DIR / '03_processed/initial_conditions_wav.csv',
+        'INITIAL_CONDITIONS': DATA_DIR / '03_processed/InitialConditions.csv',
         'SEAS5_MEMBER_FEATURES': DATA_DIR / '02_intermediate/ecmwf51_forecast_features_BY_MEMBER.csv',
         'CROP_YAML': DATA_DIR / '01_raw/sugarbeet.yaml',
         'OUTPUT_DIR': DATA_DIR / '06_model_output/multi_year_final',
@@ -156,6 +156,8 @@ FEATURE_ENGINEERING_CONFIG = {
         'WALKFORWARD_FORECAST_CSV': DATA_DIR / '05_model_input/wofost_walkforward/final_honest_forecasts.csv', #technical trend model
         'WOFOST_ENSEMBLE_CSV': DATA_DIR / '06_model_output/multi_year_final/forecast_ensemble_results_raw.csv', #actual wofost yield output
         'WOFOST_METRICS_CSV': DATA_DIR / '06_model_output/multi_year_final/forecast_extreme_weather_metrics.csv', #actual wofost weather output
+        'WOFOST_INITIAL_CONDITIONS': DATA_DIR / '03_processed/InitialConditions.csv',
+        'WOFOST_STATIC_SITE_DATA': DATA_DIR / '03_processed/StaticSiteData.csv',
 
         'OUTPUT_DIR': DATA_DIR / '05_model_input/',
         'OUTPUT_FILE': DATA_DIR / '05_model_input/stage1_preseason_features.csv'
@@ -180,93 +182,53 @@ XGBOOST_TRAINING_CONFIG = {
     'DATA_PATH': DATA_DIR / '05_model_input/stage1_preseason_features.csv',
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models',
     'FEATURE_COLS': [
-        # 1. Anchors
-        'stat_trend_forecast',
-        'national_avg_yield_lag1',
+    # --- 1. The Big Drivers (Water Balance) ---
+    'summer_water_balance',  # (Precip - Evap) -> The Drought Signal
+    'spring_water_balance',  # (Precip - Evap) -> The Establishment Signal
+    'trend_vs_phys_gap',  # WOFOST Opinion
+    'sowing_anomaly',  # Early/Late Start
 
-        # 2. The Biophysical Signal (Cone)
-        'trend_vs_phys_gap',
-        'wofost_esp_std',
-        'wofost_esp_p10',
-        'wofost_skew',
-        'wofost_water_stress_mean',
+    # --- 2. Raw Forecast Components (Inputs for Balance) ---
+    'spring_soil_temp_l1_anomaly_forecast',
+    'summer_soil_temp_l1_anomaly_forecast',
+    'spring_solar_rad_anomaly_forecast',
+    'summer_solar_rad_anomaly_forecast',
 
-        # 3. Operational Risks (Mechanics) - FROM WOFOST SCANNER
-        'prob_sowing_failure',  # Late/Muddy Sowing Risk
+    # --- 3. Soil Context (The Modulators) ---
+    'avg_sand_0_100cm',  # Critical for Drought Sensitivity
+    'avg_clay_0_100cm',  # Critical for Water Retention
+    'wofost_initial_wav',  # The Tank Size
+    'deep_soil_buffer',  # Interaction (Clay * Water)
 
-        # 4. Hydraulic Risks - FROM WOFOST SCANNER
-        'anoxia_events',  # Root suffocation (Summer Rain > 25mm/3d)
+    # --- 4. Risk Probabilities ---
+    'spring_temp_prob_warm_forecast',
+    'spring_precip_prob_wet_forecast',
+    'summer_temp_prob_warm_forecast',
+    'summer_precip_prob_wet_forecast',
 
-        # 5. Terminal Risks - FROM WOFOST SCANNER
-        'prob_terminal_freeze',  # Harvest Loss (Nov Frost)
-        'harvest_respiration_risk',  # Clamp Rot / Sugar Burn (Warm Autumn)
+    # --- 5. Biotic/Toxic ---
+    'toxic_carryover_index',
+    'winter_pest_kill_days',
 
-        # 6. Spring Signal (Forecasting)
-        'spring_temp_anomaly_forecast',
-        'spring_precip_anomaly_forecast',
-
-        # 7. Teleconnections
-        'nao_winter_avg',
-        'nao_x_spring_temp',
-
-        # 8. Antecedent Biological State (Observed DWD)
-        'antecedent_precip_sum',
-        'sowing_potential_days',  # Observed "Good Days" in Feb
-
-        # 9. Pest & Disease (Mechanism-Informed)
-        'winter_pest_kill_days',  # Deep Frost
-        'vector_pressure_local',  # SBR Risk (Interaction of Warmth * Location)
-
-        # 10. Toxicology (Rotation History)
-        'toxic_carryover_index',  # Herbicide Persistence (Dry Prev Autumn)
-        'nitrogen_leaching_index',  # Winter Rain * Sand
-
-        # 11. Satellite & Geo
-        'winter_cropland_ndvi_anomaly',
-        'winter_cropland_snow_cover_days',
-        'avg_clay_0_30cm',
-        'avg_sand_0_30cm',
-        'avg_elevation',
-        'is_vector_endemic_zone',
-
-        # 12. Economics
-        'fertilizer_price_index_lag1',
-        'producer_price_index_lag1',
-        'spring_temp_x_antecedent_rain'
+    # --- 6. Satellite ---
+    'winter_cropland_ndvi_anomaly',
     ],
     'BEST_PARAMS_LOWER': {
-        'n_estimators': 1397,
-        'learning_rate': 0.070545,
-        'max_depth': 9,
-        'subsample': 0.612895,
-        'colsample_bytree': 0.957773,
-        'gamma': 2.371925,
-        'min_child_weight': 7,
-        'random_state': 42,
-        'n_jobs': -1
+        'n_estimators': 1500, 'learning_rate': 0.05, 'max_depth': 8,
+        'subsample': 0.8, 'colsample_bytree': 0.8, 'gamma': 0.0,
+        'n_jobs': -1, 'random_state': 42
     },
     'BEST_PARAMS_MEDIAN': {
-        'n_estimators': 1433,
-        'learning_rate': 0.055466,
-        'max_depth': 5,
-        'subsample': 0.954196,
-        'colsample_bytree': 0.854452,
-        'gamma': 6.528400,
-        'min_child_weight': 9,
-        'random_state': 42,
-        'n_jobs': -1
+        'n_estimators': 1500, 'learning_rate': 0.05, 'max_depth': 8,
+        'subsample': 0.8, 'colsample_bytree': 0.8, 'gamma': 0.0,
+        'n_jobs': -1, 'random_state': 42
     },
     'BEST_PARAMS_UPPER': {
-        'n_estimators': 1374,
-        'learning_rate': 0.098116,
-        'max_depth': 9,
-        'subsample': 0.804305,
-        'colsample_bytree': 0.875319,
-        'gamma': 10.142525,
-        'min_child_weight': 6,
-        'random_state': 42,
-        'n_jobs': -1
+        'n_estimators': 1500, 'learning_rate': 0.05, 'max_depth': 8,
+        'subsample': 0.8, 'colsample_bytree': 0.8, 'gamma': 0.0,
+        'n_jobs': -1, 'random_state': 42
     },
+
     'QUANTILES': {'lower': 0.025, 'median': 0.5, 'upper': 0.975},
     'LOWER_MODEL_PATH': BASE_DIR / 'src/models/final_quantile_model_lower.joblib',
     'MEDIAN_MODEL_PATH': BASE_DIR / 'src/models/final_quantile_model_median.joblib',
@@ -314,10 +276,12 @@ STANDALONE_XGB_CONFIG = {
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models/standalone_xgb',
 
     'FEATURE_COLS': XGBOOST_TRAINING_CONFIG['FEATURE_COLS'] + [
+        'year',
+        'stat_trend_forecast'
     ],
 
     # The script will CREATE and use 'yield_detrended' as the target
-    'TARGET_COL': 'yield_detrended',
+    'TARGET_COL': 'kreisYield',
 
     'BEST_PARAMS_LOWER': XGBOOST_TRAINING_CONFIG['BEST_PARAMS_LOWER'],
     'BEST_PARAMS_MEDIAN': XGBOOST_TRAINING_CONFIG['BEST_PARAMS_MEDIAN'],
