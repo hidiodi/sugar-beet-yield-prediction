@@ -1,8 +1,7 @@
 # File: src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py
-# REFACTORED (v16.0): Naive Baseline for Early Years (No Leaks)
+# REFACTORED (v20.0): The Champion Training Logic (Forecast Residual)
 
 import pandas as pd
-import numpy as np
 from xgboost import XGBRegressor
 import joblib
 import sys
@@ -17,68 +16,38 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 TRAIN_CONFIG = config.XGBOOST_TRAINING_CONFIG
 
 
-def fill_missing_trend_causally(df, trend_col, yield_col):
-    """
-    Fills missing trends in early years using an Expanding Mean of previous yields.
-    Strictly Causal: Baseline for Year X is mean(Yields < X).
-    """
-    df_clean = df.copy()
-
-    # Identify rows where Trend is missing
-    missing_mask = df_clean[trend_col].isna()
-    if missing_mask.sum() == 0:
-        return df_clean
-
-    logging.info(f"⚡ Filling {missing_mask.sum()} missing trends using Expanding Mean (Causal)...")
-
-    # Calculate Expanding Mean per District (Shifted by 1 to avoid using current year)
-    # Min periods=1 ensures we get a value as soon as we have 1 historical year
-    naive_trend = df_clean.sort_values('year').groupby('district_no')[yield_col] \
-        .expanding().mean().shift(1).reset_index(level=0, drop=True)
-
-    # Fill only the missing values
-    df_clean.loc[missing_mask, trend_col] = naive_trend.loc[missing_mask]
-
-    # If first year is still NaN (because no history), drop it (can't be helped)
-    remaining_nan = df_clean[trend_col].isna().sum()
-    if remaining_nan > 0:
-        logging.warning(f"  Dropping {remaining_nan} rows (First year of history, no baseline possible).")
-        df_clean = df_clean.dropna(subset=[trend_col])
-
-    return df_clean
-
-
 def train_and_save_models(train_config):
-    logging.info("--- Starting Hybrid Training (Causal Baseline Mode) ---")
+    logging.info("--- Starting Champion Training (Forecast Residual Target) ---")
 
-    data_path = train_config['DATA_PATH']
-    if not data_path.exists(): sys.exit(1)
-    df = pd.read_csv(data_path)
+    try:
+        df = pd.read_csv(train_config['DATA_PATH'])
+    except Exception as e:
+        logging.error(f"Failed to load data: {e}");
+        sys.exit(1)
 
-    baseline_col = 'stat_trend_forecast'
+    # DEFINE TARGET: Yield - Stage1_Forecast (WOFOST/Trend Blend)
+    # The 'stage1_forecast' column comes from the builder, derived from 'stat_trend_forecast'
+    target_col = 'forecast_residual'
+    df[target_col] = df['kreisYield'] - df['stage1_forecast']
 
-    # 1. Fill Gaps Causally
-    df = fill_missing_trend_causally(df, baseline_col, 'kreisYield')
+    # Filter
+    df.dropna(subset=[target_col], inplace=True)
 
-    # 2. Define Target
-    target_col = 'trend_residual'
-    df[target_col] = df['kreisYield'] - df[baseline_col]
-
+    # Feature Selection
     feature_cols = train_config['FEATURE_COLS']
     valid_features = [c for c in feature_cols if c in df.columns]
 
-    # 3. Filter Targets ONLY
-    initial_len = len(df)
-    df_train = df.dropna(subset=[target_col])
+    # Log Missing Features
+    missing = set(feature_cols) - set(valid_features)
+    if missing: logging.warning(f"⚠️ Missing Features: {missing}")
 
-    logging.info(f"Data Retention: {len(df_train)}/{initial_len} rows used for training.")
+    X_train = df[valid_features]
+    y_train = df[target_col]
 
-    X_train = df_train[valid_features]
-    y_train = df_train[target_col]
+    logging.info(f"Training on {len(X_train)} samples using {len(valid_features)} features.")
 
-    # 4. Train
     for name, quantile in train_config['QUANTILES'].items():
-        logging.info(f"Training {name.upper()} model...")
+        logging.info(f"Training {name.upper()}...")
         params = train_config[f'BEST_PARAMS_{name.upper()}']
 
         model = XGBRegressor(objective='reg:quantileerror', quantile_alpha=quantile, **params)
@@ -88,7 +57,7 @@ def train_and_save_models(train_config):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(model, out_path)
 
-    logging.info("--- Hybrid Training Complete ---")
+    logging.info("--- Champion Training Complete ---")
 
 
 if __name__ == "__main__":
