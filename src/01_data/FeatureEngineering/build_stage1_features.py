@@ -102,6 +102,91 @@ def load_forecasts_with_mapping(forecast_file):
         return pd.DataFrame()
 
 
+def load_wofost_sowing_dates(initial_conditions_path):
+    logging.info("--- Loading Smart Sowing Dates (The 'Starting Gun') ---")
+    try:
+        df = pd.read_csv(initial_conditions_path)
+
+        # Ensure ID format matches
+        df['district_no'] = df['district_no'].astype(str).str.zfill(5)
+
+        # Convert date string to datetime objects
+        df['sowing_date'] = pd.to_datetime(df['sowing_date'])
+
+        # Calculate Day of Year (DOY) - e.g., March 15 = 74
+        df['sowing_doy'] = df['sowing_date'].dt.dayofyear
+
+        # Calculate Sowing Anomaly (Early vs Late relative to district average)
+        df['sowing_doy_anomaly'] = df.groupby('district_no')['sowing_doy'].transform(
+            lambda x: x - x.mean()
+        )
+
+        return df[['district_no', 'year', 'sowing_doy', 'sowing_doy_anomaly']]
+    except Exception as e:
+        logging.warning(f"Could not load sowing dates: {e}")
+        return pd.DataFrame()
+
+def create_winter_recharge_features(weather_dir: Path, start_year: int, end_year: int):
+    logging.info("--- Engineering Winter Soil Recharge (The 'Gas Tank') ---")
+
+    all_weather_files = list(weather_dir.glob("*.csv"))
+    if not all_weather_files: return pd.DataFrame()
+
+    df_list = []
+    # Load slightly wider window to capture previous Oct-Dec
+    load_start = start_year - 1
+
+    for f in tqdm(all_weather_files, desc="Loading Winter Weather"):
+        try:
+            # We only need Date and Precip
+            temp = pd.read_csv(f, usecols=lambda x: x in ['district_no', 'date', 'precip', 'prec', 'tmax'])
+            if 'date' in temp.columns:
+                temp['date'] = pd.to_datetime(temp['date'])
+                temp['year'] = temp['date'].dt.year
+                temp['month'] = temp['date'].dt.month
+
+                # Filter for relevant years
+                temp = temp[(temp['year'] >= load_start) & (temp['year'] <= end_year)]
+
+                if not temp.empty: df_list.append(temp)
+        except:
+            continue
+
+    if not df_list: return pd.DataFrame()
+    df_daily = pd.concat(df_list, ignore_index=True)
+    df_daily['district_no'] = df_daily['district_no'].astype(str).str.zfill(5)
+    if 'prec' in df_daily.columns: df_daily.rename(columns={'prec': 'precip'}, inplace=True)
+
+    # Assign "Crop Year"
+    # If Month is Oct, Nov, Dec (10, 11, 12), it belongs to the NEXT year's harvest
+    df_daily['crop_year'] = df_daily['year']
+    df_daily.loc[df_daily['month'] >= 10, 'crop_year'] = df_daily['year'] + 1
+
+    # Filter for the "Recharge Season" (Oct 1 - Feb 28)
+    winter_mask = df_daily['month'].isin([10, 11, 12, 1, 2])
+    df_winter = df_daily[winter_mask].copy()
+
+    # 1. Total Winter Precip (The Tank Volume)
+    recharge = df_winter.groupby(['district_no', 'crop_year'])['precip'].sum().reset_index()
+    recharge.rename(columns={'precip': 'winter_precip_sum'}, inplace=True)
+
+    # 2. Late Winter Frost Days (Feb) - A known risk factor by March 1st
+    feb_mask = df_daily['month'] == 2
+    frosts = df_daily[feb_mask & (df_daily['tmax'] < 0)].groupby(['district_no', 'crop_year'])[
+        'tmax'].count().reset_index()
+    frosts.rename(columns={'tmax': 'feb_frost_days'}, inplace=True)
+
+    # Merge
+    df_features = pd.merge(recharge, frosts, on=['district_no', 'crop_year'], how='left')
+    df_features.fillna(0, inplace=True)
+
+    # Calculate Anomalies (Comparison to history)
+    df_features['winter_precip_anomaly'] = df_features.groupby('district_no')['winter_precip_sum'].transform(
+        lambda x: x - x.mean()
+    )
+
+    return df_features
+
 def load_economics(prod_file, input_file):
     logging.info("Loading Economics...")
     try:
@@ -144,6 +229,52 @@ def main():
     # 2. Weather Physio
     df_phys = create_granular_weather_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)
     if not df_phys.empty: df = pd.merge(df, df_phys, on=['district_no', 'year'], how='left')
+
+    # --- NEW: Winter Recharge (The 2014 Fix) ---
+    df_recharge = create_winter_recharge_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)
+    # Be careful with merge keys: 'crop_year' in df_recharge matches 'year' in df
+    if not df_recharge.empty:
+        df = pd.merge(df, df_recharge, left_on=['district_no', 'year'], right_on=['district_no', 'crop_year'],
+                      how='left')
+        df.drop(columns=['crop_year'], inplace=True)
+
+    # --- NEW: WOFOST Smart Sowing Dates ---
+    # Tis replaces the need for a raw Winter GDD proxy.
+    # It captures both Temperature (potential) and Rain (trafficability).
+    df_sowing = load_wofost_sowing_dates(CONFIG['FILE_PATHS']['WOFOST_INITIAL_CONDITIONS'])
+    if not df_sowing.empty:
+        df = pd.merge(df, df_sowing, on=['district_no', 'year'], how='left')
+
+    # Fill missing sowing dates with a median (e.g., April 15 -> DOY 105) just in case
+        # Here, we interact directly:
+    if 'sowing_doy' in df.columns and 'summer_days_tmax_gt_30c' in df.columns:
+    # Interaction: Late Sowing (High DOY) * High Heat = Maximum Stress Signal
+        df['late_sowing_x_summer_heat'] = df['sowing_doy'] * df['summer_days_tmax_gt_30c']
+    else:
+        df['late_sowing_x_summer_heat'] = 0
+
+    # Create an "Early Sowing Factor" (Higher is Better/Earlier)
+    # Using 150 (approx end of May) as a baseline.
+    # DOY 80 (Early) -> Factor 70. DOY 100 (Late) -> Factor 50.
+    if 'sowing_doy' in df.columns:
+        df['early_sowing_factor'] = (150 - df['sowing_doy']).clip(lower=0)
+    else:
+        df['early_sowing_factor'] = 0
+
+    # Interaction: Effective Winter Water
+    # 2018: High Precip * Low Factor = Low Effective Water (Corrects the "Full Tank" paradox)
+    if 'winter_precip_sum' in df.columns:
+        df['effective_winter_water'] = df['winter_precip_sum'] * df['early_sowing_factor']
+    else:
+        df['effective_winter_water'] = 0
+
+    # 12. "Solar Capture Potential" (The 2014 Boost)
+    # Sugar is made from Light, but only if there are leaves to catch it.
+    # 2014: Early Sowing (Big Canopy) + High Radiation (Forecast) = Massive Yield.
+    if 'summer_solar_rad_anomaly_forecast' in df.columns:
+        df['solar_capture_potential'] = df['early_sowing_factor'] * df['summer_solar_rad_anomaly_forecast']
+    else:
+        df['solar_capture_potential'] = 0
 
     # 3. Forecasts
     df_fcst = load_forecasts_with_mapping(paths['ECMWF_FORECAST_FEATURES_CSV'])
@@ -214,8 +345,6 @@ def main():
                 df['fertilizer_price_index_lag1_anomaly'] > ub)).astype(int)
 
     # --- NEW: Bumper Crop Logic (The 2014 Fix) ---
-    # MOVED OUTSIDE THE FERTILIZER IF-BLOCK
-
     # 1. The "Early Start, Sustained Growth" Indicator
     if 'spring_temp_anomaly_forecast' in df.columns and 'summer_precip_anomaly_forecast' in df.columns:
         df['spring_warmth_x_summer_rain'] = df['spring_temp_anomaly_forecast'] * df['summer_precip_anomaly_forecast']
@@ -259,6 +388,15 @@ def main():
     else:
         df['summer_water_balance_anomaly'] = 0
 
+    # 7. Winter Recharge x Summer Heat (The "Buffer" Theory)
+    # 2014: High Recharge * High Heat = Bumper.
+    # 2018: Low Recharge * High Heat = Crash.
+    # This uses REAL DATA (Winter Precip) to contextualize FORECAST DATA (Summer Heat).
+    if 'winter_precip_sum' in df.columns and 'summer_days_tmax_gt_30c' in df.columns:
+        df['winter_buffer_x_summer_heat'] = df['winter_precip_sum'] * df['summer_days_tmax_gt_30c']
+    else:
+        df['winter_buffer_x_summer_heat'] = 0
+
     # B. The "Kill Switch" Interaction (Heat x Balance)
     # This specifically targets the 2014 vs 2018 confusion.
     # 2018: High Heat days * Negative Balance = Large Negative Value (Yield Crash).
@@ -267,6 +405,28 @@ def main():
         df['summer_heat_x_water_balance'] = df['summer_days_tmax_gt_30c'] * df['summer_water_balance_anomaly']
     else:
         df['summer_heat_x_water_balance'] = 0
+
+    if 'summer_precip_anomaly_forecast' in df.columns and 'summer_temp_anomaly_forecast' in df.columns:
+         # If Precip is POSITIVE (2014), the "Stress" becomes 0 (or even negative/beneficial).
+         # If Precip is NEGATIVE (2018), the "Stress" is Heat * Drought.
+
+         # We create a 'Binary Switch': Is it dry?
+         # 1 if Dry (Precip Anomaly < 0), 0 if Wet.
+         is_dry_summer = (df['summer_precip_anomaly_forecast'] < 0).astype(int)
+
+         # The "Flash Drought" Feature
+         # Only counts Heat x Dryness. Ignores Heat if Wet.
+         df['flash_drought_index'] = df['summer_temp_anomaly_forecast'] * df['summer_precip_anomaly_forecast'].abs() * is_dry_summer
+    else:
+         df['flash_drought_index'] = 0
+
+    # --- 11. The "Perfect Growth" Index (2014 Specific) ---
+    # Heat * Precip (Only when Precip > 0)
+    if 'summer_precip_anomaly_forecast' in df.columns and 'summer_temp_anomaly_forecast' in df.columns:
+         is_wet_summer = (df['summer_precip_anomaly_forecast'] > 0).astype(int)
+         df['optimal_growth_index'] = df['summer_temp_anomaly_forecast'] * df['summer_precip_anomaly_forecast'] * is_wet_summer
+    else:
+         df['optimal_growth_index'] = 0
 
     # Interactions
     if 'antecedent_gdd_sum_anomaly' in df.columns and 'fertilizer_price_index_lag1_anomaly_capped' in df.columns:

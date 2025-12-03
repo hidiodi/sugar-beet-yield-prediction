@@ -61,31 +61,70 @@ class DynamicSowingManager:
             if 'tmin' in df.columns and 'tmax' in df.columns:
                 df['tmean'] = (df['tmin'] + df['tmax']) / 2.0
             else:
+                # Default fallback
                 return datetime.date(2000, 4, 15)
 
         df = df.sort_values('date')
-        df['temp_roll'] = df['tmean'].rolling(window=3, min_periods=1).mean()
+
+        # --- STRICTER LOGIC START ---
+
+        # 1. 7-Day Rolling Temp (Soil inertia)
+        # Needs to be consistently warm, not just one spike.
+        df['temp_roll_7d'] = df['tmean'].rolling(window=7, min_periods=7).mean()
+
+        # 2. Hard Frost Lock (< -2°C tmin)
+        # If it froze hard recently, the soil is unworkable.
+        # We calculate "Days since last hard frost"
+        df['is_hard_frost'] = (df['tmin'] < -2.0).astype(int)
+
+        # 3. Wetness Lock (Trafficability)
         df['precip_roll_sum'] = df['prec'].rolling(window=self.precip_window, min_periods=1).sum()
 
         try:
             target_year = df['date'].dt.year.mode()[0]
-            window_start = datetime.date(target_year, self.start_month, self.start_day)
-            window_end = datetime.date(target_year, self.end_month, self.end_day)
+            # Sowing Window: March 15 (DOY 74) to April 30 (DOY 120)
+            # 2018 "Beast from East" was late Feb/Early March.
+            # We push the start date slightly later to be safe.
+            window_start = datetime.date(target_year, 3, 15)
+            window_end = datetime.date(target_year, 4, 30)
         except (IndexError, ValueError):
             return datetime.date(2000, 4, 15)
 
-        sow_mask = (
-                (df['date'].dt.date >= window_start) &
-                (df['date'].dt.date <= window_end) &
-                (df['temp_roll'] >= self.temp_threshold) &
-                (df['precip_roll_sum'] <= self.precip_limit)
-        )
-        potential_sow_days = df.loc[sow_mask]
+        # Filter for the window
+        mask_window = (df['date'].dt.date >= window_start) & (df['date'].dt.date <= window_end)
+        df_window = df.loc[mask_window].copy()
 
-        if not potential_sow_days.empty:
-            return potential_sow_days['date'].dt.date.iloc[0]
-        else:
+        if df_window.empty:
             return window_end
+
+        # Iterate to find the first valid day
+        # We cannot vectorise the "Frost Lock" easily without a complex loop or rolling window sum
+        # So we iterate through the window (max 45 days, very fast)
+
+        for idx, row in df_window.iterrows():
+            current_date = row['date']
+
+            # Check 1: Temperature (Stricter: 7-day avg > 6°C)
+            if row['temp_roll_7d'] < 6.0:
+                continue
+
+            # Check 2: Trafficability (No mud)
+            if row['precip_roll_sum'] > self.precip_limit:
+                continue
+
+            # Check 3: Frost Lock (Look back 10 days)
+            # Was there a hard frost in the last 10 days?
+            lookback_start = current_date - datetime.timedelta(days=10)
+            recent_frosts = df[(df['date'] >= lookback_start) & (df['date'] < current_date)]['is_hard_frost'].sum()
+
+            if recent_frosts > 0:
+                continue  # Soil is likely still frozen or too cold
+
+            # If all pass, this is the day
+            return current_date.date()
+
+        # If no day found, return end of window (Late Sowing)
+        return window_end
 
 
 def _precalculate_wav_from_era5(gdf_districts, static_df):
