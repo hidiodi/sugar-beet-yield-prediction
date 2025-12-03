@@ -1,6 +1,6 @@
 # File: src/01_data/FeatureEngineering/build_stage1_features.py
-# REFACTORED (v17.0): Use Pre-Processed Economic Data
-# Solves the loading error by using the clean CSV you provided.
+# REFACTORED (v16.0): Robust Economic Data Loading
+# Fixes the "Missing Features" error by correctly parsing the German CSV formats.
 
 import numpy as np
 import pandas as pd
@@ -94,49 +94,97 @@ def load_forecasts_with_mapping(forecast_file):
         return pd.DataFrame()
 
 
-def load_economics_simple(processed_file):
+def load_economics(prod_file, input_file):
     """
-    Loads the already processed economic features.
+    Robust loader that attempts multiple separators and encodings.
     """
-    logging.info(f"Loading CLEAN Economics from: {processed_file}")
+    logging.info(f"Loading Economics from:\n  {prod_file}\n  {input_file}")
+
+    def read_robust(fpath):
+        # 1. Standard
+        try:
+            df = pd.read_csv(fpath)
+            if len(df.columns) > 1: return df
+        except:
+            pass
+        # 2. German Semicolon
+        try:
+            df = pd.read_csv(fpath, sep=';', encoding='utf-8')
+            if len(df.columns) > 1: return df
+        except:
+            pass
+        # 3. German Latin1
+        try:
+            df = pd.read_csv(fpath, sep=';', encoding='latin1')
+            if len(df.columns) > 1: return df
+        except:
+            pass
+
+        logging.error(f"FAILED to read {fpath}. Check format.")
+        return None
+
     try:
-        df = pd.read_csv(processed_file)
-        # Ensure year is int
-        df['year'] = pd.to_numeric(df['year'], errors='coerce')
-        df.dropna(subset=['year'], inplace=True)
-        df['year'] = df['year'].astype(int)
+        # Load Producer Prices
+        df_prod = read_robust(prod_file)
+        if df_prod is None: return pd.DataFrame()
 
-        # Check for missing columns and fill with 0 or drop
-        # The file has: year, producer_price_index, energy_price_index, fertilizer_price_index
-        # We might miss 'seed_price_index' and 'plant_protection_price_index' if they aren't in this processed file
-        # We will check and warn.
+        # Ensure column names match expected melt format
+        # If 'ID' not in columns, maybe it has a different name or structure
+        if 'ID' in df_prod.columns:
+            df_prod = df_prod[df_prod['ID'] == 'LWPR-132'].melt(
+                id_vars=['ID', 'Description'], var_name='year', value_name='producer_price_index'
+            )
+        else:
+            logging.warning("Producer Price CSV missing 'ID' column. Columns found: " + str(df_prod.columns))
+            return pd.DataFrame()  # Fail safe
 
-        return df
+        df_prod['year'] = pd.to_numeric(df_prod['year'], errors='coerce')
+        df_prod.dropna(subset=['year'], inplace=True)
+        df_prod['year'] = df_prod['year'].astype(int)
+
+        # Load Input Prices
+        df_in = read_robust(input_file)
+        if df_in is None: return pd.DataFrame()
+
+        IDS = {'LWBM-11': 'seed_price_index', 'LWBM-12': 'energy_price_index', 'LWBM-13': 'fertilizer_price_index',
+               'LWBM-14': 'plant_protection_price_index'}
+
+        if 'ID' in df_in.columns:
+            df_in = df_in[df_in['ID'].isin(IDS.keys())].melt(id_vars=['ID', 'Description'], var_name='period',
+                                                             value_name='val')
+            df_in['year'] = pd.to_numeric(df_in['period'].str.split('/').str[1], errors='coerce')
+            df_in.dropna(subset=['year'], inplace=True)
+            df_in['year'] = df_in['year'].astype(int)
+            df_in = df_in.groupby(['year', 'ID'])['val'].mean().unstack().reset_index().rename(columns=IDS)
+        else:
+            logging.warning("Input Price CSV missing 'ID' column.")
+            return pd.DataFrame()
+
+        df_merged = pd.merge(df_prod[['year', 'producer_price_index']], df_in, on='year', how='outer')
+        logging.info(f"Economics loaded: {len(df_merged)} years.")
+        return df_merged
+
     except Exception as e:
-        logging.error(f"Econ load error: {e}")
+        logging.error(f"Econ load critical error: {e}")
         return pd.DataFrame(columns=['year'])
 
 
 def main():
-    logging.info("--- Starting Feature Engineering (v17.0 - Clean Econ) ---")
+    logging.info("--- Starting Feature Engineering (v16.0 - Robust Econ) ---")
     paths = CONFIG['FILE_PATHS']
     paths['OUTPUT_DIR'].mkdir(exist_ok=True, parents=True)
-
-    # Path to the clean file
-    # We construct it relative to project root or use hardcoded if config doesn't have it
-    clean_econ_path = Path('data/03_processed/feature_components/economic_features.csv')
 
     df = pd.read_csv(paths['MASTER_DATASET'])
     df['district_no'] = df['district_no'].astype(str).str.zfill(5)
     df['kreisYield'] = pd.to_numeric(df['yield'], errors='coerce')
     df.dropna(subset=['kreisYield'], inplace=True)
 
-    # 1. Economics (Clean)
-    df_econ = load_economics_simple(clean_econ_path)
+    # 1. Economics
+    df_econ = load_economics(paths['PRODUCER_PRICE_CSV'], paths['INPUT_PRICE_CSV'])
     if not df_econ.empty:
         df = pd.merge(df, df_econ, on='year', how='left')
     else:
-        logging.warning("⚠️ CLEAN Economic Data Failed to Load!")
+        logging.warning("⚠️ Proceeding WITHOUT Economic Data (Load Failed)")
 
     # 2. Weather Physio
     df_phys = create_granular_weather_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)
@@ -175,49 +223,40 @@ def main():
     df['year_trend'] = df['year'] - df['year'].min()
 
     # Economic Lags
-    # The clean file has: producer_price_index, energy_price_index, fertilizer_price_index
-    # It might lack: seed_price_index, plant_protection_price_index
-    available_econ = [c for c in df.columns if 'price_index' in c]
-    for c in available_econ:
-        df[f'{c}_lag1'] = df.groupby('district_no')[c].shift(1).ffill().bfill()
+    econ_cols = ['producer_price_index', 'seed_price_index', 'fertilizer_price_index', 'plant_protection_price_index',
+                 'energy_price_index']
+    for c in econ_cols:
+        if c in df.columns:
+            df[f'{c}_lag1'] = df.groupby('district_no')[c].shift(1).ffill().bfill()
+        else:
+            df[f'{c}_lag1'] = 0  # Fill missing econ with 0 if load failed
 
     # Economic Anomalies & Interactions
-    # Check what we have
-    has_prod = 'producer_price_index_lag1' in df.columns
-    has_fert = 'fertilizer_price_index_lag1' in df.columns
-    has_plant = 'plant_protection_price_index_lag1' in df.columns  # Likely missing in clean file
-    has_seed = 'seed_price_index_lag1' in df.columns  # Likely missing
-
-    if has_prod and has_fert:
+    if 'producer_price_index_lag1' in df.columns and 'fertilizer_price_index_lag1' in df.columns:
         df['profit_margin_proxy_lag1'] = df['producer_price_index_lag1'] / (df['fertilizer_price_index_lag1'] + 1e-6)
         df['wofost_forecast_x_profit_margin'] = df['stage1_forecast'] * df['profit_margin_proxy_lag1']
     else:
         df['profit_margin_proxy_lag1'] = 0
         df['wofost_forecast_x_profit_margin'] = 0
 
-    if has_fert:
-        # If we miss plant/seed, assume fertilizer is the main cost driver (which is true)
-        df['cost_of_inputs_lag1'] = df['fertilizer_price_index_lag1']
-        if has_plant: df['cost_of_inputs_lag1'] += df['plant_protection_price_index_lag1']
-        if has_seed: df['cost_of_inputs_lag1'] += df['seed_price_index_lag1']
+    if 'fertilizer_price_index_lag1' in df.columns and 'plant_protection_price_index_lag1' in df.columns:
+        df['cost_of_inputs_lag1'] = df['fertilizer_price_index_lag1'] + df['plant_protection_price_index_lag1']
     else:
         df['cost_of_inputs_lag1'] = 0
 
     # Specific Anomalies
-    for c in available_econ:
-        trend = df.groupby('district_no')[c].transform(lambda x: x.rolling(5, min_periods=1).mean())
-        df[f'{c}_lag1_anomaly'] = df[
-                                      c] - trend  # Note: anomaly of the Lag, or lag of the anomaly? Code used lag of current.
-        # The previous code did: anomaly = current - trend. Then lagged? No, it did lag first.
-        # Let's stick to: lag1 is the feature. We want anomaly of lag1.
+    for c in ['producer_price_index_lag1', 'seed_price_index_lag1', 'energy_price_index_lag1',
+              'plant_protection_price_index_lag1']:
+        if c in df.columns:
+            trend = df.groupby('district_no')[c].transform(lambda x: x.rolling(5, min_periods=1).mean())
+            df[f'{c}_anomaly'] = df[c] - trend
+        else:
+            df[f'{c}_anomaly'] = 0
 
-        # Actually, the "Good" code calculated anomaly on the RAW current, then maybe lagged?
-        # "merged_df[f'{feature}_anomaly'] = merged_df[feature] - trend" where feature was lagged col.
-        # So yes, anomaly of the lag.
-        trend_lag = df.groupby('district_no')[f'{c}_lag1'].transform(lambda x: x.rolling(5, min_periods=1).mean())
-        df[f'{c}_lag1_anomaly'] = df[f'{c}_lag1'] - trend_lag
-
-    if has_fert:
+    if 'fertilizer_price_index_lag1' in df.columns:
+        trend = df.groupby('district_no')['fertilizer_price_index_lag1'].transform(
+            lambda x: x.rolling(5, min_periods=1).mean())
+        df['fertilizer_price_index_lag1_anomaly'] = df['fertilizer_price_index_lag1'] - trend
         lb = df['fertilizer_price_index_lag1_anomaly'].quantile(0.05)
         ub = df['fertilizer_price_index_lag1_anomaly'].quantile(0.95)
         df['fertilizer_price_index_lag1_anomaly_capped'] = df['fertilizer_price_index_lag1_anomaly'].clip(lb, ub)
@@ -228,7 +267,7 @@ def main():
         df['is_fertilizer_price_extreme'] = 0
 
     # Interactions
-    if 'antecedent_gdd_sum_anomaly' in df.columns and has_fert:
+    if 'antecedent_gdd_sum_anomaly' in df.columns:
         df['gdd_x_fertilizer_price'] = df['antecedent_gdd_sum_anomaly'] * df[
             'fertilizer_price_index_lag1_anomaly_capped']
     else:
@@ -239,12 +278,12 @@ def main():
     else:
         df['spring_temp_x_spring_precip'] = 0
 
-    if 'summer_temp_prob_warm_forecast' in df.columns and 'profit_margin_proxy_lag1' in df.columns:
+    if 'summer_temp_prob_warm_forecast' in df.columns:
         df['summer_heat_x_profit_margin'] = df['summer_temp_prob_warm_forecast'] * df['profit_margin_proxy_lag1']
     else:
         df['summer_heat_x_profit_margin'] = 0
 
-    if 'summer_precip_prob_wet_forecast' in df.columns and 'cost_of_inputs_lag1' in df.columns:
+    if 'summer_precip_prob_wet_forecast' in df.columns:
         df['summer_precip_x_input_costs'] = df['summer_precip_prob_wet_forecast'] * df['cost_of_inputs_lag1']
     else:
         df['summer_precip_x_input_costs'] = 0
@@ -274,13 +313,12 @@ def main():
 
     df.fillna(0, inplace=True)
 
-    # Drop source columns to keep file clean-ish
     drop_cols = ['yield', 'producer_price_index', 'seed_price_index', 'fertilizer_price_index',
                  'plant_protection_price_index', 'energy_price_index', 'state']
     df.drop(columns=drop_cols, inplace=True, errors='ignore')
 
     df.to_csv(paths['OUTPUT_FILE'], index=False)
-    logging.info(f"✓ Feature Engineering (v17.0) Complete. Saved to {paths['OUTPUT_FILE']}")
+    logging.info(f"✓ Feature Engineering (v16.0) Complete. Saved to {paths['OUTPUT_FILE']}")
 
 
 if __name__ == '__main__':
