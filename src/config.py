@@ -199,14 +199,14 @@ XGBOOST_TRAINING_CONFIG = {
         'spring_evaporation_anomaly_forecast',
         'spring_runoff_anomaly_forecast',
         'spring_soil_temp_l1_anomaly_forecast',
-        'spring_snowfall_anomaly_forecast',
+        # 'spring_snowfall_anomaly_forecast', # REMOVED: Likely noise
         'summer_temp_anomaly_forecast',
         'summer_precip_anomaly_forecast',
         'summer_solar_rad_anomaly_forecast',
         'summer_evaporation_anomaly_forecast',
         'summer_runoff_anomaly_forecast',
         'summer_soil_temp_l1_anomaly_forecast',
-        'summer_snowfall_anomaly_forecast',
+        # 'summer_snowfall_anomaly_forecast', # REMOVED: Physically impossible
 
         # --- 3. Forecast Probabilities ---
         'spring_temp_prob_warm_forecast',
@@ -221,12 +221,13 @@ XGBOOST_TRAINING_CONFIG = {
         'avg_sand_0_30cm', 'avg_som_0_30cm',
         'avg_phh2o_0_30cm',
 
-        # --- 5. Satellite ---
-        'winter_cropland_ndvi_mean',
-        'winter_cropland_ndvi_anomaly',
-        'winter_cropland_LST_mean',
-        'winter_cropland_LST_anomaly',
-        'winter_cropland_snow_cover_days',
+        # --- 5. Satellite (Pruned) ---
+        # Winter satellite data is likely noise for a spring crop
+        # 'winter_cropland_ndvi_mean',
+        # 'winter_cropland_ndvi_anomaly',
+        # 'winter_cropland_LST_mean',
+        # 'winter_cropland_LST_anomaly',
+        # 'winter_cropland_snow_cover_days',
 
         # --- 6. Teleconnections ---
         'nao_winter_avg', 'sca_winter_avg', 'enso_mei_winter_avg',
@@ -237,19 +238,25 @@ XGBOOST_TRAINING_CONFIG = {
         'producer_price_index_lag1_anomaly',
         'seed_price_index_lag1_anomaly',
         'energy_price_index_lag1_anomaly',
-        # 'fertilizer_price_index_lag1_anomaly', # Excluded in favor of capped version
         'plant_protection_price_index_lag1_anomaly',
         'fertilizer_price_index_lag1_anomaly_capped',
         'is_fertilizer_price_extreme',
 
         # --- 8. Model Inputs ---
-        'stage1_forecast',  # The Baseline
+        'stage1_forecast',
         'wofost_forecast_x_profit_margin',
         'has_wofost_data',
         'state_encoded',
         'year_trend',
+        'is_gdr',
 
         # --- 9. Interactions & Polynomials ---
+        # The Bumper Crop/Disaster Separators
+        'spring_warmth_x_summer_rain',
+        'summer_rad_x_summer_rain',
+        'is_gdr_x_summer_rain',
+
+        # Soil & Inputs
         'gdd_x_fertilizer_price',
         'spring_temp_x_spring_precip',
         'summer_heat_x_profit_margin',
@@ -257,13 +264,15 @@ XGBOOST_TRAINING_CONFIG = {
         'hot_dry_interaction',
         'lat_x_summer_temp',
         'sandy_soil_x_drought',
+        # 'clay_soil_x_drought', # ADD THIS if you can calc it in build_features.py easily (Optional)
+
+        # Squares
         'antecedent_gdd_sum_anomaly_sq',
         'spring_temp_prob_warm_forecast_sq',
         'summer_temp_prob_warm_forecast_sq',
         'spring_precip_prob_wet_forecast_sq',
         'summer_precip_prob_wet_forecast_sq',
         'summer_precip_anomaly_forecast_sq',
-        'is_gdr'
     ],
     'BEST_PARAMS_LOWER': {
         'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,
