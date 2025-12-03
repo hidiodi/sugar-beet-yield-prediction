@@ -249,7 +249,9 @@ XGBOOST_TRAINING_CONFIG = {
         'state_encoded',
         'year_trend',
         'is_gdr',
-
+        'early_sowing_factor',       # The proxy for root depth/canopy size
+        'effective_winter_water',    # The "Real" Gas Tank
+        'solar_capture_potential',   # The "Bumper" Engine
         # --- 9. Interactions & Polynomials ---
         'summer_water_balance_anomaly',   # The truest measure of drought
         'summer_heat_x_water_balance',    # The 2014/2018 Separator (CRITICAL)
@@ -258,6 +260,18 @@ XGBOOST_TRAINING_CONFIG = {
         'summer_rad_x_summer_rain',
         'is_gdr_x_summer_rain',
 
+        'winter_precip_sum',       # Absolute amount of water in the system
+        'winter_precip_anomaly',   # Is it wetter/drier than usual?
+        'feb_frost_days',          # Late winter hard freeze count
+
+        # --- Interactions ---
+        'sowing_doy',            # Day of Year (e.g., 90 = March 31)
+        'sowing_doy_anomaly',    # Is it earlier/later than usual?
+        'flash_drought_index',   # Captures 2018 (Heat w/ NO water)
+        'optimal_growth_index',  # Captures 2014 (Heat w/ Water)
+        # --- Interactions ---
+        'late_sowing_x_summer_heat', # The critical "Canopy Closure" separator
+        'winter_buffer_x_summer_heat', # Keep this! (Soil Moisture x Heat)
         # Soil & Inputs
         'gdd_x_fertilizer_price',
         'spring_temp_x_spring_precip',
