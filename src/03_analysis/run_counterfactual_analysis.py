@@ -39,7 +39,9 @@ def analyze_plausibility():
         'summer_days_tmax_gt_30c',  # Did we capture the heatwaves?
         'summer_water_balance_anomaly',  # Is 2018 negative?
         'late_sowing_x_summer_heat',  # The new interaction
-        'flash_drought_index'  # The kill switch
+        'flash_drought_index',  # The kill switch
+        'effective_winter_water',
+        'solar_capture_potential'
     ]
 
     # Filter only columns that exist

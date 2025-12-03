@@ -39,6 +39,7 @@ SCRIPTS_TO_RUN = [
     #"src/02_models/FinalEnsemble/backtest_final_ensemble.py",
     "src/03_analysis/basic_analysis/compare_model_versions.py",
     "src/03_analysis/hybrid_model_analysis/analyze_hybrid_model.py",
+    "src/03_analysis/run_counterfactual_analysis.py",
     #"src/02_models/XGBoost/regression_model/Tuning/tune_quantiles.py",
     #"src/03_analysis/shap_analysis_xgb.py",
     #"src/03_analysis/run_hybrid_analysis_pipeline.py",
@@ -289,6 +290,13 @@ XGBOOST_TRAINING_CONFIG = {
         'spring_precip_prob_wet_forecast_sq',
         'summer_precip_prob_wet_forecast_sq',
         'summer_precip_anomaly_forecast_sq',
+        'is_heat_crash',  # Binary: 1 if massive stress
+        'is_solar_bumper',  # Binary: 1 if massive potential
+        'growing_season_length',  # Days in the ground
+
+        # --- Trend Scalers ---
+        'trend_x_crash',  # Allows scaling penalty by yield potential
+        'trend_x_bumper',  # Allows scaling bonus by yield potential
     ],
     'BEST_PARAMS_LOWER': {
         'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,
