@@ -175,8 +175,7 @@ def main():
 
     # --- START INTEGRATION: GDR FLAG ---
     # States 12-16 are the "New States" (former GDR)
-    # 11: Berlin, 12: Brandenburg, 13: MV, 14: Sachsen, 15: Sachsen-Anhalt, 16: Thüringen
-    # (Note:  and is technically mixed, so we exclude it for a clean "East" signal)
+    # Using >= 12 excludes Berlin (11) which is historically mixed.
     df['is_gdr'] = (df['district_no'].str[:2].astype(int) >= 11).astype(int)
 
     # 8. Feature Generation
@@ -212,7 +211,42 @@ def main():
         ub = df['fertilizer_price_index_lag1_anomaly'].quantile(0.95)
         df['fertilizer_price_index_lag1_anomaly_capped'] = df['fertilizer_price_index_lag1_anomaly'].clip(lb, ub)
         df['is_fertilizer_price_extreme'] = ((df['fertilizer_price_index_lag1_anomaly'] < lb) | (
-                    df['fertilizer_price_index_lag1_anomaly'] > ub)).astype(int)
+                df['fertilizer_price_index_lag1_anomaly'] > ub)).astype(int)
+
+    # --- NEW: Bumper Crop Logic (The 2014 Fix) ---
+    # MOVED OUTSIDE THE FERTILIZER IF-BLOCK
+
+    # 1. The "Early Start, Sustained Growth" Indicator
+    if 'spring_temp_anomaly_forecast' in df.columns and 'summer_precip_anomaly_forecast' in df.columns:
+        df['spring_warmth_x_summer_rain'] = df['spring_temp_anomaly_forecast'] * df['summer_precip_anomaly_forecast']
+    else:
+        df['spring_warmth_x_summer_rain'] = 0
+
+    # 2. The "Photosynthesis Potential"
+    if 'summer_solar_rad_anomaly_forecast' in df.columns and 'summer_precip_anomaly_forecast' in df.columns:
+        df['summer_rad_x_summer_rain'] = df['summer_solar_rad_anomaly_forecast'] * df['summer_precip_anomaly_forecast']
+    else:
+        df['summer_rad_x_summer_rain'] = 0
+
+    # 3. Regional Water Value (GDR Specific)
+    if 'is_gdr' in df.columns and 'summer_precip_anomaly_forecast' in df.columns:
+        df['is_gdr_x_summer_rain'] = df['is_gdr'] * df['summer_precip_anomaly_forecast']
+    else:
+        df['is_gdr_x_summer_rain'] = 0
+
+    # 4. Clay Soil Buffer (The Drought "Airbag")
+    # Clay holds water. If summer precip is negative (drought), high clay reduces the damage.
+    if 'avg_clay_0_30cm' in df.columns and 'summer_precip_anomaly_forecast' in df.columns:
+        df['clay_soil_x_drought'] = df['avg_clay_0_30cm'] * df['summer_precip_anomaly_forecast']
+    else:
+        df['clay_soil_x_drought'] = 0
+
+    # 5. Excess Spring Wetness (The "Muddy Boots" Factor)
+    # High rain anomaly + High probability of wetness = High risk of delayed planting.
+    if 'spring_precip_anomaly_forecast' in df.columns and 'spring_precip_prob_wet_forecast' in df.columns:
+        df['excess_spring_wetness'] = df['spring_precip_anomaly_forecast'] * df['spring_precip_prob_wet_forecast']
+    else:
+        df['excess_spring_wetness'] = 0
 
     # Interactions
     if 'antecedent_gdd_sum_anomaly' in df.columns and 'fertilizer_price_index_lag1_anomaly_capped' in df.columns:
