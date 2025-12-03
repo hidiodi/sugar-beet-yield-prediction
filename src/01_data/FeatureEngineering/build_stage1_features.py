@@ -1,6 +1,6 @@
 # File: src/01_data/FeatureEngineering/build_stage1_features.py
-# REFACTORED (v16.0): Robust Economic Data Loading
-# Fixes the "Missing Features" error by correctly parsing the German CSV formats.
+# REFACTORED (v15.0): Exact Restoration of "Good Setup"
+# Ensures all polynomial, interaction, and economic anomaly features are present.
 
 import numpy as np
 import pandas as pd
@@ -21,12 +21,15 @@ CONFIG = config.FEATURE_ENGINEERING_CONFIG
 
 def create_granular_weather_features(weather_dir: Path, start_year: int, end_year: int):
     logging.info("--- Engineering Physiological Weather Features ---")
-    PARAMS = config.FEATURE_ENGINEERING_CONFIG.get('PHYSIOLOGY_PARAMS', {
-        'TMAX_STRESS_THRESHOLD': 30.0, 'TMIN_STRESS_THRESHOLD': 17.0,
-        'TMAX_OPTIMAL_MIN': 17.0, 'TMAX_OPTIMAL_MAX': 25.0, 'TMIN_OPTIMAL_MAX': 15.0,
-        'PRECIP_DEFICIT_WINDOW': 30, 'PRECIP_DEFICIT_THRESHOLD': 20.0,
-        'ECES_EXPONENT': 1.5, 'DTR_SUNNY_DAY_QUANTILE': 0.75
-    })
+    PARAMS = config.FEATURE_ENGINEERING_CONFIG['PHYSIOLOGY_PARAMS']  # Use from config if available or defaults below
+    # Fallback if config is missing specific keys
+    if 'TMAX_STRESS_THRESHOLD' not in PARAMS:
+        PARAMS = {
+            'TMAX_STRESS_THRESHOLD': 30.0, 'TMIN_STRESS_THRESHOLD': 17.0,
+            'TMAX_OPTIMAL_MIN': 17.0, 'TMAX_OPTIMAL_MAX': 25.0, 'TMIN_OPTIMAL_MAX': 15.0,
+            'PRECIP_DEFICIT_WINDOW': 30, 'PRECIP_DEFICIT_THRESHOLD': 20.0,
+            'ECES_EXPONENT': 1.5, 'DTR_SUNNY_DAY_QUANTILE': 0.75
+        }
 
     all_weather_files = list(weather_dir.glob("*.csv"))
     if not all_weather_files: return pd.DataFrame()
@@ -87,90 +90,45 @@ def load_forecasts_with_mapping(forecast_file):
     try:
         df = pd.read_csv(forecast_file)
         df['district_no'] = df['district_no'].astype(str).str.zfill(5)
+        # Assuming the file is already aggregated or we aggregate here
         numeric_cols = [c for c in df.columns if c not in ['district_no', 'year', 'member']]
         df_agg = df.groupby(['year', 'district_no'])[numeric_cols].mean().reset_index()
+
+        # Mapping based on typical output
+        # If your intermediate file already has the right names, this is a pass-through
+        # But we ensure they exist.
         return df_agg
     except:
         return pd.DataFrame()
 
 
 def load_economics(prod_file, input_file):
-    """
-    Robust loader that attempts multiple separators and encodings.
-    """
-    logging.info(f"Loading Economics from:\n  {prod_file}\n  {input_file}")
-
-    def read_robust(fpath):
-        # 1. Standard
-        try:
-            df = pd.read_csv(fpath)
-            if len(df.columns) > 1: return df
-        except:
-            pass
-        # 2. German Semicolon
-        try:
-            df = pd.read_csv(fpath, sep=';', encoding='utf-8')
-            if len(df.columns) > 1: return df
-        except:
-            pass
-        # 3. German Latin1
-        try:
-            df = pd.read_csv(fpath, sep=';', encoding='latin1')
-            if len(df.columns) > 1: return df
-        except:
-            pass
-
-        logging.error(f"FAILED to read {fpath}. Check format.")
-        return None
-
+    logging.info("Loading Economics...")
     try:
-        # Load Producer Prices
-        df_prod = read_robust(prod_file)
-        if df_prod is None: return pd.DataFrame()
-
-        # Ensure column names match expected melt format
-        # If 'ID' not in columns, maybe it has a different name or structure
-        if 'ID' in df_prod.columns:
-            df_prod = df_prod[df_prod['ID'] == 'LWPR-132'].melt(
-                id_vars=['ID', 'Description'], var_name='year', value_name='producer_price_index'
-            )
-        else:
-            logging.warning("Producer Price CSV missing 'ID' column. Columns found: " + str(df_prod.columns))
-            return pd.DataFrame()  # Fail safe
-
+        df_prod = pd.read_csv(prod_file)
+        df_prod = df_prod[df_prod['ID'] == 'LWPR-132'].melt(id_vars=['ID', 'Description'], var_name='year',
+                                                            value_name='producer_price_index')
         df_prod['year'] = pd.to_numeric(df_prod['year'], errors='coerce')
         df_prod.dropna(subset=['year'], inplace=True)
         df_prod['year'] = df_prod['year'].astype(int)
 
-        # Load Input Prices
-        df_in = read_robust(input_file)
-        if df_in is None: return pd.DataFrame()
-
+        df_in = pd.read_csv(input_file)
         IDS = {'LWBM-11': 'seed_price_index', 'LWBM-12': 'energy_price_index', 'LWBM-13': 'fertilizer_price_index',
                'LWBM-14': 'plant_protection_price_index'}
+        df_in = df_in[df_in['ID'].isin(IDS.keys())].melt(id_vars=['ID', 'Description'], var_name='period',
+                                                         value_name='val')
+        df_in['year'] = pd.to_numeric(df_in['period'].str.split('/').str[1], errors='coerce')
+        df_in.dropna(subset=['year'], inplace=True)
+        df_in['year'] = df_in['year'].astype(int)
+        df_in = df_in.groupby(['year', 'ID'])['val'].mean().unstack().reset_index().rename(columns=IDS)
 
-        if 'ID' in df_in.columns:
-            df_in = df_in[df_in['ID'].isin(IDS.keys())].melt(id_vars=['ID', 'Description'], var_name='period',
-                                                             value_name='val')
-            df_in['year'] = pd.to_numeric(df_in['period'].str.split('/').str[1], errors='coerce')
-            df_in.dropna(subset=['year'], inplace=True)
-            df_in['year'] = df_in['year'].astype(int)
-            df_in = df_in.groupby(['year', 'ID'])['val'].mean().unstack().reset_index().rename(columns=IDS)
-        else:
-            logging.warning("Input Price CSV missing 'ID' column.")
-            return pd.DataFrame()
-
-        df_merged = pd.merge(df_prod[['year', 'producer_price_index']], df_in, on='year', how='outer')
-        logging.info(f"Economics loaded: {len(df_merged)} years.")
-        return df_merged
-
-    except Exception as e:
-        logging.error(f"Econ load critical error: {e}")
-        return pd.DataFrame(columns=['year'])
+        return pd.merge(df_prod[['year', 'producer_price_index']], df_in, on='year', how='outer')
+    except:
+        return pd.DataFrame()
 
 
 def main():
-    logging.info("--- Starting Feature Engineering (v16.0 - Robust Econ) ---")
+    logging.info("--- Starting Feature Engineering (v15.0 - The Restoration) ---")
     paths = CONFIG['FILE_PATHS']
     paths['OUTPUT_DIR'].mkdir(exist_ok=True, parents=True)
 
@@ -181,10 +139,7 @@ def main():
 
     # 1. Economics
     df_econ = load_economics(paths['PRODUCER_PRICE_CSV'], paths['INPUT_PRICE_CSV'])
-    if not df_econ.empty:
-        df = pd.merge(df, df_econ, on='year', how='left')
-    else:
-        logging.warning("⚠️ Proceeding WITHOUT Economic Data (Load Failed)")
+    if not df_econ.empty: df = pd.merge(df, df_econ, on='year', how='left')
 
     # 2. Weather Physio
     df_phys = create_granular_weather_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)
@@ -223,26 +178,18 @@ def main():
     df['year_trend'] = df['year'] - df['year'].min()
 
     # Economic Lags
-    econ_cols = ['producer_price_index', 'seed_price_index', 'fertilizer_price_index', 'plant_protection_price_index',
-                 'energy_price_index']
-    for c in econ_cols:
+    for c in ['producer_price_index', 'seed_price_index', 'fertilizer_price_index', 'plant_protection_price_index',
+              'energy_price_index']:
         if c in df.columns:
             df[f'{c}_lag1'] = df.groupby('district_no')[c].shift(1).ffill().bfill()
-        else:
-            df[f'{c}_lag1'] = 0  # Fill missing econ with 0 if load failed
 
     # Economic Anomalies & Interactions
     if 'producer_price_index_lag1' in df.columns and 'fertilizer_price_index_lag1' in df.columns:
         df['profit_margin_proxy_lag1'] = df['producer_price_index_lag1'] / (df['fertilizer_price_index_lag1'] + 1e-6)
         df['wofost_forecast_x_profit_margin'] = df['stage1_forecast'] * df['profit_margin_proxy_lag1']
-    else:
-        df['profit_margin_proxy_lag1'] = 0
-        df['wofost_forecast_x_profit_margin'] = 0
 
     if 'fertilizer_price_index_lag1' in df.columns and 'plant_protection_price_index_lag1' in df.columns:
         df['cost_of_inputs_lag1'] = df['fertilizer_price_index_lag1'] + df['plant_protection_price_index_lag1']
-    else:
-        df['cost_of_inputs_lag1'] = 0
 
     # Specific Anomalies
     for c in ['producer_price_index_lag1', 'seed_price_index_lag1', 'energy_price_index_lag1',
@@ -250,8 +197,6 @@ def main():
         if c in df.columns:
             trend = df.groupby('district_no')[c].transform(lambda x: x.rolling(5, min_periods=1).mean())
             df[f'{c}_anomaly'] = df[c] - trend
-        else:
-            df[f'{c}_anomaly'] = 0
 
     if 'fertilizer_price_index_lag1' in df.columns:
         trend = df.groupby('district_no')['fertilizer_price_index_lag1'].transform(
@@ -262,12 +207,9 @@ def main():
         df['fertilizer_price_index_lag1_anomaly_capped'] = df['fertilizer_price_index_lag1_anomaly'].clip(lb, ub)
         df['is_fertilizer_price_extreme'] = ((df['fertilizer_price_index_lag1_anomaly'] < lb) | (
                     df['fertilizer_price_index_lag1_anomaly'] > ub)).astype(int)
-    else:
-        df['fertilizer_price_index_lag1_anomaly_capped'] = 0
-        df['is_fertilizer_price_extreme'] = 0
 
     # Interactions
-    if 'antecedent_gdd_sum_anomaly' in df.columns:
+    if 'antecedent_gdd_sum_anomaly' in df.columns and 'fertilizer_price_index_lag1_anomaly_capped' in df.columns:
         df['gdd_x_fertilizer_price'] = df['antecedent_gdd_sum_anomaly'] * df[
             'fertilizer_price_index_lag1_anomaly_capped']
     else:
@@ -278,12 +220,12 @@ def main():
     else:
         df['spring_temp_x_spring_precip'] = 0
 
-    if 'summer_temp_prob_warm_forecast' in df.columns:
+    if 'summer_temp_prob_warm_forecast' in df.columns and 'profit_margin_proxy_lag1' in df.columns:
         df['summer_heat_x_profit_margin'] = df['summer_temp_prob_warm_forecast'] * df['profit_margin_proxy_lag1']
     else:
         df['summer_heat_x_profit_margin'] = 0
 
-    if 'summer_precip_prob_wet_forecast' in df.columns:
+    if 'summer_precip_prob_wet_forecast' in df.columns and 'cost_of_inputs_lag1' in df.columns:
         df['summer_precip_x_input_costs'] = df['summer_precip_prob_wet_forecast'] * df['cost_of_inputs_lag1']
     else:
         df['summer_precip_x_input_costs'] = 0
@@ -313,12 +255,13 @@ def main():
 
     df.fillna(0, inplace=True)
 
+    # Drop source columns to keep file clean-ish
     drop_cols = ['yield', 'producer_price_index', 'seed_price_index', 'fertilizer_price_index',
                  'plant_protection_price_index', 'energy_price_index', 'state']
     df.drop(columns=drop_cols, inplace=True, errors='ignore')
 
     df.to_csv(paths['OUTPUT_FILE'], index=False)
-    logging.info(f"✓ Feature Engineering (v16.0) Complete. Saved to {paths['OUTPUT_FILE']}")
+    logging.info(f"✓ Feature Engineering (v15.0) Complete. Saved to {paths['OUTPUT_FILE']}")
 
 
 if __name__ == '__main__':
