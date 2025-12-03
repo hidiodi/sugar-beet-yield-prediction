@@ -248,6 +248,26 @@ def main():
     else:
         df['excess_spring_wetness'] = 0
 
+    # --- 6. CLIMATIC WATER BALANCE (The "Physics" Fix) ---
+    # We must contextualize the "Rank 2" feature (summer_days_tmax_gt_30c).
+    # Heat is only bad if there is no water.
+
+    # A. Calculate the Balance (Precip - Evap)
+    # If this is Positive, the crop has water. If Negative, it's thirsty.
+    if 'summer_precip_anomaly_forecast' in df.columns and 'summer_evaporation_anomaly_forecast' in df.columns:
+        df['summer_water_balance_anomaly'] = df['summer_precip_anomaly_forecast'] - df['summer_evaporation_anomaly_forecast']
+    else:
+        df['summer_water_balance_anomaly'] = 0
+
+    # B. The "Kill Switch" Interaction (Heat x Balance)
+    # This specifically targets the 2014 vs 2018 confusion.
+    # 2018: High Heat days * Negative Balance = Large Negative Value (Yield Crash).
+    # 2014: High Heat days * Positive Balance = Large Positive Value (Yield Boost).
+    if 'summer_days_tmax_gt_30c' in df.columns and 'summer_water_balance_anomaly' in df.columns:
+        df['summer_heat_x_water_balance'] = df['summer_days_tmax_gt_30c'] * df['summer_water_balance_anomaly']
+    else:
+        df['summer_heat_x_water_balance'] = 0
+
     # Interactions
     if 'antecedent_gdd_sum_anomaly' in df.columns and 'fertilizer_price_index_lag1_anomaly_capped' in df.columns:
         df['gdd_x_fertilizer_price'] = df['antecedent_gdd_sum_anomaly'] * df[
