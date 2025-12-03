@@ -1,8 +1,7 @@
 # File: src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py
-# REFACTORED (v16.0): Backtest with Causal Baseline Fill
+# REFACTORED (v20.0): Champion Backtest
 
 import pandas as pd
-import numpy as np
 import joblib
 from xgboost import XGBRegressor
 from sklearn.base import clone
@@ -21,55 +20,38 @@ XGB_CONFIG = config.XGBOOST_TRAINING_CONFIG
 BACKTEST_CONFIG = config.BACKTESTING_CONFIG
 
 
-def fill_missing_trend_causally(df, trend_col, yield_col):
-    """Fills missing trends using Expanding Mean (Causal)."""
-    df_clean = df.copy()
-    missing_mask = df_clean[trend_col].isna()
-    if missing_mask.sum() == 0: return df_clean
-
-    naive_trend = df_clean.sort_values('year').groupby('district_no')[yield_col] \
-        .expanding().mean().shift(1).reset_index(level=0, drop=True)
-
-    df_clean.loc[missing_mask, trend_col] = naive_trend.loc[missing_mask]
-    return df_clean
-
-
 def run_backtest(df, models, feature_cols):
-    print(f"\n--- Starting Hybrid Backtest (Causal Fill) ---")
-    baseline_col = 'stat_trend_forecast'
-    target_col = 'trend_residual'
+    print(f"\n--- Starting Champion Backtest (Residual) ---")
 
-    # 1. Fill Gaps Causally (Globally first, as Expanding Mean is historical)
-    df = fill_missing_trend_causally(df, baseline_col, 'kreisYield')
-
-    df[target_col] = df['kreisYield'] - df[baseline_col]
+    # Target Setup
+    df['forecast_residual'] = df['kreisYield'] - df['stage1_forecast']
 
     valid_features = [c for c in feature_cols if c in df.columns]
 
-    # Valid mask for Training: Must have Target
-    valid_train_mask = df[target_col].notna()
+    # Training needs Target
+    valid_train_mask = df['forecast_residual'].notna()
 
     all_predictions = []
 
     for year in tqdm(range(BACKTEST_CONFIG['BACKTEST_START_YEAR'], BACKTEST_CONFIG['BACKTEST_END_YEAR'] + 1)):
-        # Train on EVERYTHING before this year
+        # Train on past
         train_df = df[(df['year'] < year) & valid_train_mask].copy()
 
-        # Test on this year (Must have Baseline)
-        test_df = df[(df['year'] == year) & df[baseline_col].notna()].copy()
+        # Test on current (Needs Baseline)
+        test_df = df[(df['year'] == year) & df['stage1_forecast'].notna()].copy()
 
         if test_df.empty or len(train_df) < 50: continue
 
         X_train = train_df[valid_features]
-        y_train = train_df[target_col]
+        y_train = train_df['forecast_residual']
         X_test = test_df[valid_features]
 
-        current_preds = test_df[['district_no', 'year', 'kreisYield', baseline_col]].copy()
+        current_preds = test_df[['district_no', 'year', 'kreisYield', 'stage1_forecast']].copy()
 
         for name in ['lower', 'median', 'upper']:
             model = clone(models[name])
             model.fit(X_train, y_train)
-            current_preds[f'predicted_yield_{name}'] = current_preds[baseline_col] + model.predict(X_test)
+            current_preds[f'predicted_yield_{name}'] = current_preds['stage1_forecast'] + model.predict(X_test)
             current_preds[f'predicted_yield_{name}'] = current_preds[f'predicted_yield_{name}'].clip(lower=0)
 
         all_predictions.append(current_preds)

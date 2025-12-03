@@ -182,51 +182,65 @@ XGBOOST_TRAINING_CONFIG = {
     'DATA_PATH': DATA_DIR / '05_model_input/stage1_preseason_features.csv',
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models',
     'FEATURE_COLS': [
-    # --- 1. The Big Drivers (Water Balance) ---
-    'summer_water_balance',  # (Precip - Evap) -> The Drought Signal
-    'spring_water_balance',  # (Precip - Evap) -> The Establishment Signal
-    'trend_vs_phys_gap',  # WOFOST Opinion
-    'sowing_anomaly',  # Early/Late Start
+        # Physio-Indices (The Secret Sauce)
+        'CASDI_Phase2_Count', 'NMSD_Phase2_Count', 'OSAW_Phase2_Count',
+        'ECES_Phase1_Cumulative', 'summer_days_tmax_gt_30c',
 
-    # --- 2. Raw Forecast Components (Inputs for Balance) ---
-    'spring_soil_temp_l1_anomaly_forecast',
-    'summer_soil_temp_l1_anomaly_forecast',
-    'spring_solar_rad_anomaly_forecast',
-    'summer_solar_rad_anomaly_forecast',
+        # Forecasts
+        'spring_temp_anomaly_forecast', 'spring_precip_anomaly_forecast',
+        'spring_solar_rad_anomaly_forecast', 'spring_evaporation_anomaly_forecast',
+        'spring_runoff_anomaly_forecast', 'spring_soil_temp_l1_anomaly_forecast',
+        'summer_temp_anomaly_forecast', 'summer_precip_anomaly_forecast',
+        'summer_solar_rad_anomaly_forecast', 'summer_evaporation_anomaly_forecast',
+        'summer_runoff_anomaly_forecast', 'summer_soil_temp_l1_anomaly_forecast',
 
-    # --- 3. Soil Context (The Modulators) ---
-    'avg_sand_0_100cm',  # Critical for Drought Sensitivity
-    'avg_clay_0_100cm',  # Critical for Water Retention
-    'wofost_initial_wav',  # The Tank Size
-    'deep_soil_buffer',  # Interaction (Clay * Water)
+        # Probabilities
+        'spring_temp_prob_warm_forecast', 'spring_precip_prob_wet_forecast',
+        'summer_temp_prob_warm_forecast', 'summer_precip_prob_wet_forecast',
 
-    # --- 4. Risk Probabilities ---
-    'spring_temp_prob_warm_forecast',
-    'spring_precip_prob_wet_forecast',
-    'summer_temp_prob_warm_forecast',
-    'summer_precip_prob_wet_forecast',
+        # Geo/Soil
+        'lat', 'lon', 'avg_elevation', 'avg_slope',
+        'avg_bdod_0_30cm', 'avg_clay_0_30cm', 'avg_sand_0_30cm',
+        'avg_som_0_30cm', 'avg_phh2o_0_30cm',
 
-    # --- 5. Biotic/Toxic ---
-    'toxic_carryover_index',
-    'winter_pest_kill_days',
+        # Satellite
+        'winter_cropland_ndvi_mean', 'winter_cropland_ndvi_anomaly',
+        'winter_cropland_LST_mean', 'winter_cropland_LST_anomaly',
+        'winter_cropland_snow_cover_days',
 
-    # --- 6. Satellite ---
-    'winter_cropland_ndvi_anomaly',
+        # Teleconnections
+        'nao_winter_avg', 'sca_winter_avg', 'enso_mei_winter_avg',
+
+        # Economics & Interactions
+        'profit_margin_proxy_lag1', 'cost_of_inputs_lag1',
+        'producer_price_index_lag1_anomaly',
+        'plant_protection_price_index_lag1_anomaly',
+        'fertilizer_price_index_lag1_anomaly_capped',
+        'is_fertilizer_price_extreme',
+        'wofost_forecast_x_profit_margin',
+        'stage1_forecast',  # The Trend/WOFOST Baseline
+        'state_encoded', 'year_trend',
+
+        # Specific Interactions
+        'gdd_x_fertilizer_price', 'spring_temp_x_spring_precip',
+        'summer_heat_x_profit_margin', 'summer_precip_x_input_costs',
+        'hot_dry_interaction', 'lat_x_summer_temp', 'sandy_soil_x_drought',
+        'spring_temp_prob_warm_forecast_sq', 'summer_temp_prob_warm_forecast_sq'
     ],
     'BEST_PARAMS_LOWER': {
-        'n_estimators': 1500, 'learning_rate': 0.05, 'max_depth': 8,
-        'subsample': 0.8, 'colsample_bytree': 0.8, 'gamma': 0.0,
-        'n_jobs': -1, 'random_state': 42
+        'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,
+        'subsample': 0.922850, 'colsample_bytree': 0.811573, 'gamma': 1.830853,
+        'min_child_weight': 2, 'random_state': 42, 'n_jobs': -1
     },
     'BEST_PARAMS_MEDIAN': {
-        'n_estimators': 1500, 'learning_rate': 0.05, 'max_depth': 8,
-        'subsample': 0.8, 'colsample_bytree': 0.8, 'gamma': 0.0,
-        'n_jobs': -1, 'random_state': 42
+        'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,
+        'subsample': 0.922850, 'colsample_bytree': 0.811573, 'gamma': 1.830853,
+        'min_child_weight': 2, 'random_state': 42, 'n_jobs': -1
     },
     'BEST_PARAMS_UPPER': {
-        'n_estimators': 1500, 'learning_rate': 0.05, 'max_depth': 8,
-        'subsample': 0.8, 'colsample_bytree': 0.8, 'gamma': 0.0,
-        'n_jobs': -1, 'random_state': 42
+        'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,
+        'subsample': 0.922850, 'colsample_bytree': 0.811573, 'gamma': 1.830853,
+        'min_child_weight': 2, 'random_state': 42, 'n_jobs': -1
     },
 
     'QUANTILES': {'lower': 0.025, 'median': 0.5, 'upper': 0.975},
