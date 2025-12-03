@@ -1,9 +1,9 @@
 # File: src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py
-# REFACTORED (v5.0): "The Risk & Cone Model" Training
-# Description:
-#   Trains the residual model to predict deviations from the 5-year rolling trend.
-#   Uses strict regularization to prevent overfitting to weather noise.
-#   Focuses on "Gap" features (Physical vs Statistical) and Risk (std/p10).
+# REFACTORED (v10.0): Anomaly Hunter (Residuals + No Lag)
+# Strategy:
+#   - Target: Residual (Actual - Trend).
+#   - Features: PURELY Physical/Weather/Economic. NO LAGS allowed.
+#   - Goal: Force model to explain "Why is this year different?" using only causality.
 
 import pandas as pd
 from xgboost import XGBRegressor
@@ -12,137 +12,99 @@ import sys
 from pathlib import Path
 import logging
 
-# --- Project Setup ---
 project_root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(project_root))
 from src import config
 
-# --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 TRAIN_CONFIG = config.XGBOOST_TRAINING_CONFIG
 
 
 def train_and_save_models(train_config):
-    """
-    Trains 3 quantile models (Lower, Median, Upper) on the Residuals.
-    """
-    logging.info("--- Starting ROBUST Quantile Model Training (Risk-Based) ---")
+    logging.info("--- Starting Hybrid Training (Anomaly Hunter Profile) ---")
 
-    # 1. Load Data
     data_path = train_config['DATA_PATH']
-    logging.info(f"Loading data from {data_path}...")
-    if not data_path.exists():
-        logging.error(f"FATAL: Data not found at {data_path}")
-        sys.exit(1)
-
+    if not data_path.exists(): sys.exit(1)
     df = pd.read_csv(data_path)
 
-    # 2. Define Target: The Residual from a simple Rolling Trend
-    # We predict: Actual Yield - 5yr Rolling Avg
-    # The model explains *why* this year deviates from the recent norm.
-    baseline_feature = 'yield_rolling_trend'
+    # 1. Target: Residual
+    baseline_col = 'stat_trend_forecast'
     target_col = 'trend_residual'
+    df[target_col] = df['kreisYield'] - df[baseline_col]
+    df.dropna(subset=[baseline_col, target_col, 'trend_vs_phys_gap'], inplace=True)
 
-    df.sort_values(by=['district_no', 'year'], inplace=True)
+    # 2. Features: STRICTLY CAUSAL (No Inertia/Lag)
+    feature_cols = [
+        # --- The Physics Signal (Gap between Biology and Statistics) ---
+        'trend_vs_phys_gap',
+        'wofost_skew',
+        'wofost_esp_std',
 
-    # Calculate 5-year trailing average (shift 1 to avoid leakage)
-    df[baseline_feature] = df.groupby('district_no')['kreisYield'].transform(
-        lambda x: x.rolling(window=5, min_periods=3).mean().shift(1)
-    )
+        # --- Explicit Risks (Relative to Trend) ---
+        # "Is the WOFOST worst-case scenario significantly below the Trend?"
+        'wofost_esp_p10',
+        'wofost_water_stress_mean',
 
-    df[target_col] = df['kreisYield'] - df[baseline_feature]
+        # --- Mechanisms ---
+        'nitrogen_leaching_index',
+        'toxic_carryover_index',
+        'vector_pressure_local',
+        'winter_pest_kill_days',
 
-    # Drop rows where we can't calculate the target or the anchor
-    df.dropna(subset=[baseline_feature, target_col, 'stat_trend_forecast'], inplace=True)
+        # --- Antecedent Context ---
+        'antecedent_precip_sum',
+        'sowing_potential_days',
+        'winter_cropland_ndvi_anomaly',
 
-    # 3. Define Features (The "Knowns" in March)
-    # We interpret 'FEATURE_COLS' from config as the definitive list.
-    # But we hardcode the critical ones here to ensure they are included.
-
-    # CRITICAL: 'stat_trend_forecast' is NOT a leak here. It is a pre-calculated baseline
-    # available in March. It is the "Anchor".
-
-    robust_feature_cols = [
-        # The Anchors
-        'stat_trend_forecast',  # The complex statistical expectation
-        'national_avg_yield_lag1',  # Macro trend
-
-        # The Physics (The Cone of Uncertainty)
-        'trend_vs_phys_gap',  # SIGNAL: WOFOST Mean - Stat Trend
-        'wofost_esp_std',  # RISK: How volatile is the biology?
-        'wofost_esp_p10',  # DOWNSIDE: What's the worst case?
-        'wofost_skew',  # ASYMMETRY: Is upside or downside more likely?
-
-        # The Antecedent State (Observed)
-        'antecedent_precip_sum',  # Soil recharge
-        'antecedent_gdd_sum_anomaly',  # Early heat
-        'winter_cropland_ndvi_anomaly',  # Crop state entering spring
-
-        # The Economics (Incentives)
-        'fertilizer_price_index_lag1',
-        'producer_price_index_lag1',
-
-        # Static
+        # --- Static Context ---
         'avg_clay_0_30cm',
         'avg_sand_0_30cm',
-        'avg_elevation'
+
+        # --- Economics (Price Signals) ---
+        'fertilizer_price_index_lag1',  # High Price -> Less N -> Lower Yield
+
+        # --- Weather Patterns ---
+        'nao_winter_avg',
+
+        # --- Forecast Probabilities (Risk Detectors) ---
+        'spring_temp_prob_warm_forecast',
+        'spring_precip_prob_wet_forecast',
+        'summer_precip_prob_wet_forecast',
+        'summer_temp_prob_warm_forecast',
+
+        # --- Interactions ---
+        'spring_temp_x_antecedent_rain'
     ]
 
-    # Intersect with available columns
-    valid_features = [c for c in robust_feature_cols if c in df.columns]
-
-    missing = set(robust_feature_cols) - set(valid_features)
-    if missing:
-        logging.warning(f"The following robust features are missing from input: {missing}")
-
+    valid_features = [c for c in feature_cols if c in df.columns]
     X_train = df[valid_features]
     y_train = df[target_col]
 
-    logging.info(f"Training on {len(X_train)} samples with {len(valid_features)} features.")
-    logging.info(f"Features: {valid_features}")
+    logging.info(f"Training on {len(valid_features)} features (NO LAGS).")
 
-    # 4. Model Hyperparameters (Regularized)
-    # We use shallower trees and higher gamma to force the model to find
-    # universal risks rather than memorizing specific year weather patterns.
-
+    # 3. Hyperparameters (Balanced for Signal Detection)
     xgb_params = {
-        'n_estimators': 800,
-        'max_depth': 4,  # Shallow trees = Less overfitting
-        'learning_rate': 0.02,  # Slow learning
+        'n_estimators': 1000,
+        'max_depth': 5,
+        'learning_rate': 0.015,
         'subsample': 0.75,
-        'colsample_bytree': 0.8,
-        'min_child_weight': 15,  # Needs many samples to make a split decision
-        'gamma': 2.0,  # High regularization threshold
+        'colsample_bytree': 0.7,
+        'min_child_weight': 10,
+        'gamma': 2.0,  # Filter noise, but allow strong physical signals
         'n_jobs': -1,
         'random_state': 42
     }
 
-    quantiles = train_config['QUANTILES']
-    model_configs = {
-        'lower': {'alpha': quantiles['lower'], 'path': train_config['LOWER_MODEL_PATH']},
-        'median': {'alpha': quantiles['median'], 'path': train_config['MEDIAN_MODEL_PATH']},
-        'upper': {'alpha': quantiles['upper'], 'path': train_config['UPPER_MODEL_PATH']}
-    }
-
-    # 5. Train and Save
-    for name, cfg in model_configs.items():
-        logging.info(f"Training {name.upper()} model (alpha={cfg['alpha']})...")
-
-        model = XGBRegressor(
-            objective='reg:quantileerror',
-            quantile_alpha=cfg['alpha'],
-            **xgb_params
-        )
-
+    for name, cfg in train_config['QUANTILES'].items():
+        logging.info(f"Training {name.upper()}...")
+        model = XGBRegressor(objective='reg:quantileerror', quantile_alpha=cfg, **xgb_params)
         model.fit(X_train, y_train)
 
-        # Save
-        output_path = cfg['path']
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(model, output_path)
-        logging.info(f"✓ {name.upper()} model saved.")
+        out_path = config.XGBOOST_TRAINING_CONFIG[f'{name.upper()}_MODEL_PATH']
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(model, out_path)
 
-    logging.info("--- Training Complete. Models Ready. ---")
+    logging.info("--- Training Complete ---")
 
 
 if __name__ == "__main__":

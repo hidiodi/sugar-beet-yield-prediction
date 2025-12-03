@@ -19,14 +19,15 @@ PIPELINE_NAME = "Main Hybrid Model Pipeline"
 SCRIPTS_TO_RUN = [
     #"src/01_data/download_all_data_pipeline.py",
     #"src/01_data/process_input_data_pipeline.py",
-    "src/02_models/Wofost7.1/build_initial_conditions.py",
-    "src/02_models/Wofost7.1/build_site_data.py",
-    "src/02_models/Wofost7.1/build_genetic_parameters.py",
-    "src/02_models/Wofost7.1/build_forecast_weather.py",
-    "src/02_models/Wofost7.1/run_wofost_pipeline.py",
-    "src/02_models/Wofost7.1/validation_dashboard.py",
+    #"src/02_models/Wofost7.1/build_initial_conditions.py",
+    #"src/02_models/Wofost7.1/build_site_data.py",
+    #"src/02_models/Wofost7.1/build_genetic_parameters.py",
+    #"src/02_models/Wofost7.1/build_forecast_weather.py",
+    #"src/02_models/Wofost7.1/analyze_pipeline_inputs.py",
+    #"src/02_models/Wofost7.1/run_wofost_pipeline.py",
+    #"src/02_models/Wofost7.1/validation_dashboard.py",
     #"src/02_models/Wofost7.1/create_trendModel.py",
-    "src/01_data/FeatureEngineering/build_stage1_features.py",
+    #"src/01_data/FeatureEngineering/build_stage1_features.py",
     #"src/03_analysis/basic_analysis/analyze_stage1_features.py",
     "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
     "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
@@ -37,6 +38,7 @@ SCRIPTS_TO_RUN = [
     #"src/02_models/NGboost/backtest_final_ngboost_model.py",
     #"src/02_models/FinalEnsemble/backtest_final_ensemble.py",
     "src/03_analysis/basic_analysis/compare_model_versions.py",
+    #"src/03_analysis/hybrid_model_analysis/analyze_hybrid_model.py",
     #"src/02_models/XGBoost/regression_model/Tuning/tune_quantiles.py",
     #"src/03_analysis/shap_analysis_xgb.py",
     #"src/03_analysis/run_hybrid_analysis_pipeline.py",
@@ -84,7 +86,7 @@ WEATHER_END_YEAR = 2024
 # --- WOFOST Model Configuration ---
 WOFOST_CONFIG = {
     # max range 1982 - 2024 and None to run all districts
-    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': None,
+    'START_YEAR': 1982, 'END_YEAR': 2024, 'DISTRICT_LIMIT': 15,
     'FILE_PATHS': {
         'HISTORICAL_DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
         'CORRECT_WEATHER_DIR': DATA_DIR / '04_feature/weather_district_daily',
@@ -344,8 +346,8 @@ MODEL_COMPARISON_CONFIG = {
     'NOMINAL_COVERAGE_PERCENT': 95.0,
 
     # --- Paths to Model Predictions ---
-    'HYBRID_XGB_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/final_quantile_champion/full_backtest_predictions.csv',
-    'STANDALONE_XGB_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/standalone_xgb_champion/full_backtest_predictions.csv',
+    'HYBRID_XGB_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/final_quantile_champion/full_backtest_predictions.csv',  #Final Quantile Model # trains on residual of wofost
+    'STANDALONE_XGB_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/standalone_xgb_champion/full_backtest_predictions.csv',   #standalone_xgb_champion  # uses wofost as a simple input and trains with yield as target
     'ADAPTIVE_CQR_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/adaptive_cqr_champion/full_backtest_predictions.csv',
     'NGBOOST_PREDICTIONS_FILE': BASE_DIR / 'reports/figures/district_level_diagnostics/final_ngboost_champion/full_backtest_predictions.csv',
     'STATISTICAL_TREND_FILE': DATA_DIR / '05_model_input/wofost_walkforward/final_honest_forecasts.csv',

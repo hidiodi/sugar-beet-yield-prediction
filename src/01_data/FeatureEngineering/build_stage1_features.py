@@ -1,16 +1,17 @@
 # File: src/01_data/FeatureEngineering/build_stage1_features.py
-# REFACTORED (v7.0): Mechanism-Informed Features (Toxicology, Vectors, Leaching)
+# REFACTORED (v7.0): Mechanism-Informed Features + Unit Fixes
 # Updates:
 #   1. Toxicology: Calculates 'prev_autumn_precip' for Herbicide Carryover.
-#   2. Vectors: Adds Spatial Flag (Lat < 52) to localize SBR risk.
+#   2. Vectors: Adds Spatial Flag (Latitude < 52) to localize SBR risk.
 #   3. Leaching: Soil Texture * Winter Rain interaction.
+#   4. Unit Conversion: WOFOST kg DM -> dt Fresh.
 
 import numpy as np
 import pandas as pd
 import logging
 from pathlib import Path
 import sys
-import geopandas as gpd
+import glob
 
 # Ensure the project root is in the Python path
 project_root = Path(__file__).resolve().parents[3]
@@ -27,13 +28,38 @@ def process_antecedent_weather_only(weather_dir: Path, start_year: int, end_year
     Aggregates observed weather with DWD-aligned biological thresholds AND Toxicology history.
     """
     logging.info("--- Processing Antecedent Weather (Bio + Toxicology) ---")
-    all_weather_files = [weather_dir / f"historical_daily_weather_era5_{y}.csv" for y in
-                         range(start_year - 1, end_year + 1)]
-    df_daily = pd.concat([pd.read_csv(f) for f in all_weather_files if f.exists()], ignore_index=True)
 
+    # Robust file loading (Glob instead of hardcoded names)
+    all_weather_files = list(weather_dir.glob("*.csv"))
+    if not all_weather_files:
+        logging.error(f"No weather files found in {weather_dir}")
+        return pd.DataFrame()
+
+    # Load all and filter by year range
+    df_list = []
+    for f in all_weather_files:
+        try:
+            temp = pd.read_csv(f)
+            if 'date' in temp.columns:
+                temp['date'] = pd.to_datetime(temp['date'])
+                temp['year'] = temp['date'].dt.year
+                # Filter early to save memory
+                temp = temp[(temp['year'] >= start_year - 1) & (temp['year'] <= end_year)]
+                if not temp.empty:
+                    df_list.append(temp)
+        except Exception as e:
+            continue
+
+    if not df_list:
+        return pd.DataFrame()
+
+    df_daily = pd.concat(df_list, ignore_index=True)
     df_daily['district_no'] = df_daily['district_no'].astype(str).str.zfill(5)
-    df_daily['date'] = pd.to_datetime(df_daily['date'])
-    df_daily['year'] = df_daily['date'].dt.year
+
+    # Normalize Columns
+    if 'prec' in df_daily.columns and 'precip' not in df_daily.columns:
+        df_daily.rename(columns={'prec': 'precip'}, inplace=True)
+
     df_daily['tavg'] = (df_daily['tmin'] + df_daily['tmax']) / 2.0
 
     # Harvest Year Logic
@@ -61,7 +87,6 @@ def process_antecedent_weather_only(weather_dir: Path, start_year: int, end_year
 
     # --- 2. TOXICOLOGY (Aug-Nov of PREVIOUS YEAR) ---
     # Logic: Dry Autumn = Herbicide residues (Sulfonylureas) persist -> Root damage next spring.
-    # We look at months 8, 9, 10, 11 of harvest_year - 1
     tox_mask = (
             (df_daily['year'] == df_daily['harvest_year'] - 1) &
             (df_daily['date'].dt.month.isin([8, 9, 10, 11]))
@@ -76,14 +101,12 @@ def process_antecedent_weather_only(weather_dir: Path, start_year: int, end_year
     df_final['prev_autumn_precip'] = df_final['prev_autumn_precip'].fillna(200)
 
     # Create the Index: Low Rain = High Risk
-    # We use Inverse Precip as the feature (Higher = More Risk)
     df_final['toxic_carryover_index'] = 1000.0 / (df_final['prev_autumn_precip'] + 10.0)
 
     return df_final
 
 
 def load_and_process_economics(producer_file, input_file):
-    # (Same robust code as before)
     try:
         logging.info("Processing Economic Data...")
         df_prod = pd.read_csv(producer_file)
@@ -139,13 +162,12 @@ def main():
         df = pd.merge(df, df_fcst_agg, on=['year', 'district_no'], how='left')
 
     # 3. Teleconnections
-    tele_cols = ['nao_winter_avg', 'nao_x_spring_temp']  # Add others if available
-    # Note: nao_x_spring_temp is calculated below, just ensuring base exists
     if 'nao_winter_avg' not in df.columns: df['nao_winter_avg'] = 0.0
 
-    # 4. Load Statistical Trend & Lag
+    # 4. Load Statistical Trend & Lag (Using Final Corrected as Anchor)
     df_trend = pd.read_csv(paths['WALKFORWARD_FORECAST_CSV'])
     df_trend['district_no'] = df_trend['district_no'].astype(str).str.zfill(5)
+    # Using 'final_corrected_forecast' (ARIMA optimized) as the baseline anchor
     df_trend.rename(columns={'final_corrected_forecast': 'stat_trend_forecast'}, inplace=True)
     df = pd.merge(df, df_trend[['year', 'district_no', 'stat_trend_forecast']], on=['year', 'district_no'], how='left')
 
@@ -154,20 +176,18 @@ def main():
     df = pd.merge(df, nat_yield[['year', 'national_avg_yield_lag1']], on='year', how='left')
 
     # 5. Load WOFOST Metrics (Including NEW Risk Features)
-    # The new metrics (prob_sowing_failure, anoxia_events, etc.) should be here now
-    logging.info("Loading WOFOST Risk Metrics...")
-    df_wofost = pd.read_csv(paths['WOFOST_METRICS_CSV'])  # forecast_extreme_weather_metrics.csv
-    df_wofost['district_no'] = df_wofost['district_no'].astype(str).str.zfill(5)
+    logging.info("Loading WOFOST Risk Metrics & Ensemble Cone...")
 
-    # Sanitize columns just in case
+    # Load Risk Metrics (Anoxia, Sowing, Frost)
+    df_wofost = pd.read_csv(paths['WOFOST_METRICS_CSV'])
+    df_wofost['district_no'] = df_wofost['district_no'].astype(str).str.zfill(5)
     df_wofost.columns = df_wofost.columns.str.replace(r'[<>]', '', regex=True)
 
-    # Also load yield mean/std if not in metrics file (it's in ensemble_results_raw usually)
-    # We'll assume the metrics file was updated to contain everything needed or we merge both.
-    # Actually, yield mean/std is in 'forecast_ensemble_results_raw.csv'. Let's load that for the 'Cone'.
-
+    # Load Ensemble Yields for Cone & Unit Conversion
     df_wofost_yield = pd.read_csv(paths['WOFOST_ENSEMBLE_CSV'])
     df_wofost_yield['district_no'] = df_wofost_yield['district_no'].astype(str).str.zfill(5)
+
+    # --- CRITICAL UNIT CONVERSION (DM -> FRESH) ---
     DMC = config.WOFOST_CONFIG['CONSTANTS']['DMC_SUGARBEET']
     df_wofost_yield['yield_fresh'] = (df_wofost_yield['yield_water_limited'] / DMC) / 100.0
 
@@ -181,8 +201,8 @@ def main():
 
     # Merge Yield Cone
     df = pd.merge(df, df_cone, on=['year', 'district_no'], how='left')
-    # Merge Risk Metrics (Anoxia, Sowing, Frost)
-    # Drop cols that might overlap
+
+    # Merge Risk Metrics
     cols_to_use = [c for c in df_wofost.columns if c not in df.columns or c in ['year', 'district_no']]
     df = pd.merge(df, df_wofost[cols_to_use], on=['year', 'district_no'], how='left')
 
@@ -192,9 +212,10 @@ def main():
         CONFIG['WEATHER_FEATURE_YEAR_START'],
         CONFIG['WEATHER_FEATURE_YEAR_END']
     )
-    cols_to_drop = [c for c in df_weather.columns if c in df.columns and c not in ['year', 'district_no']]
-    if cols_to_drop: df.drop(columns=cols_to_drop, inplace=True)
-    df = pd.merge(df, df_weather, on=['year', 'district_no'], how='left')
+    if not df_weather.empty:
+        cols_to_drop = [c for c in df_weather.columns if c in df.columns and c not in ['year', 'district_no']]
+        if cols_to_drop: df.drop(columns=cols_to_drop, inplace=True)
+        df = pd.merge(df, df_weather, on=['year', 'district_no'], how='left')
 
     # 7. Satellite
     df_sat = pd.read_csv(paths['SATELLITE_FEATURES_CSV'])
@@ -223,17 +244,19 @@ def main():
 
     df['trend_vs_phys_gap'] = df['wofost_esp_mean'] - df['stat_trend_forecast']
     df['wofost_skew'] = (df['wofost_esp_mean'] - df['wofost_esp_p10']) / (
-                df['wofost_esp_p90'] - df['wofost_esp_p10'] + 1e-6)
+            df['wofost_esp_p90'] - df['wofost_esp_p10'] + 1e-6)
 
-    # A. Spatial Flag for Vectors (Latitude < 52 approx. for Southwest/West focus)
-    # Simple proxy for "Warmer Zone" where SBR is endemic
-    if 'lat' in df.columns:
+    # A. Spatial Flag for Vectors (Using 'latitude' which is standard)
+    if 'latitude' in df.columns:
+        df['is_vector_endemic_zone'] = (df['latitude'] < 52.0).astype(int)
+        df['vector_pressure_local'] = df['winter_aphid_pressure'] * df['is_vector_endemic_zone']
+    elif 'lat' in df.columns:  # Fallback if only 'lat' exists
         df['is_vector_endemic_zone'] = (df['lat'] < 52.0).astype(int)
         df['vector_pressure_local'] = df['winter_aphid_pressure'] * df['is_vector_endemic_zone']
     else:
-        df['vector_pressure_local'] = 0  # Fallback
+        df['vector_pressure_local'] = 0
 
-    # B. Nitrogen Leaching
+        # B. Nitrogen Leaching
     if 'avg_sand_0_30cm' in df.columns and 'antecedent_precip_sum' in df.columns:
         df['nitrogen_leaching_index'] = df['antecedent_precip_sum'] * df['avg_sand_0_30cm']
 
