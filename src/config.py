@@ -251,6 +251,8 @@ XGBOOST_TRAINING_CONFIG = {
         'is_gdr',
 
         # --- 9. Interactions & Polynomials ---
+        'summer_water_balance_anomaly',   # The truest measure of drought
+        'summer_heat_x_water_balance',    # The 2014/2018 Separator (CRITICAL)
         # The Bumper Crop/Disaster Separators
         'spring_warmth_x_summer_rain',
         'summer_rad_x_summer_rain',
