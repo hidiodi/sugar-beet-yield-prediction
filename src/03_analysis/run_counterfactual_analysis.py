@@ -12,95 +12,117 @@ from src import config
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 
-def analyze_plausibility():
-    feature_file = config.FEATURE_ENGINEERING_CONFIG['FILE_PATHS']['OUTPUT_FILE']
-    logging.info(f"--- INSPECTING: {feature_file} ---")
+def analyze_systematic_errors():
+    # 1. Load Data
+    pred_path = config.BASE_DIR / 'reports/figures/district_level_diagnostics/final_quantile_champion/full_backtest_predictions.csv'
+    feat_path = config.FEATURE_ENGINEERING_CONFIG['FILE_PATHS']['OUTPUT_FILE']
+
+    logging.info(f"Loading Predictions: {pred_path}")
+    logging.info(f"Loading Features:    {feat_path}")
 
     try:
-        df = pd.read_csv(feature_file)
+        df_pred = pd.read_csv(pred_path, dtype={'district_no': str})
+        df_feat = pd.read_csv(feat_path, dtype={'district_no': str})
     except Exception as e:
-        logging.error(f"Could not load file: {e}")
+        logging.error(f"Failed to load files: {e}")
         return
 
-    # 1. Define the "Forensic Targets"
-    # We expect:
-    # 2003: High Heat, Low Precip (Drought)
-    # 2014: High Winter Precip, Early Sowing, Moderate Summer Heat (Bumper)
-    # 2018: Low Winter Precip, Late Sowing, High Heat (Disaster)
+    # Standardize IDs
+    df_pred['district_no'] = df_pred['district_no'].str.zfill(5)
+    df_feat['district_no'] = df_feat['district_no'].str.zfill(5)
 
-    years_of_interest = [2003, 2014, 2018]
+    # Clean duplicates before merge
+    cols_to_drop = ['kreisYield', 'stage1_forecast']
+    cols_to_drop = [c for c in cols_to_drop if c in df_feat.columns]
+    df_feat_clean = df_feat.drop(columns=cols_to_drop)
 
-    # Features to inspect for "Physical Reality"
-    check_cols = [
-        'stage1_forecast',  # Is the baseline already delusional?
-        'sowing_doy',  # Is 2014 actually lower (earlier) than 2018?
-        'winter_precip_sum',  # Is the "Gas Tank" full in 2014?
-        'winter_gdd',  # Was 2014 actually mild?
-        'summer_days_tmax_gt_30c',  # Did we capture the heatwaves?
-        'summer_water_balance_anomaly',  # Is 2018 negative?
-        'late_sowing_x_summer_heat',  # The new interaction
-        'flash_drought_index',  # The kill switch
+    # Merge
+    df = pd.merge(df_pred, df_feat_clean, on=['district_no', 'year'], how='inner')
+
+    # Calculate Residuals
+    # Residual = Actual - Predicted
+    # Negative = Overprediction (Model too optimistic)
+    # Positive = Underprediction (Model too pessimistic)
+    df['residual'] = df['kreisYield'] - df['predicted_yield_median']
+    df['abs_error'] = df['residual'].abs()
+
+    # 2. Define Physical Features to Audit (Ignoring Teleconnections)
+    phys_cols = [
+        'sowing_doy',
+        'winter_precip_sum',
         'effective_winter_water',
-        'solar_capture_potential'
+        'summer_days_tmax_gt_30c',
+        'summer_water_balance_anomaly',
+        'solar_capture_potential',
+        'flash_drought_index',
+        'optimal_growth_index',
+        'spring_soil_temp_l1_anomaly_forecast'
     ]
+    # Filter for existing columns
+    phys_cols = [c for c in phys_cols if c in df.columns]
 
-    # Filter only columns that exist
-    check_cols = [c for c in check_cols if c in df.columns]
+    # 3. Identify the "Worst Years"
+    yearly_stats = df.groupby('year').agg({
+        'abs_error': 'mean',
+        'residual': 'mean',
+        'kreisYield': 'mean'
+    }).sort_values('abs_error', ascending=False)
 
-    # 2. Global Averages (The Baseline)
-    logging.info("\n=== GLOBAL AVERAGES (1981-2024) ===")
-    global_means = df[check_cols].mean()
-    print(global_means.to_string())
+    print("\n" + "=" * 60)
+    print("       SYSTEMATIC ERROR AUDIT (Worst 5 Years)")
+    print("=" * 60)
+    print(yearly_stats.head(5).to_string())
 
-    # 3. The "Yearly Report Card"
-    logging.info("\n=== CRITICAL YEAR DIAGNOSTICS ===")
+    # 4. Deep Dive into the Top 5 Failures
+    worst_years = yearly_stats.head(5).index.tolist()
 
-    for year in years_of_interest:
-        year_data = df[df['year'] == year]
-        if year_data.empty:
-            logging.warning(f"Year {year} not found in dataset!")
-            continue
+    # Calculate Long-Term Averages (Baseline)
+    lt_means = df[phys_cols].mean()
 
-        logging.info(f"\n--- YEAR {year} (Average across all districts) ---")
+    for year in worst_years:
+        print(f"\n\n>>> DIAGNOSIS FOR YEAR: {year} <<<")
+        df_year = df[df['year'] == year]
 
-        # Calculate mean for this year
-        year_means = year_data[check_cols].mean()
+        # A. The Error Type
+        avg_res = df_year['residual'].mean()
+        error_type = "OVERPREDICTION (Optimism)" if avg_res < 0 else "UNDERPREDICTION (Pessimism)"
+        print(f"Model Bias: {avg_res:.2f} dt/ha -> {error_type}")
 
-        # Compare to global average
-        comparison = pd.DataFrame({
+        # B. The Physical State (Reality Check)
+        print("\n--- Physical State vs Long-Term Avg ---")
+        year_means = df_year[phys_cols].mean()
+
+        diffs = pd.DataFrame({
             'Year_Avg': year_means,
-            'Global_Avg': global_means,
-            'Diff': year_means - global_means,
-            'Status': ['Normal'] * len(check_cols)
+            'Global_Avg': lt_means,
+            'Diff': year_means - lt_means,
+            'Diff_%': ((year_means - lt_means) / lt_means.abs() * 100).round(1)
         })
 
-        # Add simple text status
-        for idx, row in comparison.iterrows():
-            if row['Diff'] > (0.2 * abs(row['Global_Avg'])):
-                comparison.loc[idx, 'Status'] = 'HIGH (+)'
-            elif row['Diff'] < (-0.2 * abs(row['Global_Avg'])):
-                comparison.loc[idx, 'Status'] = 'LOW (-)'
+        # Highlight significant anomalies (>20% deviation)
+        def highlight(row):
+            if row['Diff_%'] > 20: return "HIGH (+)"
+            if row['Diff_%'] < -20: return "LOW (-)"
+            return "Normal"
 
-        print(comparison[['Year_Avg', 'Status', 'Diff']].to_string())
+        diffs['Status'] = diffs.apply(highlight, axis=1)
+        print(diffs[['Year_Avg', 'Global_Avg', 'Status']].to_string())
 
-    # 4. Correlation Check (Does X actually affect Y?)
-    logging.info("\n=== CAUSALITY CHECK (Correlation with Residual) ===")
-    # Create the target: Residual (Actual Yield - Stage1 Forecast)
-    # Positive Residual = Stage1 underpredicted (Yield was better than expected)
-    # Negative Residual = Stage1 overpredicted (Yield was worse than expected)
-    if 'kreisYield' in df.columns and 'stage1_forecast' in df.columns:
-        df['forecast_residual'] = df['kreisYield'] - df['stage1_forecast']
+        # C. The Blame Game (Correlation with Error)
+        # Which feature correlates with the Residual *in this year*?
+        # If Corr is High, the model didn't use this feature enough.
+        print("\n--- What drove the Error? (Correlation with Residual) ---")
+        corrs = df_year[phys_cols].corrwith(df_year['residual']).sort_values(key=abs, ascending=False)
+        print(corrs.head(5).to_string())
 
-        correlations = df[check_cols].corrwith(df['forecast_residual']).sort_values(ascending=False)
-        print("Correlation with Forecast Residual (What drives the error?):")
-        print(correlations.to_string())
-
-        logging.info("\nINTERPRETATION GUIDE:")
-        logging.info("Positive Corr: Higher feature value -> Higher Actual Yield (relative to forecast).")
-        logging.info("Negative Corr: Higher feature value -> Lower Actual Yield (relative to forecast).")
-    else:
-        logging.warning("Cannot calc correlations (missing yield or stage1_forecast).")
+        print("\nINTERPRETATION:")
+        if avg_res < 0:  # Overprediction
+            print(f"Model predicted too HIGH. Look for features that should have been PENALTIES but weren't.")
+            print(f"Example: If 'solar_capture_potential' is positive but yield crashed, the kill-switch failed.")
+        else:  # Underprediction
+            print(f"Model predicted too LOW. Look for features that provided a BUFFER/BONUS but were ignored.")
+            print(f"Example: If 'effective_winter_water' is high, the model might have ignored the root depth.")
 
 
 if __name__ == '__main__':
-    analyze_plausibility()
+    analyze_systematic_errors()

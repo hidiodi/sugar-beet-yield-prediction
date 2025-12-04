@@ -278,33 +278,211 @@ def main():
         # If 10 days hot: -1.0 * (1 + 10/10) = -2.0 multiplier
         penalty_weight = np.where(heat_days > 5, (1.0 + heat_days / 10.0), 1.0)
 
-        df['solar_capture_potential'] = sowing_factor * rad_magnitude * direction_multiplier * penalty_weight
+        raw_potential = sowing_factor * rad_magnitude * direction_multiplier * penalty_weight
 
-# "Is this a Crash Year?" (Solar Potential < -200)
-    df['is_heat_crash'] = (df['solar_capture_potential'] < -200).astype(int)
+        # SQUASHING FUNCTION (Tanh)
+        # Maps -Infinity -> -100, +Infinity -> +100
+        # This prevents -700 from blowing up the gradients compared to +124
+        # We scale by 200 to keep the "units" intuitive (roughly dt/ha impact)
 
-    # "Is this a Bumper Year?" (Solar Potential > 100)
-    df['is_solar_bumper'] = (df['solar_capture_potential'] > 100).astype(int)
+        df['solar_capture_potential'] = raw_potential.clip(upper=250, lower=-2000)
 
-    # 14. Growing Season Length (The Time Factor)
-    # Even if sowing was late, did they harvest late?
-    # We estimate Harvest DOY as 295 (Oct 22) - standard sugar beet campaign start.
-    if 'sowing_doy' in df.columns:
-        df['growing_season_length'] = 295 - df['sowing_doy']
+
+    if 'solar_capture_potential' in df.columns:
+        # 2018 was approx -700. 2003 was -150.
+        # We set a threshold that catches the disasters.
+        df['is_heat_crash'] = (df['solar_capture_potential'] < -50).astype(int)
+
+        # 2014 was +124.
+        # We set a threshold for bumpers.
+        df['is_solar_bumper'] = (df['solar_capture_potential'] > 50).astype(int)
+
+        # 14. Trend Scalers
+        # Allow the model to scale the penalty based on the expected yield.
+        # A crash in a high-trend year costs more bushels than in a low-trend year.
+        if 'stage1_forecast' in df.columns:
+            df['trend_x_crash'] = df['stage1_forecast'] * df['is_heat_crash']
+            df['trend_x_bumper'] = df['stage1_forecast'] * df['is_solar_bumper']
+        else:
+            df['trend_x_crash'] = 0
+            df['trend_x_bumper'] = 0
+
     else:
-        df['growing_season_length'] = 0
-
-    # 15. Trend Interaction (The Scaler)
-    # If the Trend predicts 900, a 10% loss is -90.
-    # If the Trend predicts 500, a 10% loss is -50.
-    # We let the model scale the stress relative to the expected yield.
-    if 'stage1_forecast' in df.columns:
-        df['trend_x_crash'] = df['stage1_forecast'] * df['is_heat_crash']
-        df['trend_x_bumper'] = df['stage1_forecast'] * df['is_solar_bumper']
-    else:
+        df['is_heat_crash'] = 0
+        df['is_solar_bumper'] = 0
         df['trend_x_crash'] = 0
         df['trend_x_bumper'] = 0
 
+    # 16. EXPONENTIAL STRESS (The "Tipping Point")
+    # Biology is not linear. 10 days of heat is 4x worse than 5 days, not 2x.
+
+    if 'summer_days_tmax_gt_30c' in df.columns:
+        # Squared Heat: 5^2=25, 10^2=100. Amplifies the difference 4x.
+        df['heat_stress_sq'] = df['summer_days_tmax_gt_30c'] ** 2
+    else:
+        df['heat_stress_sq'] = 0
+
+    if 'solar_capture_potential' in df.columns:
+        # Cubed Potential: Preserves sign, but massively separates outliers.
+        # -700 becomes -343,000,000. +100 becomes +1,000,000.
+        # We scale it down to keep numbers manageable for XGBoost.
+        df['solar_potential_cubed'] = (df['solar_capture_potential'] / 100.0) ** 3
+    else:
+        df['solar_potential_cubed'] = 0
+
+    # 17. DWD STRESS CLASSES (Based on Table 2 of Documentation)
+    # The DWD defines non-linear thresholds for yield loss.
+    # We map our anomalies to these biological categories.
+
+    if 'summer_water_balance_anomaly' in df.columns:
+        wba = df['summer_water_balance_anomaly']
+
+        # Class 1: "Severe Stress" (< 30% nFK proxy)
+        # Yield loss is "to be expected".
+        # We define this as a water balance anomaly < -0.1 (approx 1 SD deviation)
+        df['dwd_severe_stress_days'] = (wba < -0.1).astype(int) * df['summer_days_tmax_gt_30c']
+
+        # Class 2: "Optimal Growth" (80-100% nFK proxy)
+        # Sufficient water + No heat stress.
+        # Water > 0 AND Heat Days < 5
+        is_opt_water = wba > 0
+        is_opt_temp = df['summer_days_tmax_gt_30c'] < 5
+        df['dwd_optimal_growth_zone'] = (is_opt_water & is_opt_temp).astype(int)
+
+    else:
+        df['dwd_severe_stress_days'] = 0
+        df['dwd_optimal_growth_zone'] = 0
+
+    # 18. FUNGAL RISK PROXY (Based on Leaf Wetness Logic)
+    # DWD states leaf wetness (RH > 90%) drives fungal disease[cite: 98, 100].
+    # 2014 was wet but bumper. This implies Fungal Risk was managed or outweighed by growth.
+    # But if we have a "Wet Summer" feature, we should check if it's "Too Wet".
+    # Table 2 says > 120% nFK causes oxygen shortage.
+    if 'summer_water_balance_anomaly' in df.columns:
+        # Proxy for Waterlogging/Oxygen Depletion
+        df['dwd_oxygen_stress'] = (df['summer_water_balance_anomaly'] > 0.3).astype(int)
+    else:
+        df['dwd_oxygen_stress'] = 0
+
+
+    # 1. Growing Season Length (Time Factor)
+    # Estimated Harvest (Oct 22 = DOY 295) minus Sowing Date
+    if 'sowing_doy' in df.columns:
+        df['growing_season_length'] = 295 - df['sowing_doy']
+
+        # 2. Early Sowing Factor (Helper for interaction)
+        # Higher = Earlier/Better. Baseline DOY 150.
+        df['early_sowing_factor'] = (150 - df['sowing_doy']).clip(lower=0)
+    else:
+        df['growing_season_length'] = 0
+        df['early_sowing_factor'] = 0
+
+    # 3. Effective Winter Water (The 2018 Fix)
+    if 'sowing_doy' in df.columns and 'winter_precip_sum' in df.columns:
+        # If Sowing > 90, Access drops to nearly zero.
+        # Logistic curve or simple cutoff? Let's use a sharp linear drop.
+        # DOY 80 -> 100% Access. DOY 100 -> 0% Access.
+
+        root_access_factor = (100 - df['sowing_doy']).clip(lower=0, upper=20) / 20.0
+        # Result: DOY 92 (2018) -> Factor 0.4 (60% penalty).
+        # Previous linear logic was only ~10% penalty.
+
+        df['effective_winter_water'] = df['winter_precip_sum'] * root_access_factor
+    else:
+        df['effective_winter_water'] = 0
+
+    # 4. Late Sowing x Heat (The Canopy Failure)
+    # Late Sowing (High DOY) * High Heat = Maximum Stress
+    if 'sowing_doy' in df.columns and 'summer_days_tmax_gt_30c' in df.columns:
+        df['late_sowing_x_summer_heat'] = df['sowing_doy'] * df['summer_days_tmax_gt_30c']
+    else:
+        df['late_sowing_x_summer_heat'] = 0
+
+    # --- MISSING ECONOMIC FEATURES (Management Decisions) ---
+    # Ensure base columns exist first to avoid KeyErrors
+    econ_cols = ['producer_price_index_lag1', 'seed_price_index_lag1',
+                 'energy_price_index_lag1', 'fertilizer_price_index_lag1',
+                 'plant_protection_price_index_lag1']
+
+    # Fill missing econ base columns with 0 if they don't exist yet (Safety check)
+    for c in econ_cols:
+        if c not in df.columns:
+            df[c] = 0
+
+    # 5. Cost of Inputs
+    df['cost_of_inputs_lag1'] = df['fertilizer_price_index_lag1'] + df['plant_protection_price_index_lag1']
+
+    # 6. Profit Margin Proxy (Motivation to yield)
+    # Output Price / Input Cost
+    df['profit_margin_proxy_lag1'] = df['producer_price_index_lag1'] / (df['fertilizer_price_index_lag1'] + 1e-6)
+
+    # 7. Interaction: Forecast Yield x Profit Margin
+    # High Profit Margin -> Farmers invest more to realize the forecast
+    if 'stage1_forecast' in df.columns:
+        df['wofost_forecast_x_profit_margin'] = df['stage1_forecast'] * df['profit_margin_proxy_lag1']
+    else:
+        df['wofost_forecast_x_profit_margin'] = 0
+
+    # 8. Specific Anomalies (Deviations from 5-year trend)
+    # We recalculate these locally to ensure they exist
+    for c in ['producer_price_index_lag1', 'seed_price_index_lag1',
+              'energy_price_index_lag1', 'plant_protection_price_index_lag1']:
+        trend = df.groupby('district_no')[c].transform(lambda x: x.rolling(5, min_periods=1).mean())
+        df[f'{c}_anomaly'] = df[c] - trend
+
+    # 9. Fertilizer Extreme Flag (Capped Anomaly)
+    trend_fert = df.groupby('district_no')['fertilizer_price_index_lag1'].transform(lambda x: x.rolling(5, min_periods=1).mean())
+    fert_anomaly = df['fertilizer_price_index_lag1'] - trend_fert
+
+    # Cap outliers
+    lb = fert_anomaly.quantile(0.05)
+    ub = fert_anomaly.quantile(0.95)
+    df['fertilizer_price_index_lag1_anomaly_capped'] = fert_anomaly.clip(lb, ub)
+
+    # Binary Flag
+    df['is_fertilizer_price_extreme'] = ((fert_anomaly < lb) | (fert_anomaly > ub)).astype(int)
+
+    # 15. TREND MODULATION (Bending the Curve)
+    # Allows the model to scale the expected trend based on the physical regime.
+
+    # Calculate a simple "Physical Score" (-1 to +1)
+    # We combine our best signals: Solar Potential (normalized) + Winter Water (normalized)
+
+    # Normalize Solar (-1000 to +250 -> -1 to +0.25 approx)
+    norm_solar = df['solar_capture_potential'] / 1000.0
+
+    # Normalize Water (0 to 400 -> 0 to 1) - approximate max
+    norm_water = (df['effective_winter_water'] / 40000.0).clip(upper=1.0)
+
+    # Combine: Solar (Energy) + Water (Mass) = Growth Potential
+    physical_score = norm_solar + norm_water
+
+    if 'summer_precip_anomaly_forecast' in df.columns and 'summer_temp_anomaly_forecast' in df.columns:
+        # 1. Base Definition: Heat * Precip (Active ONLY if Precip > 0)
+        # If it's wet, heat fuels growth. If it's dry, this is 0.
+        is_wet_summer = (df['summer_precip_anomaly_forecast'] > 0).astype(int)
+        base_growth_index = df['summer_temp_anomaly_forecast'] * df['summer_precip_anomaly_forecast'] * is_wet_summer
+
+        # 2. Early Sowing Bonus (The Canopy Factor)
+        # 2014 was Bumper because the leaves were big enough in June to use this energy.
+        if 'sowing_doy' in df.columns:
+            # DOY 80 (Early) -> Bonus 20. DOY 100 (Late) -> Bonus 0.
+            early_sowing_bonus = (100 - df['sowing_doy']).clip(lower=0)
+
+            # Apply Bonus
+            df['optimal_growth_index'] = base_growth_index * early_sowing_bonus
+        else:
+            df['optimal_growth_index'] = base_growth_index
+
+    else:
+        df['optimal_growth_index'] = 0
+
+    # Create the Interaction
+    if 'year_trend' in df.columns:
+        df['trend_x_physics'] = df['year_trend'] * physical_score
+    else:
+        df['trend_x_physics'] = 0
+    # -------------------------------------------------------
     # 3. Forecasts
     df_fcst = load_forecasts_with_mapping(paths['ECMWF_FORECAST_FEATURES_CSV'])
     if not df_fcst.empty:
@@ -449,13 +627,12 @@ def main():
     else:
          df['flash_drought_index'] = 0
 
-    # --- 11. The "Perfect Growth" Index (2014 Specific) ---
-    # Heat * Precip (Only when Precip > 0)
-    if 'summer_precip_anomaly_forecast' in df.columns and 'summer_temp_anomaly_forecast' in df.columns:
-         is_wet_summer = (df['summer_precip_anomaly_forecast'] > 0).astype(int)
-         df['optimal_growth_index'] = df['summer_temp_anomaly_forecast'] * df['summer_precip_anomaly_forecast'] * is_wet_summer
-    else:
-         df['optimal_growth_index'] = 0
+    if 'optimal_growth_index' in df.columns and 'sowing_doy' in df.columns:
+        # Magnify the "Good Weather" signal if sowing was early.
+        # 2014: High Growth Index * High Sowing Bonus = Massive Bumper Signal.
+
+        early_bonus = (100 - df['sowing_doy']).clip(lower=0)
+        df['optimal_growth_index'] = df['optimal_growth_index'] * early_bonus
 
     # Interactions
     if 'antecedent_gdd_sum_anomaly' in df.columns and 'fertilizer_price_index_lag1_anomaly_capped' in df.columns:

@@ -184,11 +184,18 @@ XGBOOST_TRAINING_CONFIG = {
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models',
     'FEATURE_COLS': [
         # --- 1. Physiological Indices (The Signal) ---
+        'heat_stress_sq',
+        'solar_potential_cubed',
         'CASDI_Phase2_Count',
         'NMSD_Phase2_Count',
         'OSAW_Phase2_Count',
         'ECES_Phase1_Cumulative',
         'summer_days_tmax_gt_30c',
+
+        # --- DWD Biological Thresholds ---
+        'dwd_severe_stress_days',   # The "Cliff" (Yield Loss Expected)
+        'dwd_optimal_growth_zone',  # The "Sweet Spot" (2014)
+        'dwd_oxygen_stress',        # The "Too Wet" penalty
 
         # --- 2. Seasonal Forecast Anomalies ---
         'antecedent_frost_days_anomaly',
@@ -297,23 +304,60 @@ XGBOOST_TRAINING_CONFIG = {
         # --- Trend Scalers ---
         'trend_x_crash',  # Allows scaling penalty by yield potential
         'trend_x_bumper',  # Allows scaling bonus by yield potential
+        'trend_x_physics',
     ],
     'BEST_PARAMS_LOWER': {
-        'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,
-        'subsample': 0.922850, 'colsample_bytree': 0.811573, 'gamma': 1.830853,
-        'min_child_weight': 2, 'random_state': 42, 'n_jobs': -1
+        'n_estimators': 1242,
+        'learning_rate': 0.057488,
+        'max_depth': 3,
+        'subsample': 0.540631,
+        'colsample_bytree': 0.699607,
+        'gamma': 0.264377,
+        'min_child_weight': 2,
+        'random_state': 42,
+        'n_jobs': -1
     },
     'BEST_PARAMS_MEDIAN': {
-        'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,
-        'subsample': 0.922850, 'colsample_bytree': 0.811573, 'gamma': 1.830853,
-        'min_child_weight': 2, 'random_state': 42, 'n_jobs': -1
+        'n_estimators': 2445,
+        'learning_rate': 0.014328,
+        'max_depth': 9,
+        'subsample': 0.542469,
+        'colsample_bytree': 0.567721,
+        'gamma': 4.143789,
+        'min_child_weight': 2,
+        'random_state': 42,
+        'n_jobs': -1
     },
     'BEST_PARAMS_UPPER': {
-        'n_estimators': 914, 'learning_rate': 0.026114, 'max_depth': 5,
-        'subsample': 0.922850, 'colsample_bytree': 0.811573, 'gamma': 1.830853,
-        'min_child_weight': 2, 'random_state': 42, 'n_jobs': -1
+        'n_estimators': 667,
+        'learning_rate': 0.096660,
+        'max_depth': 6,
+        'subsample': 0.782940,
+        'colsample_bytree': 0.763611,
+        'gamma': 12.620991,
+        'min_child_weight': 7,
+        'random_state': 42,
+        'n_jobs': -1
     },
+    'MONOTONE_CONSTRAINTS': {
+        # --- The Baseline ---
+        'year_trend': 1,  # Genetic gain is always positive
+        'stage1_forecast': 1,  # The trend model is generally right directionally
+        'trend_x_physics': 1,
 
+        # --- The 2018 "Crash" Enforcers ---
+        'effective_winter_water': 1,  # More accessible water = More Yield (The Fix for 2018)
+        'flash_drought_index': -1,  # Drought is strictly bad
+        'is_heat_crash': -1,  # The binary flag for disaster
+        'heat_stress_sq': -1,  # Exponential heat is strictly bad
+
+        # --- The 2014 "Bumper" Enforcers ---
+        'optimal_growth_index': 1,  # Ideal conditions = More Yield (The Fix for 2014)
+        'is_solar_bumper': 1,  # The binary flag for bumper conditions
+
+        # --- The Regulator ---
+        'solar_capture_potential': 1,  # We engineered this to be Signed (Pos=Good, Neg=Bad)
+    },
     'QUANTILES': {'lower': 0.025, 'median': 0.5, 'upper': 0.975},
     'LOWER_MODEL_PATH': BASE_DIR / 'src/models/final_quantile_model_lower.joblib',
     'MEDIAN_MODEL_PATH': BASE_DIR / 'src/models/final_quantile_model_median.joblib',
