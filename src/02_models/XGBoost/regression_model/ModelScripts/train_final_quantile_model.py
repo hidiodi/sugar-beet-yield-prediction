@@ -50,7 +50,25 @@ def train_and_save_models(train_config):
         logging.info(f"Training {name.upper()}...")
         params = train_config[f'BEST_PARAMS_{name.upper()}']
 
-        model = XGBRegressor(objective='reg:quantileerror', quantile_alpha=quantile, **params)
+        # XGBoost requires a tuple of constraints in the order of columns
+        monotone_constraints = []
+        constraints_dict = train_config.get('MONOTONE_CONSTRAINTS', {})
+
+        for feature in valid_features:
+            # Default to 0 (no constraint) if not specified
+            constraint = constraints_dict.get(feature, 0)
+            monotone_constraints.append(constraint)
+
+        # Convert to tuple format for XGBoost
+        # Note: sklearn API uses 'monotone_constraints' parameter which can take a dict or string
+        # But passing the tuple to 'monotone_constraints' is the most robust way across versions.
+
+        model = XGBRegressor(
+            objective='reg:quantileerror',
+            quantile_alpha=quantile,
+            monotone_constraints=tuple(monotone_constraints),
+            **params
+        )
         model.fit(X_train, y_train)
 
         out_path = train_config[f'{name.upper()}_MODEL_PATH']
