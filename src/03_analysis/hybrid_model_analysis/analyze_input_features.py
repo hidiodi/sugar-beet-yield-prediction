@@ -1,6 +1,6 @@
 # File: src/03_analysis/hybrid_model_analysis/analyze_input_features.py
-# REFACTORED (v2): Debugger Mode
-# Focus: Identifying WHY columns are missing or have 0 correlation.
+# REFACTORED (v3): Physics & Context Analyzer
+# Focus: Verifying the new WOFOST signals and their correlation with Yield Deviations.
 
 import pandas as pd
 import numpy as np
@@ -26,120 +26,131 @@ def log_header(title):
     logging.info("=" * 60)
 
 
-def analyze_missing_by_year(df, col_name):
-    """Checks if missing values are clustered in specific years."""
-    if col_name not in df.columns:
-        return
+def check_physics_integrity(df):
+    log_header("1. NEW PHYSICS INTEGRITY CHECK")
 
-    missing = df[df[col_name].isna()]
-    if missing.empty:
-        return
+    new_cols = ['anoxia_events', 'prob_sowing_failure',
+                'harvest_respiration_risk', 'prob_terminal_freeze']
 
-    missing_by_year = missing.groupby('year').size()
-    total_by_year = df.groupby('year').size()
+    for col in new_cols:
+        if col in df.columns:
+            missing = df[col].isna().sum()
+            zeros = (df[col] == 0).sum()
+            max_val = df[col].max()
+            mean_val = df[col].mean()
 
-    logging.info(f"\n--- Missing '{col_name}' Breakdown ---")
-    # Show first 5 years with missing data and last 5
-    years_with_missing = missing_by_year.index.tolist()
+            logging.info(
+                f"Feature: {col:<25} | Max: {max_val:<6.2f} | Mean: {mean_val:<6.2f} | % Zeros: {zeros / len(df):.1%}")
 
-    if len(years_with_missing) > 10:
-        display_years = years_with_missing[:5] + ['...'] + years_with_missing[-5:]
-    else:
-        display_years = years_with_missing
-
-    logging.info(f"Years affected: {display_years}")
-
-    # Check recent years (critical for backtest)
-    recent_missing = missing[missing['year'] >= 2020].shape[0]
-    if recent_missing > 0:
-        logging.warning(f"⚠️  CRITICAL: {recent_missing} rows missing in 2020-2024!")
+            if mean_val == 0:
+                logging.error(f"  ❌ ERROR: {col} is entirely ZERO. Merge failed or data missing.")
+            elif missing > 0:
+                logging.warning(f"  ⚠️ WARNING: {col} has {missing} missing values.")
+        else:
+            logging.error(f"  ❌ CRITICAL: {col} NOT FOUND in dataset!")
 
 
-def analyze_feature_integrity(df):
-    log_header("FEATURE INTEGRITY SCAN")
+def compare_years_2014_2018(df):
+    log_header("2. REALITY CHECK: 2014 (Wet) vs 2018 (Dry)")
 
-    # 1. Check WOFOST Root Depth (Why is correlation NaN?)
-    col = 'wofost_root_depth'
-    if col in df.columns:
-        n_nan = df[col].isna().sum()
-        variance = df[col].var()
-        logging.info(f"Feature: {col}")
-        logging.info(f"  - Missing: {n_nan} ({n_nan / len(df):.1%})")
-        logging.info(f"  - Variance: {variance:.4f}")
-        logging.info(f"  - Unique Values: {df[col].nunique()}")
-        if n_nan == len(df):
-            logging.error("  ❌ ERROR: Merge failed. Column is entirely empty.")
-        elif variance == 0:
-            logging.warning("  ⚠️ WARNING: Feature is constant (no variance). Cannot correlate.")
-    else:
-        logging.error(f"  ❌ ERROR: {col} not found in dataframe.")
+    # We compare specific features to see if they react correctly
+    # 2014 should have HIGH Anoxia, LOW Heat Stress
+    # 2018 should have LOW Anoxia, HIGH Heat Stress
 
-    # 2. Check Summer Temp (Name mismatch?)
-    target_name = 'summer_temp_anomaly_forecast'
-    if target_name in df.columns:
-        logging.info(f"Feature: {target_name} -> FOUND")
-    else:
-        logging.error(f"Feature: {target_name} -> NOT FOUND")
-        # Suggest alternatives
-        matches = [c for c in df.columns if 'summer' in c and 'temp' in c]
-        if matches:
-            logging.info(f"  Did you mean: {matches}?")
-
-
-def analyze_correlations_corrected(df):
-    log_header("CORRELATION SCAN (Fixed)")
-
-    # Define the exact column names we expect
-    target = 'trend_residual'
-
-    # Ensure residual exists
-    if 'stat_trend_forecast' in df.columns and 'kreisYield' in df.columns:
-        df[target] = df['kreisYield'] - df['stat_trend_forecast']
-    else:
-        logging.error("Cannot calc residual. Missing yield/trend columns.")
-        return
-
-    features = [
-        'trend_vs_phys_gap',
-        'wofost_sowing_doy',
-        'wofost_initial_wav',
-        'wofost_root_depth',
-        'summer_temp_anomaly_forecast'  # Fixed name
+    features_to_check = [
+        'anoxia_events',
+        'summer_water_balance_anomaly',
+        'heat_stress_sq',
+        'prob_sowing_failure',
+        'effective_winter_water'
     ]
 
-    logging.info(f"{'Feature':<35} | {'Corr (r)':<10} | {'N Samples':<10}")
-    logging.info("-" * 65)
+    available_feats = [f for f in features_to_check if f in df.columns]
 
-    for feat in features:
-        if feat in df.columns:
-            # Drop NaNs specifically for this pair to get a valid N
-            tmp = df[[feat, target]].dropna()
-            if len(tmp) > 50:
-                corr = tmp.corr().iloc[0, 1]
-                logging.info(f"{feat:<35} | {corr:.3f}      | {len(tmp)}")
-            else:
-                logging.info(f"{feat:<35} | TOO FEW ({len(tmp)})")
-        else:
-            logging.info(f"{feat:<35} | NOT FOUND")
+    df_14 = df[df['year'] == 2014]
+    df_18 = df[df['year'] == 2018]
+
+    if df_14.empty or df_18.empty:
+        logging.warning("Cannot compare years. Missing data for 2014 or 2018.")
+        return
+
+    logging.info(f"{'Feature':<30} | {'2014 (Avg)':<12} | {'2018 (Avg)':<12} | {'Delta':<10}")
+    logging.info("-" * 70)
+
+    for feat in available_feats:
+        m14 = df_14[feat].mean()
+        m18 = df_18[feat].mean()
+        delta = m18 - m14
+        logging.info(f"{feat:<30} | {m14:<12.4f} | {m18:<12.4f} | {delta:<10.4f}")
+
+    logging.info("\nINTERPRETATION GUIDE:")
+    logging.info(" - 'anoxia_events' should be HIGHER in 2014 (Positive Delta is BAD)")
+    logging.info(" - 'heat_stress_sq' should be HIGHER in 2018 (Positive Delta is GOOD)")
+    logging.info(" - 'summer_water_balance' should be NEGATIVE in 2018")
+
+
+def analyze_correlations_with_anomaly(df):
+    log_header("3. CORRELATION WITH YIELD ANOMALY")
+
+    # We want to know: Does this feature explain why yield deviated from the trend?
+    if 'stage1_forecast' in df.columns and 'kreisYield' in df.columns:
+        df['yield_anomaly'] = df['kreisYield'] - df['stage1_forecast']
+        target = 'yield_anomaly'
+    else:
+        logging.warning("Cannot calculate Yield Anomaly. Correlating with Raw Yield.")
+        target = 'kreisYield'
+
+    features = [
+        # The New Physics
+        'anoxia_events', 'prob_sowing_failure', 'harvest_respiration_risk',
+        # The Context
+        'effective_winter_water', 'summer_water_balance_anomaly',
+        'heat_stress_sq', 'flash_drought_index',
+        # Interactions
+        'summer_heat_x_water_balance', 'winter_buffer_x_summer_heat',
+        'optimal_growth_index'
+    ]
+
+    valid_feats = [f for f in features if f in df.columns]
+
+    corrs = df[valid_feats + [target]].corr(method='spearman')[target].drop(target)
+    corrs = corrs.sort_values(ascending=False)
+
+    logging.info(f"Target: {target} (Spearman Correlation)")
+    logging.info("-" * 40)
+    for feat, val in corrs.items():
+        logging.info(f"{feat:<30} : {val:.4f}")
+
+    logging.info("\nEXPECTATIONS:")
+    logging.info(" - Negative: anoxia_events, heat_stress_sq, flash_drought_index")
+    logging.info(" - Positive: effective_winter_water, optimal_growth_index")
 
 
 def main():
     try:
         df = pd.read_csv(FEATURES_FILE)
-        logging.info(f"Loaded {len(df)} rows.")
+        logging.info(f"Loaded {len(df)} rows from {FEATURES_FILE}")
     except Exception as e:
         logging.error(f"Load failed: {e}")
         return
 
-    analyze_feature_integrity(df)
+    # 1. Check if we have the new columns
+    check_physics_integrity(df)
 
-    # Check why 23% of trend is missing
-    analyze_missing_by_year(df, 'stat_trend_forecast')
+    # 2. Check if the physics make sense
+    compare_years_2014_2018(df)
 
-    # Check why 6% of WOFOST is missing
-    analyze_missing_by_year(df, 'wofost_esp_mean')
+    # 3. Check if they predict anything
+    analyze_correlations_with_anomaly(df)
 
-    analyze_correlations_corrected(df)
+    # 4. Critical Missing Data Check
+    if 'stage1_forecast' in df.columns:
+        missing_trend = df['stage1_forecast'].isna().sum()
+        if missing_trend > 0:
+            log_header("WARNING: MISSING TREND DATA")
+            logging.warning(f"Trend (stage1_forecast) is missing in {missing_trend} rows.")
+            # Breakdown by year
+            logging.info(df[df['stage1_forecast'].isna()].groupby('year').size().head())
 
 
 if __name__ == "__main__":

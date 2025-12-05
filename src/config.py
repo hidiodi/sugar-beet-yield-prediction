@@ -27,7 +27,7 @@ SCRIPTS_TO_RUN = [
     #"src/02_models/Wofost7.1/run_wofost_pipeline.py",
     #"src/02_models/Wofost7.1/validation_dashboard.py",
     #"src/02_models/Wofost7.1/create_trendModel.py",
-    "src/01_data/FeatureEngineering/build_stage1_features.py",
+    #"src/01_data/FeatureEngineering/build_stage1_features.py",
     #"src/03_analysis/basic_analysis/analyze_stage1_features.py",
     "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
     "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
@@ -183,21 +183,20 @@ XGBOOST_TRAINING_CONFIG = {
     'DATA_PATH': DATA_DIR / '05_model_input/stage1_preseason_features.csv',
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models',
     'FEATURE_COLS': [
-        # --- 1. Physiological Indices (The Signal) ---
-        'heat_stress_sq',
-        'solar_potential_cubed',
-        'CASDI_Phase2_Count',
-        'NMSD_Phase2_Count',
-        'OSAW_Phase2_Count',
-        'ECES_Phase1_Cumulative',
-        'summer_days_tmax_gt_30c',
+        # --- 1. Bio-Physical Stressors (The New Physics) ---
+        'heat_stress_sq',  # Exponential heat penalty during growth
+        'solar_potential_cubed',  # Radiation Bonus
+        'anoxia_events',  # [NEW] Real Oxygen Stress (Soil > Field Capacity)
+        'prob_sowing_failure',  # [NEW] Mud/Cold/Wind delay risk
+        'harvest_respiration_risk',  # [NEW] Sugar burn during harvest campaign
+        'prob_terminal_freeze',  # [NEW] Early frost risk
+        'cumulative_water_stress',  # The classic WOFOST drought metric
+        'CASDI_Phase2_Count',  # Drought streak count
 
-        # --- DWD Biological Thresholds ---
-        'dwd_severe_stress_days',   # The "Cliff" (Yield Loss Expected)
-        'dwd_optimal_growth_zone',  # The "Sweet Spot" (2014)
-        'dwd_oxygen_stress',        # The "Too Wet" penalty
+        # --- 2. DWD/Biological Zones ---
+        'dwd_optimal_growth_zone',  # The "Sweet Spot" (2014-like conditions)
 
-        # --- 2. Seasonal Forecast Anomalies ---
+        # --- 3. Seasonal Forecast Anomalies (The Context) ---
         'antecedent_frost_days_anomaly',
         'antecedent_heavy_precip_days_anomaly',
         'antecedent_gdd_sum_anomaly',
@@ -206,105 +205,52 @@ XGBOOST_TRAINING_CONFIG = {
         'spring_solar_rad_anomaly_forecast',
         'spring_evaporation_anomaly_forecast',
         'spring_runoff_anomaly_forecast',
-        'spring_soil_temp_l1_anomaly_forecast',
-        # 'spring_snowfall_anomaly_forecast', # REMOVED: Likely noise
+        'spring_soil_temp_l1_anomaly_forecast',  # Critical for early root growth
         'summer_temp_anomaly_forecast',
         'summer_precip_anomaly_forecast',
         'summer_solar_rad_anomaly_forecast',
         'summer_evaporation_anomaly_forecast',
         'summer_runoff_anomaly_forecast',
         'summer_soil_temp_l1_anomaly_forecast',
-        # 'summer_snowfall_anomaly_forecast', # REMOVED: Physically impossible
 
-        # --- 3. Forecast Probabilities ---
-        'spring_temp_prob_warm_forecast',
-        'spring_precip_prob_wet_forecast',
-        'summer_temp_prob_warm_forecast',
-        'summer_precip_prob_wet_forecast',
-
-        # --- 4. Geographic & Soil (0-30cm Focus) ---
+        # --- 4. Geographic & Soil ---
         'lat', 'lon',
         'avg_elevation', 'avg_slope',
         'avg_bdod_0_30cm', 'avg_clay_0_30cm',
         'avg_sand_0_30cm', 'avg_som_0_30cm',
         'avg_phh2o_0_30cm',
-
-        # --- 5. Satellite (Pruned) ---
-        # Winter satellite data is likely noise for a spring crop
-        # 'winter_cropland_ndvi_mean',
-        # 'winter_cropland_ndvi_anomaly',
-        # 'winter_cropland_LST_mean',
-        # 'winter_cropland_LST_anomaly',
-        # 'winter_cropland_snow_cover_days',
-
-        # --- 6. Teleconnections ---
+        'year',
+        # --- 5. Teleconnections (Global Weather Drivers) ---
         'nao_winter_avg', 'sca_winter_avg', 'enso_mei_winter_avg',
 
-        # --- 7. Economics & Anomalies ---
+        # --- 6. Economics (Area/Input Proxies) ---
         'profit_margin_proxy_lag1',
         'cost_of_inputs_lag1',
         'producer_price_index_lag1_anomaly',
-        'seed_price_index_lag1_anomaly',
         'energy_price_index_lag1_anomaly',
-        'plant_protection_price_index_lag1_anomaly',
         'fertilizer_price_index_lag1_anomaly_capped',
-        'is_fertilizer_price_extreme',
 
-        # --- 8. Model Inputs ---
-        'stage1_forecast',
-        'wofost_forecast_x_profit_margin',
-        'has_wofost_data',
+        # --- 7. Model Inputs & Interactions ---
+        'stage1_forecast',  # The Trend (Now just a feature, not a baseline)
+        'wofost_yield_water_limited',  # The Raw Physics Output
         'state_encoded',
         'year_trend',
         'is_gdr',
-        'early_sowing_factor',       # The proxy for root depth/canopy size
-        'effective_winter_water',    # The "Real" Gas Tank
-        'solar_capture_potential',   # The "Bumper" Engine
-        # --- 9. Interactions & Polynomials ---
-        'summer_water_balance_anomaly',   # The truest measure of drought
-        'summer_heat_x_water_balance',    # The 2014/2018 Separator (CRITICAL)
-        # The Bumper Crop/Disaster Separators
+
+        # Critical Interactions
+        'effective_winter_water',  # Deep Soil Moisture Reservoir
+        'solar_capture_potential',  # The "Bumper" Engine
+        'summer_water_balance_anomaly',
+        'summer_heat_x_water_balance',  # The 2018 Separator
         'spring_warmth_x_summer_rain',
-        'summer_rad_x_summer_rain',
-        'is_gdr_x_summer_rain',
+        'winter_precip_sum',
+        'flash_drought_index',
+        'optimal_growth_index',
 
-        'winter_precip_sum',       # Absolute amount of water in the system
-        'winter_precip_anomaly',   # Is it wetter/drier than usual?
-        'feb_frost_days',          # Late winter hard freeze count
-
-        # --- Interactions ---
-        'sowing_doy',            # Day of Year (e.g., 90 = March 31)
-        'sowing_doy_anomaly',    # Is it earlier/later than usual?
-        'flash_drought_index',   # Captures 2018 (Heat w/ NO water)
-        'optimal_growth_index',  # Captures 2014 (Heat w/ Water)
-        # --- Interactions ---
-        'late_sowing_x_summer_heat', # The critical "Canopy Closure" separator
-        'winter_buffer_x_summer_heat', # Keep this! (Soil Moisture x Heat)
-        # Soil & Inputs
-        'gdd_x_fertilizer_price',
-        'spring_temp_x_spring_precip',
-        'summer_heat_x_profit_margin',
-        'summer_precip_x_input_costs',
-        'hot_dry_interaction',
-        'lat_x_summer_temp',
-        'sandy_soil_x_drought',
-        # 'clay_soil_x_drought', # ADD THIS if you can calc it in build_features.py easily (Optional)
-
-        # Squares
-        'antecedent_gdd_sum_anomaly_sq',
-        'spring_temp_prob_warm_forecast_sq',
-        'summer_temp_prob_warm_forecast_sq',
-        'spring_precip_prob_wet_forecast_sq',
-        'summer_precip_prob_wet_forecast_sq',
-        'summer_precip_anomaly_forecast_sq',
-        'is_heat_crash',  # Binary: 1 if massive stress
-        'is_solar_bumper',  # Binary: 1 if massive potential
-        'growing_season_length',  # Days in the ground
-
-        # --- Trend Scalers ---
-        'trend_x_crash',  # Allows scaling penalty by yield potential
-        'trend_x_bumper',  # Allows scaling bonus by yield potential
-        'trend_x_physics',
+        # New Physics Interactions
+        'sowing_doy_anomaly',  # Is sowing late?
+        'late_sowing_x_summer_heat',  # Double Whammy
+        'sandy_soil_x_drought'  # Texture vulnerability
     ],
     'BEST_PARAMS_LOWER': {
         'n_estimators': 1242,
@@ -318,15 +264,16 @@ XGBOOST_TRAINING_CONFIG = {
         'n_jobs': -1
     },
     'BEST_PARAMS_MEDIAN': {
-        'n_estimators': 2445,
-        'learning_rate': 0.014328,
-        'max_depth': 9,
-        'subsample': 0.542469,
-        'colsample_bytree': 0.567721,
-        'gamma': 4.143789,
-        'min_child_weight': 2,
-        'random_state': 42,
-        'n_jobs': -1
+        'n_estimators': 2500,
+        'learning_rate': 0.02,       # Slower learning to capture subtle physics
+        'max_depth': 6,              # Deep enough for interactions (State x Weather)
+        'subsample': 0.7,
+        'colsample_bytree': 0.4,     # <--- CRITICAL: Force model to look at other features
+        'gamma': 1.0,                # Pruning to prevent overfitting noise
+        'min_child_weight': 10,
+        'n_jobs': -1,
+        'random_state': 42
+
     },
     'BEST_PARAMS_UPPER': {
         'n_estimators': 667,
@@ -340,23 +287,10 @@ XGBOOST_TRAINING_CONFIG = {
         'n_jobs': -1
     },
     'MONOTONE_CONSTRAINTS': {
-        # --- The Baseline ---
-        'year_trend': 1,  # Genetic gain is always positive
-        'stage1_forecast': 1,  # The trend model is generally right directionally
-        'trend_x_physics': 1,
-
-        # --- The 2018 "Crash" Enforcers ---
-        'effective_winter_water': 1,  # More accessible water = More Yield (The Fix for 2018)
-        'flash_drought_index': -1,  # Drought is strictly bad
-        'is_heat_crash': -1,  # The binary flag for disaster
-        'heat_stress_sq': -1,  # Exponential heat is strictly bad
-
-        # --- The 2014 "Bumper" Enforcers ---
-        'optimal_growth_index': 1,  # Ideal conditions = More Yield (The Fix for 2014)
-        'is_solar_bumper': 1,  # The binary flag for bumper conditions
-
-        # --- The Regulator ---
-        'solar_capture_potential': 1,  # We engineered this to be Signed (Pos=Good, Neg=Bad)
+        'stage1_forecast': 1,
+        'wofost_yield_water_limited': 1,
+        'effective_winter_water': 1,
+        'year_trend': 1
     },
     'QUANTILES': {'lower': 0.025, 'median': 0.5, 'upper': 0.975},
     'LOWER_MODEL_PATH': BASE_DIR / 'src/models/final_quantile_model_lower.joblib',
@@ -405,7 +339,6 @@ STANDALONE_XGB_CONFIG = {
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models/standalone_xgb',
 
     'FEATURE_COLS': XGBOOST_TRAINING_CONFIG['FEATURE_COLS'] + [
-        'year',
         'stat_trend_forecast'
     ],
 

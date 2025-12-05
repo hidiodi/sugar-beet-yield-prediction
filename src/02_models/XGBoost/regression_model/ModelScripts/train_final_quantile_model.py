@@ -1,5 +1,7 @@
 # File: src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py
-# REFACTORED (v20.0): The Champion Training Logic (Forecast Residual)
+# REFACTORED (v22.0): Unshackled Model
+# - REMOVED conflicting Monotone Constraints (Let data speak).
+# - REMOVED 'year_trend' (Forces model to use Weather + Stage1).
 
 import pandas as pd
 from xgboost import XGBRegressor
@@ -17,7 +19,7 @@ TRAIN_CONFIG = config.XGBOOST_TRAINING_CONFIG
 
 
 def train_and_save_models(train_config):
-    logging.info("--- Starting Champion Training (Forecast Residual Target) ---")
+    logging.info("--- Starting Champion Training (Unshackled) ---")
 
     try:
         df = pd.read_csv(train_config['DATA_PATH'])
@@ -25,43 +27,48 @@ def train_and_save_models(train_config):
         logging.error(f"Failed to load data: {e}");
         sys.exit(1)
 
-    # DEFINE TARGET: Yield - Stage1_Forecast (WOFOST/Trend Blend)
-    # The 'stage1_forecast' column comes from the builder, derived from 'stat_trend_forecast'
-    target_col = 'forecast_residual'
-    df[target_col] = df['kreisYield'] - df['stage1_forecast']
-
-    # Filter
+    target_col = 'kreisYield'
     df.dropna(subset=[target_col], inplace=True)
 
-    # Feature Selection
+    # --- 1. FEATURE SELECTION (Pruned) ---
     feature_cols = train_config['FEATURE_COLS']
-    valid_features = [c for c in feature_cols if c in df.columns]
 
-    # Log Missing Features
-    missing = set(feature_cols) - set(valid_features)
-    if missing: logging.warning(f"⚠️ Missing Features: {missing}")
+    # CRITICAL FIX: Remove 'year_trend' if present.
+    # It allows the model to ignore weather and just count years.
+    if 'year_trend' in feature_cols:
+        feature_cols.remove('year_trend')
+
+    valid_features = [c for c in feature_cols if c in df.columns]
 
     X_train = df[valid_features]
     y_train = df[target_col]
 
     logging.info(f"Training on {len(X_train)} samples using {len(valid_features)} features.")
 
+    # --- 2. Training Loop ---
     for name, quantile in train_config['QUANTILES'].items():
-        logging.info(f"Training {name.upper()}...")
+        logging.info(f"Training {name.upper()} Model...")
+
         params = train_config[f'BEST_PARAMS_{name.upper()}']
 
-        # XGBoost requires a tuple of constraints in the order of columns
+        # --- REVISED CONSTRAINTS ---
+        # Only constrain features that are STRICTLY linear physically.
+        # Remove constraints on complex bio-signals (Anoxia, Heat) that might have non-linear responses.
+
+        safe_constraints = {
+            'wofost_yield_water_limited': 1,  # Always positive correlation
+            'stage1_forecast': 1,  # Always positive correlation
+            'effective_winter_water': 1,  # More water tank = Good
+        }
+
         monotone_constraints = []
-        constraints_dict = train_config.get('MONOTONE_CONSTRAINTS', {})
-
+        active_c = 0
         for feature in valid_features:
-            # Default to 0 (no constraint) if not specified
-            constraint = constraints_dict.get(feature, 0)
-            monotone_constraints.append(constraint)
+            c = safe_constraints.get(feature, 0)
+            monotone_constraints.append(c)
+            if c != 0: active_c += 1
 
-        # Convert to tuple format for XGBoost
-        # Note: sklearn API uses 'monotone_constraints' parameter which can take a dict or string
-        # But passing the tuple to 'monotone_constraints' is the most robust way across versions.
+        logging.info(f" -> Active Constraints: {active_c} (Restricted to safe features)")
 
         model = XGBRegressor(
             objective='reg:quantileerror',
@@ -69,6 +76,7 @@ def train_and_save_models(train_config):
             monotone_constraints=tuple(monotone_constraints),
             **params
         )
+
         model.fit(X_train, y_train)
 
         out_path = train_config[f'{name.upper()}_MODEL_PATH']

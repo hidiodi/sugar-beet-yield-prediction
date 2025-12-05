@@ -75,7 +75,7 @@ def create_granular_weather_features(weather_dir: Path, start_year: int, end_yea
         casdi = ((g['phase'] == 2) & (g['tmax'] > 30) & (g['precip_rolling_sum'] < 20)).sum()
         nmsd = ((g['phase'] == 2) & (g['tmin'] > 17)).sum()
         osaw = ((g['phase'] == 2) & (g['tmax'].between(17, 25)) & (g['tmin'] < 15) & (g['precip_rolling_sum'] > 20) & (
-                    g['diurnal_temp_range'] > g['dtr_p75_local'])).sum()
+                g['diurnal_temp_range'] > g['dtr_p75_local'])).sum()
         p1 = g[g['phase'] == 1]
         eces = ((p1['tmax_anomaly_daily_pos'] ** 1.5) * (p1['precip_anomaly_daily_neg'] ** 1.5)).sum()
         heat = ((g['month'].isin([6, 7, 8])) & (g['tmax'] > 30)).sum()
@@ -125,6 +125,26 @@ def load_wofost_sowing_dates(initial_conditions_path):
     except Exception as e:
         logging.warning(f"Could not load sowing dates: {e}")
         return pd.DataFrame()
+
+
+def load_wofost_risk_metrics(metrics_path):
+    # 1. Load Risk Metrics (Anoxia, Sowing Failure)
+    df = pd.read_csv(metrics_path, dtype={'district_no': str})
+
+    # 2. Load RAW Yield directly from the raw ensemble file defined in Config
+    raw_path = CONFIG['FILE_PATHS']['WOFOST_ENSEMBLE_CSV']
+    df_yield = pd.read_csv(raw_path, usecols=['year', 'district_no', 'yield_water_limited'], dtype={'district_no': str})
+
+    # 3. Aggregate Raw Yield (Mean) and Rename
+    df_yield = df_yield.groupby(['year', 'district_no'])['yield_water_limited'].mean().reset_index()
+    df_yield.rename(columns={'yield_water_limited': 'wofost_yield_water_limited'}, inplace=True)
+
+    # 4. Merge & Fix Names
+    df = pd.merge(df, df_yield, on=['year', 'district_no'], how='left')
+    df.rename(columns={'cumulative_water_stress_mean': 'cumulative_water_stress'}, inplace=True)
+
+    return df
+
 
 def create_winter_recharge_features(weather_dir: Path, start_year: int, end_year: int):
     logging.info("--- Engineering Winter Soil Recharge (The 'Gas Tank') ---")
@@ -187,6 +207,7 @@ def create_winter_recharge_features(weather_dir: Path, start_year: int, end_year
 
     return df_features
 
+
 def load_economics(prod_file, input_file):
     logging.info("Loading Economics...")
     try:
@@ -245,8 +266,6 @@ def main():
     if not df_sowing.empty:
         df = pd.merge(df, df_sowing, on=['district_no', 'year'], how='left')
 
-        # ... inside Feature Generation block in main() ...
-
         # RE-CALCULATE inputs locally
         if 'sowing_doy' in df.columns:
             sowing_factor = (150 - df['sowing_doy']).clip(lower=0)
@@ -286,7 +305,6 @@ def main():
         # We scale by 200 to keep the "units" intuitive (roughly dt/ha impact)
 
         df['solar_capture_potential'] = raw_potential.clip(upper=250, lower=-2000)
-
 
     if 'solar_capture_potential' in df.columns:
         # 2018 was approx -700. 2003 was -150.
@@ -353,17 +371,19 @@ def main():
         df['dwd_severe_stress_days'] = 0
         df['dwd_optimal_growth_zone'] = 0
 
-    # 18. FUNGAL RISK PROXY (Based on Leaf Wetness Logic)
-    # DWD states leaf wetness (RH > 90%) drives fungal disease[cite: 98, 100].
-    # 2014 was wet but bumper. This implies Fungal Risk was managed or outweighed by growth.
-    # But if we have a "Wet Summer" feature, we should check if it's "Too Wet".
-    # Table 2 says > 120% nFK causes oxygen shortage.
-    if 'summer_water_balance_anomaly' in df.columns:
-        # Proxy for Waterlogging/Oxygen Depletion
+    # 18. FUNGAL RISK / OXYGEN STRESS (Updated v21)
+    # DWD: > 120% nFK causes oxygen shortage.
+    # We now have 'anoxia_events' from WOFOST which measures exactly this.
+
+    if 'anoxia_events' in df.columns:
+        # Use the Real Physics
+        # If Anoxia Events > 3 days, we flag it as high stress
+        df['dwd_oxygen_stress'] = (df['anoxia_events'] > 3).astype(int)
+    elif 'summer_water_balance_anomaly' in df.columns:
+        # Fallback to Proxy if WOFOST failed
         df['dwd_oxygen_stress'] = (df['summer_water_balance_anomaly'] > 0.3).astype(int)
     else:
         df['dwd_oxygen_stress'] = 0
-
 
     # 1. Growing Season Length (Time Factor)
     # Estimated Harvest (Oct 22 = DOY 295) minus Sowing Date
@@ -431,7 +451,8 @@ def main():
         df[f'{c}_anomaly'] = df[c] - trend
 
     # 9. Fertilizer Extreme Flag (Capped Anomaly)
-    trend_fert = df.groupby('district_no')['fertilizer_price_index_lag1'].transform(lambda x: x.rolling(5, min_periods=1).mean())
+    trend_fert = df.groupby('district_no')['fertilizer_price_index_lag1'].transform(
+        lambda x: x.rolling(5, min_periods=1).mean())
     fert_anomaly = df['fertilizer_price_index_lag1'] - trend_fert
 
     # Cap outliers
@@ -515,6 +536,19 @@ def main():
     # States 12-16 are the "New States" (former GDR)
     # Using >= 12 excludes Berlin (11) which is historically mixed.
     df['is_gdr'] = (df['district_no'].str[:2].astype(int) >= 11).astype(int)
+
+    # --- NEW: WOFOST Bio-Physical Metrics (The Physics Engine) ---
+    # This imports the "Mechanism-Informed" features we just calculated
+    df_metrics = load_wofost_risk_metrics(CONFIG['FILE_PATHS']['WOFOST_METRICS_CSV'])
+    if not df_metrics.empty:
+        df = pd.merge(df, df_metrics, on=['district_no', 'year'], how='left')
+
+        # Fill NaNs with 0 (No risk detected if missing)
+        risk_cols = ['anoxia_events', 'prob_sowing_failure',
+                     'harvest_respiration_risk', 'prob_terminal_freeze']
+        for c in risk_cols:
+            if c in df.columns:
+                df[c] = df[c].fillna(0)
 
     # 8. Feature Generation
     df.rename(columns={'latitude': 'lat', 'longitude': 'lon'}, inplace=True)
