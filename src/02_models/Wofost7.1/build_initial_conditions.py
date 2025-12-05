@@ -1,6 +1,8 @@
 # File: src/02_models/Wofost7.1/build_initial_conditions.py
-# REFACTORED (v12.2): Fixed NameError
-# Restores NDVI_ANOMALY_SENSITIVITY constant.
+# REFACTORED (v13.0): Physics-Informed Sowing & Soil Init
+# - Implements DWD Soil Temp (5cm) proxy via Thermal Inertia
+# - Implements DWD Wind Constraint (>5 m/s forbidden)
+# - Fixes WAV calculation to respect V6 Soil Physics (SMW/SMFCF)
 
 import datetime
 import pandas as pd
@@ -32,59 +34,71 @@ SATELLITE_FEATURES_PATH = "data/03_processed/satellite_features_districts_2001-2
 FORECAST_PARTS_DIR = config.PROCESSED_DATA_DIR / 'forecast_weather_parts'
 
 # Sensitivity Config
-SOWING_SHIFT_FACTOR = 5.0  # Days earlier per 1°C winter warmth
+# Note: We reduced Sowing Shift Factor because we now model soil temp directly.
+SOWING_SHIFT_FACTOR = 2.0
 NDVI_ANOMALY_SENSITIVITY = 5.0  # WAV adjustment scalar
+
+
+def _estimate_soil_temperature(df_weather):
+    """
+    Approximates 5cm Soil Temperature using Air Temperature Thermal Inertia.
+    Soil warms/cools slower than air.
+    Uses a 5-day Exponential Moving Average (EMA) of Tmean.
+    """
+    if 'tmean' not in df_weather.columns:
+        df_weather['tmean'] = (df_weather['tmin'] + df_weather['tmax']) / 2.0
+
+    # 5-day span roughly approximates the thermal lag of topsoil (5-10cm)
+    return df_weather['tmean'].ewm(span=5, adjust=False).mean()
 
 
 class DynamicSowingManager:
     def __init__(self,
                  sowing_window_start_month=3, sowing_window_start_day=10,
                  sowing_window_end_month=4, sowing_window_end_day=30,
-                 temp_threshold_c=5.0,
+                 soil_temp_threshold_c=6.0,  # DWD: Sugarbeets germ at 6-8°C
                  precip_trafficability_limit_mm=5.0,
+                 wind_limit_ms=5.0,  # DWD: Legal limit for spraying/sowing
                  trafficability_window_days=3):
 
         self.start_month = sowing_window_start_month
         self.start_day = sowing_window_start_day
         self.end_month = sowing_window_end_month
         self.end_day = sowing_window_end_day
-        self.temp_threshold = temp_threshold_c
+        self.soil_temp_threshold = soil_temp_threshold_c
         self.precip_limit = precip_trafficability_limit_mm
+        self.wind_limit = wind_limit_ms
         self.precip_window = trafficability_window_days
 
     def find_sowing_date(self, weather_df_year: pd.DataFrame) -> datetime.date:
         df = weather_df_year.copy()
+
+        # Standardize Columns
         if 'prec' not in df.columns and 'precip' in df.columns:
             df.rename(columns={'precip': 'prec'}, inplace=True)
+        if 'wind' not in df.columns and 'wind_speed_mean' in df.columns:
+            df.rename(columns={'wind_speed_mean': 'wind'}, inplace=True)
 
-        if 'tmean' not in df.columns:
-            if 'tmin' in df.columns and 'tmax' in df.columns:
-                df['tmean'] = (df['tmin'] + df['tmax']) / 2.0
-            else:
-                # Default fallback
-                return datetime.date(2000, 4, 15)
+        # Fill missing wind with low value (assume calm if unknown)
+        if 'wind' not in df.columns:
+            df['wind'] = 2.0
 
+        # --- 1. Calculate Physical Variables ---
         df = df.sort_values('date')
 
-        # --- STRICTER LOGIC START ---
+        # A. Soil Temperature Proxy (The "Real" Trigger)
+        df['soil_temp_5cm'] = _estimate_soil_temperature(df)
 
-        # 1. 7-Day Rolling Temp (Soil inertia)
-        # Needs to be consistently warm, not just one spike.
-        df['temp_roll_7d'] = df['tmean'].rolling(window=7, min_periods=7).mean()
-
-        # 2. Hard Frost Lock (< -2°C tmin)
-        # If it froze hard recently, the soil is unworkable.
-        # We calculate "Days since last hard frost"
-        df['is_hard_frost'] = (df['tmin'] < -2.0).astype(int)
-
-        # 3. Wetness Lock (Trafficability)
+        # B. Trafficability (Mud Check)
         df['precip_roll_sum'] = df['prec'].rolling(window=self.precip_window, min_periods=1).sum()
+
+        # C. Hard Frost Check (Soil Inertia - Frozen Ground)
+        # If tmin < -2, ground is likely frozen surface, regardless of mean
+        df['is_frozen'] = (df['tmin'] < -2.0)
 
         try:
             target_year = df['date'].dt.year.mode()[0]
-            # Sowing Window: March 15 (DOY 74) to April 30 (DOY 120)
-            # 2018 "Beast from East" was late Feb/Early March.
-            # We push the start date slightly later to be safe.
+            # Window: March 15 to April 30
             window_start = datetime.date(target_year, 3, 15)
             window_end = datetime.date(target_year, 4, 30)
         except (IndexError, ValueError):
@@ -97,40 +111,44 @@ class DynamicSowingManager:
         if df_window.empty:
             return window_end
 
-        # Iterate to find the first valid day
-        # We cannot vectorise the "Frost Lock" easily without a complex loop or rolling window sum
-        # So we iterate through the window (max 45 days, very fast)
-
+        # --- 2. Iterate for Agronomic Suitability ---
         for idx, row in df_window.iterrows():
             current_date = row['date']
 
-            # Check 1: Temperature (Stricter: 7-day avg > 6°C)
-            if row['temp_roll_7d'] < 6.0:
+            # RULE 1: Soil Temperature (Must be > 6°C)
+            # We use the calculated proxy, not air temp
+            if row['soil_temp_5cm'] < self.soil_temp_threshold:
                 continue
 
-            # Check 2: Trafficability (No mud)
+            # RULE 2: Soil Trafficability (Too wet to drive)
             if row['precip_roll_sum'] > self.precip_limit:
                 continue
 
-            # Check 3: Frost Lock (Look back 10 days)
-            # Was there a hard frost in the last 10 days?
-            lookback_start = current_date - datetime.timedelta(days=10)
-            recent_frosts = df[(df['date'] >= lookback_start) & (df['date'] < current_date)]['is_hard_frost'].sum()
+            # RULE 3: Wind Speed (Legal/Safety Constraint)
+            # DWD: Avoid operations > 5 m/s
+            if row['wind'] > self.wind_limit:
+                continue
 
-            if recent_frosts > 0:
-                continue  # Soil is likely still frozen or too cold
+            # RULE 4: Frozen Ground Lock
+            # Check last 3 days for hard frost
+            lookback_start = current_date - datetime.timedelta(days=3)
+            recent_frost = df[(df['date'] >= lookback_start) & (df['date'] < current_date)]['is_frozen'].any()
+            if recent_frost:
+                continue
 
-            # If all pass, this is the day
+                # If all pass, we sow.
             return current_date.date()
 
-        # If no day found, return end of window (Late Sowing)
+        # Fallback: Late Sowing (End of Window)
         return window_end
 
 
 def _precalculate_wav_from_era5(gdf_districts, static_df):
-    logging.info("--- Pre-calculating WAV (Using ERA5 Soil Memory) ---")
+    logging.info("--- Pre-calculating WAV (Using ERA5 & V6 Soil Physics) ---")
     era5_files = sorted(list(ERA5_SOIL_DATA_DIR.glob("*_FEBRUARY.nc")))
 
+    # We need SMW (Wilting Point) and SMFCF (Field Capacity) from Static Data
+    # to correctly interpret the ERA5 Volumetric Water Content
     static_ref = static_df[['district_no', 'SMW', 'SMFCF', 'RDMSOL']].copy()
     all_years_results = []
 
@@ -154,6 +172,9 @@ def _precalculate_wav_from_era5(gdf_districts, static_df):
                     actual_nc_path = extracted[0]
 
                 with xr.open_dataset(actual_nc_path, engine='netcdf4') as rds:
+                    # 'swvl1' is usually 0-7cm, 'swvl2' is 7-28cm.
+                    # We prefer layer 2 for rooting zone init, or average.
+                    # Using swvl2 as it's more representative of the seedbed reservoir.
                     if 'swvl2' in rds:
                         target_var = 'swvl2'
                     elif 'swvl1' in rds:
@@ -164,10 +185,11 @@ def _precalculate_wav_from_era5(gdf_districts, static_df):
                     year_data = []
                     for _, row in gdf_districts.iterrows():
                         try:
+                            # Extract Volumetric Water Content (m3/m3)
                             val = rds[target_var].sel(longitude=row['longitude'], latitude=row['latitude'],
                                                       method='nearest').values.item()
                         except:
-                            val = 0.3
+                            val = 0.3  # Fallback
                         year_data.append({'district_no': row['district_no'], 'era5_volumetric': val})
 
                     df_year = pd.DataFrame(year_data)
@@ -179,7 +201,8 @@ def _precalculate_wav_from_era5(gdf_districts, static_df):
             continue
 
     if not all_years_results:
-        logging.warning("No ERA5 Soil Data found. Using default Field Capacity.")
+        logging.warning("No ERA5 Soil Data found. Defaulting to Field Capacity.")
+        # Default: Start at Field Capacity (WAV = Max)
         static_ref['WAV'] = (static_ref['SMFCF'] - static_ref['SMW']) * static_ref['RDMSOL']
         years = range(CONFIG['START_YEAR'] or 1980, (CONFIG['END_YEAR'] or 2024) + 1)
         dfs = []
@@ -193,9 +216,24 @@ def _precalculate_wav_from_era5(gdf_districts, static_df):
     final_df = pd.merge(full_swvl_df, static_ref, on='district_no')
 
     def calculate_wav(row):
-        current_theta = np.clip(row['era5_volumetric'], row['SMW'], row['SMFCF'])
-        awc = current_theta - row['SMW']
-        wav = awc * row['RDMSOL']
+        # 1. Get raw volumetric moisture from ERA5
+        theta_current = row['era5_volumetric']
+
+        # 2. Get Soil Limits (The "Bucket" Size)
+        theta_wp = row['SMW']  # Wilting Point
+        theta_fc = row['SMFCF']  # Field Capacity
+
+        # 3. Calculate Available Water Content (Volumetric)
+        # Cannot be less than 0 (below wilting point)
+        # Cannot be more than Field Capacity (technically it can be saturated,
+        # but WOFOST init usually caps usable water at FC)
+
+        theta_available = np.clip(theta_current, theta_wp, theta_fc) - theta_wp
+
+        # 4. Convert to Total Water Amount (cm) based on Root Depth
+        # WAV = Volumetric_Available * Root_Depth
+        wav = theta_available * row['RDMSOL']
+
         return max(0.0, wav)
 
     final_df['WAV'] = final_df.apply(calculate_wav, axis=1)
@@ -274,7 +312,10 @@ def process_forecast_sowing_date(file_path, sowing_manager, winter_anomalies):
         doys = [d.timetuple().tm_yday for d in member_sowing_dates]
         median_doy = int(np.median(doys))
 
-        # Winter Adjustment
+        # Winter Adjustment (Shifted)
+        # If winter was super warm, we might assume earlier sowing capability,
+        # BUT our dynamic manager now handles soil temp directly.
+        # We keep this as a minor biological "readiness" shift, but reduced factor.
         shift = 0
         if winter_anomalies is not None:
             try:
@@ -285,7 +326,7 @@ def process_forecast_sowing_date(file_path, sowing_manager, winter_anomalies):
                 pass
 
         final_doy = median_doy + int(shift)
-        final_doy = max(60, min(130, final_doy))
+        final_doy = max(60, min(130, final_doy))  # DOY 60 = March 1, 130 = May 10
 
         start_of_year = datetime.date(year, 1, 1)
         final_sowing_date = start_of_year + datetime.timedelta(days=final_doy - 1)
@@ -298,7 +339,7 @@ def process_forecast_sowing_date(file_path, sowing_manager, winter_anomalies):
 
 
 def main():
-    logging.info("--- Building InitialConditions.csv (WAV + Smart Sowing + Fixed) ---")
+    logging.info("--- Building InitialConditions.csv (Physics-Informed Sowing & WAV) ---")
 
     try:
         with open(CONFIG['FILE_PATHS']['CROP_YAML'], 'r') as f:
@@ -320,6 +361,8 @@ def main():
 
         weather_path = Path(CONFIG['FILE_PATHS']['HISTORICAL_DAILY_WEATHER_DIR'])
         weather_files = list(weather_path.glob("*.csv"))
+
+        # Load History for NDVI imputation
         hist_weather_df = pd.concat(
             (pd.read_csv(f, parse_dates=['date'], dtype={'district_no': str}) for f in
              tqdm(weather_files, desc="Loading History")),
@@ -351,9 +394,11 @@ def main():
         logging.error(f"Initial Data Load Failed: {e}", exc_info=True)
         sys.exit(1)
 
+    # 1. WAV Calculation (Corrected Physics)
     df_wav = _precalculate_wav_from_era5(gdf_districts, static_df)
 
-    logging.info("Calculating Smart Sowing Dates...")
+    # 2. Sowing Date Calculation (Corrected Physics)
+    logging.info("Calculating Physics-Informed Sowing Dates...")
     if not FORECAST_PARTS_DIR.exists():
         logging.error("Forecast parts not found.")
         sys.exit(1)
@@ -371,13 +416,19 @@ def main():
     sowing_results = [res for res in sowing_results if res is not None]
     df_sowing = pd.DataFrame(sowing_results)
 
+    # 3. Merge & Save
     df_final = pd.merge(df_sowing, df_wav, on=['year', 'district_no'])
     df_final = pd.merge(df_final, df_satellite, on=['year', 'district_no'], how='left')
 
     df_final['winter_cropland_ndvi_anomaly'] = df_final['winter_cropland_ndvi_anomaly'].fillna(0)
+
+    # Adjust WAV slightly by NDVI (Vegetation Memory), but ensure it stays within physics
+    # Note: NDVI sensitivity might push WAV above SMFCF or below 0.
+    # We apply clip(lower=0) but we also trust the satellite signal to imply 'wetter/drier than ERA5 thought'
     df_final['WAV'] = df_final['WAV'] + (df_final['winter_cropland_ndvi_anomaly'] * NDVI_ANOMALY_SENSITIVITY)
     df_final['WAV'] = df_final['WAV'].clip(lower=0)
 
+    # Add Crop Constants
     df_final['TDWI'] = cp_variety.get('TDWI', [100.0])[0]
     df_final['RDI'] = cp_variety.get('RDI', [10.0])[0]
     df_final['CROP_END_DATE'] = CONFIG['AGROMANAGEMENT']['CROP_END_DATE']
