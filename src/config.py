@@ -184,8 +184,8 @@ XGBOOST_TRAINING_CONFIG = {
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models',
     'FEATURE_COLS': [
         # --- 1. The Core Physics (V14 Logic) ---
-        'Index_Failure',  # The "Killer" (Heat/Drought/Flood)
-        'Index_Bumper',  # The "Ideal" (Water+Coolness)
+        'Index_Failure',
+        'Index_Bumper',
 
         # --- 2. The Components (Context) ---
         'z_heat',
@@ -195,26 +195,21 @@ XGBOOST_TRAINING_CONFIG = {
         'z_sow',
         'z_bal',
 
-        # --- 3. The Baseline ---
-        'stage1_forecast',  # Technological Trend
-        'year',  # Explicit Time (Crucial for Standalone)
-        'is_gdr',  # Regional Structure
+        # --- 3. The Baseline (NOTE: These are in the list so the Config knows about them,
+        # but the script will DROP them from X_train automatically) ---
+        'stage1_forecast',
+        'year',
+        'is_gdr',
         'state_encoded',
 
-        # --- 4. Critical Interactions (V14) ---
-        'trend_x_failure',  # Failure scales Trend down
-        'trend_x_bumper',  # Bumper scales Trend up
+        # --- 4. Critical Interactions ---
+        'trend_x_failure',
+        'trend_x_bumper',
 
         # --- 5. Validated Support Features ---
-        'effective_winter_water',  # Absolute Tank Size (not just Z)
-        'anoxia_events',  # Absolute Risk
-        'wofost_yield_water_limited',  # Physics Ceiling
-
-        # --- REMOVED NOISY FEATURES ---
-        # Removed 'antecedent_frost_days_anomaly' (Confused 2014)
-        # Removed 'prob_terminal_freeze' (Low gain)
-        # Removed 'antecedent_gdd_sum_anomaly' (Confused 2014)
-        # Removed 'harvest_respiration_risk' (Low impact)
+        'effective_winter_water',
+        'anoxia_events',
+        'wofost_yield_water_limited',
     ],
     'BEST_PARAMS_LOWER': {
         'n_estimators': 1242,
@@ -251,10 +246,10 @@ XGBOOST_TRAINING_CONFIG = {
         'n_jobs': -1
     },
     'MONOTONE_CONSTRAINTS': {
-        'stage1_forecast': 1,
+        #'stage1_forecast': 1,
         'wofost_yield_water_limited': 1,
         'effective_winter_water': 1,
-        'year': 1,  # Trend is positive
+        #'year': 1,  # Trend is positive
 
         # V14 Constraints
         'Index_Bumper': 1,  # Positive Driver
