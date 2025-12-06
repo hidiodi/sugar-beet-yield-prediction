@@ -18,38 +18,51 @@ BACKTEST_CONFIG = config.BACKTESTING_CONFIG
 
 
 def run_backtest(df, models, feature_cols):
-    print(f"\n--- Starting Champion Backtest (Strategy: Raw Yield) ---")
-    # REVERTED to Raw Yield Logic
+    print(f"\n--- Starting Champion Backtest (Strategy: Residual + Trend) ---")
 
-    target_col = 'kreisYield'
+    target_col = 'yield_residual'
+
+    # Ensure we have the necessary columns
+    df = df.dropna(subset=['kreisYield', 'stage1_forecast']).copy()
+
+    # Calculate True Residual for training y
+    df[target_col] = df['kreisYield'] - df['stage1_forecast']
+
+    # Filter features (Remove Trend/Year/Yield from X)
     valid_features = [c for c in feature_cols if c in df.columns]
-
-    # Add year back if missing, needed for Raw Yield
-    if 'year' not in valid_features and 'year' in df.columns:
-        valid_features.append('year')
-
-    valid_train_mask = df[target_col].notna()
+    cols_to_drop = ['stage1_forecast', 'year', 'year_trend', 'kreisYield', 'yield_residual']
+    valid_features = [c for c in valid_features if c not in cols_to_drop]
 
     all_predictions = []
 
     for year in tqdm(range(BACKTEST_CONFIG['BACKTEST_START_YEAR'], BACKTEST_CONFIG['BACKTEST_END_YEAR'] + 1)):
-        train_df = df[(df['year'] < year) & valid_train_mask].copy()
-        test_df = df[(df['year'] == year)].copy()
+        # Train on past
+        train_df = df[df['year'] < year].copy()
+        test_df = df[df['year'] == year].copy()
 
         if test_df.empty or len(train_df) < 50: continue
 
         X_train = train_df[valid_features]
-        y_train = train_df[target_col]  # Raw Target
+        y_train = train_df[target_col]  # Predict Residual
 
         X_test = test_df[valid_features]
-        current_preds = test_df[['district_no', 'year', 'kreisYield']].copy()
+
+        # Base DataFrame for results
+        current_preds = test_df[['district_no', 'year', 'kreisYield', 'stage1_forecast']].copy()
 
         for name in ['lower', 'median', 'upper']:
             model = clone(models[name])
             model.fit(X_train, y_train)
 
-            # Direct Prediction
-            current_preds[f'predicted_yield_{name}'] = model.predict(X_test)
+            # 1. Predict Residual (e.g., -50)
+            pred_residual = model.predict(X_test)
+
+            # 2. Add back Trend (e.g., 750 + -50 = 700)
+            # We use the trend from the test year
+            base_trend = test_df['stage1_forecast'].values
+            final_yield = base_trend + pred_residual
+
+            current_preds[f'predicted_yield_{name}'] = final_yield
             current_preds[f'predicted_yield_{name}'] = current_preds[f'predicted_yield_{name}'].clip(lower=0)
 
         all_predictions.append(current_preds)
