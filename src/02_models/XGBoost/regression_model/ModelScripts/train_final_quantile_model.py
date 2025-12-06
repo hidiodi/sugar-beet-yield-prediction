@@ -14,7 +14,7 @@ TRAIN_CONFIG = config.XGBOOST_TRAINING_CONFIG
 
 
 def train_and_save_models(train_config):
-    logging.info("--- Starting Champion Training (Target: Yield Residual) ---")
+    logging.info("--- Starting Champion Training (Target: Yield Ratio) ---")
 
     try:
         df = pd.read_csv(train_config['DATA_PATH'])
@@ -22,43 +22,40 @@ def train_and_save_models(train_config):
         logging.error(f"Failed to load data: {e}");
         sys.exit(1)
 
-    # --- 1. PREPROCESSING: CALCULATE RESIDUALS ---
-    # We want to predict how much the weather pushes yield ABOVE or BELOW the trend.
-    target_col = 'yield_residual'
+    target_col = 'kreisYield'
+    df.dropna(subset=[target_col, 'stage1_forecast'], inplace=True)
 
-    # We need both the actual yield and the trend to calculate the target
-    df.dropna(subset=['kreisYield', 'stage1_forecast'], inplace=True)
+    # --- STRUCTURAL PIVOT: PREDICT YIELD RATIO ---
+    # Target = Actual / Trend
+    # Using Ratio allows the 0-1 V14 Indices to work effectively
+    df['yield_ratio'] = df['kreisYield'] / df['stage1_forecast']
 
-    # Target = Actual - Trend
-    # Example: Yield 800, Trend 750 -> Target +50
-    df[target_col] = df['kreisYield'] - df['stage1_forecast']
+    # Cap extreme outliers
+    df['yield_ratio'] = df['yield_ratio'].clip(0.5, 1.5)
 
-    # --- 2. FEATURE SELECTION ---
+    y_train = df['yield_ratio']
+
+    # --- 1. FEATURE SELECTION ---
     feature_cols = train_config['FEATURE_COLS']
+
+    # Remove year features (Ratio is detrended)
+    for col in ['year', 'year_trend']:
+        if col in feature_cols:
+            feature_cols.remove(col)
+
     valid_features = [c for c in feature_cols if c in df.columns]
-
-    # CRITICAL: Drop Trend and Year from X to force Physics Learning
-    # If we leave 'year' in, the model just learns "later years are better", which is the trend's job.
-    cols_to_drop = ['stage1_forecast', 'year', 'year_trend', 'kreisYield', 'yield_residual']
-    valid_features = [c for c in valid_features if c not in cols_to_drop]
-
     X_train = df[valid_features]
-    y_train = df[target_col]
 
-    logging.info(f"Training on {len(X_train)} samples. Target Mean (Residual): {y_train.mean():.2f}")
-    logging.info(f"Physics Features Used: {len(valid_features)}")
+    logging.info(f"Training on {len(X_train)} samples. Target: Yield Ratio")
 
-    # --- 3. Training Loop ---
+    # --- 2. Training Loop ---
     for name, quantile in train_config['QUANTILES'].items():
         logging.info(f"Training {name.upper()} Model...")
 
         params = train_config[f'BEST_PARAMS_{name.upper()}']
 
-        # Load constraints
         config_constraints = train_config.get('MONOTONE_CONSTRAINTS', {})
         monotone_constraints = []
-
-        # Only apply constraints to features that actually exist in our filtered X_train
         for feature in valid_features:
             c = config_constraints.get(feature, 0)
             monotone_constraints.append(c)

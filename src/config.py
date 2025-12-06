@@ -198,7 +198,7 @@ XGBOOST_TRAINING_CONFIG = {
         # --- 3. The Baseline (NOTE: These are in the list so the Config knows about them,
         # but the script will DROP them from X_train automatically) ---
         'stage1_forecast',
-        'year',
+        #'year',
         'is_gdr',
         'state_encoded',
 
