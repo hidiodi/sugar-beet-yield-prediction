@@ -18,6 +18,13 @@ from src import config
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 CONFIG = config.FEATURE_ENGINEERING_CONFIG
 
+def calculate_z_score(series):
+    # Helper for V14 Logic: District-specific standardization
+    series = series.fillna(series.mean())
+    std = series.std()
+    if std == 0: return pd.Series(0, index=series.index)
+    return (series - series.mean()) / std
+
 
 def create_granular_weather_features(weather_dir: Path, start_year: int, end_year: int):
     logging.info("--- Engineering Physiological Weather Features ---")
@@ -536,41 +543,82 @@ def main():
         else:
             df['optimal_growth_index'] = base_growth_index
 
-        # BUMPER SCORE (2014, 2024 style)
-        # 1. Tank Status: 0 at 100mm, 1 at 250mm
-        score_tank = ((df.get('effective_winter_water', 0) - 100) / 150).clip(0, 1)
+            # --- V14 PHYSICS LOGIC (Z-Scores & Multi-Mode Indices) ---
+            logging.info("Applying V14 Physics Logic...")
 
-        # 2. Early Start: 1 at DOY 80, 0 at DOY 110
-        score_early = ((110 - df.get('sowing_doy', 100)) / 30).clip(0, 1)
+            # Group by district to calculate local anomalies
+            groups = df.groupby('district_no')
 
-        # 3. Cool Summer: 1 at 0 days > 30C, 0 at 10 days
-        score_cool = ((10 - df.get('summer_days_tmax_gt_30c', 0)) / 10).clip(0, 1)
+            # 1. Component Z-Scores (Local Context)
+            # Check existence to avoid KeyErrors, though fillna(0) was called earlier
+            if 'summer_days_tmax_gt_30c' in df.columns:
+                df['z_heat'] = groups['summer_days_tmax_gt_30c'].transform(calculate_z_score)
+            else:
+                df['z_heat'] = 0
 
-        # Combined Bumper Score (Geometric Mean logic via multiplication)
-        df['flag_bumper_scenario'] = score_tank * score_early * score_cool
+            if 'summer_water_balance_anomaly' in df.columns:
+                df['z_bal'] = groups['summer_water_balance_anomaly'].transform(calculate_z_score)
+            else:
+                df['z_bal'] = 0
 
-        # FAILURE SCORE (2018 style)
-        # 1. Heat Intensity: 0 at 5 days, 1 at 20 days
-        score_heat = ((df.get('summer_days_tmax_gt_30c', 0) - 5) / 15).clip(0, 1)
+            if 'effective_winter_water' in df.columns:
+                df['z_tank'] = groups['effective_winter_water'].transform(calculate_z_score)
+            else:
+                df['z_tank'] = 0
 
-        # 2. Dryness Intensity: 0 at 0mm, 1 at -100mm
-        # (Negative anomaly means dry)
-        dryness = (df.get('summer_precip_anomaly_forecast', 0) * -1).clip(0, 100) / 100.0
+            if 'summer_precip_anomaly_forecast' in df.columns:
+                df['z_rain'] = groups['summer_precip_anomaly_forecast'].transform(calculate_z_score)
+            else:
+                df['z_rain'] = 0
 
-        df['flag_failure_scenario'] = score_heat * dryness
+            if 'anoxia_events' in df.columns:
+                df['z_anoxia'] = groups['anoxia_events'].transform(calculate_z_score)
+            else:
+                df['z_anoxia'] = 0
 
-        # --- REGIME INTERACTIONS ---
-        # Force the trend to jump when flags are active
-        if 'stage1_forecast' in df.columns:
-            df['trend_x_bumper'] = df['stage1_forecast'] * df['flag_bumper_scenario']
-            df['trend_x_failure'] = df['stage1_forecast'] * df['flag_failure_scenario']
-        else:
-            df['trend_x_bumper'] = 0
-            df['trend_x_failure'] = 0
+            if 'sowing_doy' in df.columns:
+                df['z_sow'] = groups['sowing_doy'].transform(calculate_z_score)
+            else:
+                df['z_sow'] = 0
 
-    else:
-        df['optimal_growth_index'] = 0
-        df['trend_x_optimal_growth'] = 0
+            # 2. FAILURE INDEX (Multi-Mode)
+            # Mode A: Scorch (Heat * Dry Balance)
+            dryness = (df['z_bal'] * -1).clip(lower=0)
+            heat = df['z_heat'].clip(lower=0)
+
+            scorch = np.maximum(heat * dryness, (heat - 1.5).clip(lower=0) * 2.0)
+
+            # Mode B: Drowning (Flood/Anoxia)
+            drown = (df['z_anoxia'] - 0.8).clip(lower=0) * 2.0
+
+            # Mode C: Late Sowing (Mud/Cold)
+            late_start = (df['z_sow'] - 1.5).clip(lower=0) * 2.0
+
+            # Composite Failure Index (Max of risks)
+            df['Index_Failure'] = np.maximum.reduce([scorch, drown, late_start])
+
+            # 3. BUMPER INDEX (Water Supply * Coolness)
+            water_supply = (df['z_tank'].clip(lower=0) + df['z_rain'].clip(lower=0)) / 2.0
+            coolness = (df['z_heat'] * -1).clip(lower=0)
+
+            df['Index_Bumper'] = water_supply * coolness
+
+            # 4. Trend Interactions
+            if 'stage1_forecast' in df.columns:
+                # Tanh scaling to prevent outliers from exploding the trend
+                df['trend_x_failure'] = df['stage1_forecast'] * np.tanh(df['Index_Failure'])
+                df['trend_x_bumper'] = df['stage1_forecast'] * np.tanh(df['Index_Bumper'])
+            else:
+                df['trend_x_failure'] = 0
+                df['trend_x_bumper'] = 0
+
+            # Drop temp columns to keep file clean
+            drop_cols = ['yield', 'producer_price_index', 'seed_price_index', 'fertilizer_price_index',
+                         'plant_protection_price_index', 'energy_price_index', 'state']
+            df.drop(columns=drop_cols, inplace=True, errors='ignore')
+
+            df.to_csv(paths['OUTPUT_FILE'], index=False)
+            logging.info(f"✓ Feature Engineering (v15.0 + V14 Logic) Complete. Saved to {paths['OUTPUT_FILE']}")
 
     # Create the Interaction
     if 'year_trend' in df.columns:
