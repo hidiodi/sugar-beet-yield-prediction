@@ -27,7 +27,7 @@ SCRIPTS_TO_RUN = [
     #"src/02_models/Wofost7.1/run_wofost_pipeline.py",
     #"src/02_models/Wofost7.1/validation_dashboard.py",
     #"src/02_models/Wofost7.1/create_trendModel.py",
-    #"src/01_data/FeatureEngineering/build_stage1_features.py",
+    "src/01_data/FeatureEngineering/build_stage1_features.py",
     #"src/03_analysis/basic_analysis/analyze_stage1_features.py",
     "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
     "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
@@ -200,15 +200,15 @@ XGBOOST_TRAINING_CONFIG = {
         'antecedent_frost_days_anomaly',
         'antecedent_heavy_precip_days_anomaly',
         'antecedent_gdd_sum_anomaly',
-        'spring_temp_anomaly_forecast',
+        #'spring_temp_anomaly_forecast',
         'spring_precip_anomaly_forecast',
-        'spring_solar_rad_anomaly_forecast',
+        #'spring_solar_rad_anomaly_forecast',
         'spring_evaporation_anomaly_forecast',
         'spring_runoff_anomaly_forecast',
         'spring_soil_temp_l1_anomaly_forecast',  # Critical for early root growth
-        'summer_temp_anomaly_forecast',
+        #'summer_temp_anomaly_forecast',
         'summer_precip_anomaly_forecast',
-        'summer_solar_rad_anomaly_forecast',
+        #'summer_solar_rad_anomaly_forecast',
         'summer_evaporation_anomaly_forecast',
         'summer_runoff_anomaly_forecast',
         'summer_soil_temp_l1_anomaly_forecast',
@@ -232,13 +232,18 @@ XGBOOST_TRAINING_CONFIG = {
 
         # --- 7. Model Inputs & Interactions ---
         'stage1_forecast',  # The Trend (Now just a feature, not a baseline)
-        'wofost_yield_water_limited',  # The Raw Physics Output
+        #'wofost_yield_water_limited',  # The Raw Physics Output
         'state_encoded',
         'year_trend',
         'is_gdr',
 
         # Critical Interactions
         'effective_winter_water',  # Deep Soil Moisture Reservoir
+        'winter_water_surplus',
+        'trend_x_winter_water',    # [NEW] Full Tank Multiplier
+        'trend_x_optimal_growth',  # [NEW] Physics Multiplier
+        'trend_x_bumper',  # [NEW] Regime Switch
+        'trend_x_failure',  # [NEW] Regime Switch
         'solar_capture_potential',  # The "Bumper" Engine
         'summer_water_balance_anomaly',
         'summer_heat_x_water_balance',  # The 2018 Separator
@@ -290,7 +295,13 @@ XGBOOST_TRAINING_CONFIG = {
         'stage1_forecast': 1,
         'wofost_yield_water_limited': 1,
         'effective_winter_water': 1,
-        'year_trend': 1
+        'winter_water_surplus': 1,  # [NEW]
+        'year_trend': 1,
+        'trend_x_winter_water': 1,
+        'trend_x_bumper': 1,  # Bumper = Positive
+        'trend_x_failure': -1,  # Failure = Negative
+        'optimal_growth_index': 1,
+        'heat_stress_sq': -1
     },
     'QUANTILES': {'lower': 0.025, 'median': 0.5, 'upper': 0.975},
     'LOWER_MODEL_PATH': BASE_DIR / 'src/models/final_quantile_model_lower.joblib',
