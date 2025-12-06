@@ -1,7 +1,3 @@
-# File: src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py
-# REFACTORED (v23.0): Raw Yield Backtest (Physics-First)
-# Matches the training logic of v22.0.
-
 import pandas as pd
 import joblib
 from xgboost import XGBRegressor
@@ -22,43 +18,38 @@ BACKTEST_CONFIG = config.BACKTESTING_CONFIG
 
 
 def run_backtest(df, models, feature_cols):
-    print(f"\n--- Starting Champion Backtest (Raw Yield Strategy) ---")
+    print(f"\n--- Starting Champion Backtest (Strategy: Raw Yield) ---")
+    # REVERTED to Raw Yield Logic
 
-    # Target: Raw Yield (Same as Training)
     target_col = 'kreisYield'
-
-    # Ensure Trend is treated as a Feature
     valid_features = [c for c in feature_cols if c in df.columns]
-    if 'stage1_forecast' not in valid_features:
-        print("⚠️ Warning: stage1_forecast missing from features!")
 
-    # Training needs Target
+    # Add year back if missing, needed for Raw Yield
+    if 'year' not in valid_features and 'year' in df.columns:
+        valid_features.append('year')
+
     valid_train_mask = df[target_col].notna()
 
     all_predictions = []
 
     for year in tqdm(range(BACKTEST_CONFIG['BACKTEST_START_YEAR'], BACKTEST_CONFIG['BACKTEST_END_YEAR'] + 1)):
-        # Train on past
         train_df = df[(df['year'] < year) & valid_train_mask].copy()
-
-        # Test on current
         test_df = df[(df['year'] == year)].copy()
 
         if test_df.empty or len(train_df) < 50: continue
 
         X_train = train_df[valid_features]
-        y_train = train_df[target_col]
-        X_test = test_df[valid_features]
+        y_train = train_df[target_col]  # Raw Target
 
-        current_preds = test_df[['district_no', 'year', 'kreisYield', 'stage1_forecast']].copy()
+        X_test = test_df[valid_features]
+        current_preds = test_df[['district_no', 'year', 'kreisYield']].copy()
 
         for name in ['lower', 'median', 'upper']:
             model = clone(models[name])
             model.fit(X_train, y_train)
 
-            # Direct Prediction (No Baseline Addition)
+            # Direct Prediction
             current_preds[f'predicted_yield_{name}'] = model.predict(X_test)
-            # Clip negative yields (Physics constraint)
             current_preds[f'predicted_yield_{name}'] = current_preds[f'predicted_yield_{name}'].clip(lower=0)
 
         all_predictions.append(current_preds)
@@ -77,13 +68,10 @@ def main():
         print(f"Error: {e}");
         return
 
+    # Use feature cols from config
     features = XGB_CONFIG['FEATURE_COLS']
-
-    # Remove 'year_trend' if it was removed in training config (Consistency Check)
-    if 'year_trend' in features and 'year_trend' not in models['median'].feature_names_in_:
-        features.remove('year_trend')
-
     results = run_backtest(df, models, features)
+
     if not results.empty:
         results.to_csv(report_dir / 'full_backtest_predictions.csv', index=False)
         mae = mean_absolute_error(results['kreisYield'], results['predicted_yield_median'])

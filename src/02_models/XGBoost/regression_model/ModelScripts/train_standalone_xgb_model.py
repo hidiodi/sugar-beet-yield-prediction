@@ -1,7 +1,3 @@
-# File: src/02_models/XGBoost/regression_model/ModelScripts/train_standalone_xgb_model.py
-# REFACTORED (v19.0): End-to-End Prediction (Raw Yield Target)
-# Strategy: Train on 1980-2024. Use Trend as a feature, not a baseline.
-
 import pandas as pd
 from xgboost import XGBRegressor
 import joblib
@@ -18,7 +14,7 @@ TRAIN_CONFIG = config.STANDALONE_XGB_CONFIG
 
 
 def train_standalone_model(train_config):
-    logging.info("--- Starting Standalone Training (Raw Yield Target) ---")
+    logging.info("--- Starting Standalone Training (Target: Yield Ratio) ---")
 
     try:
         df = pd.read_csv(train_config['DATA_PATH'])
@@ -26,24 +22,22 @@ def train_standalone_model(train_config):
         logging.error("Data file not found.")
         sys.exit(1)
 
-    target_col = train_config['TARGET_COL']  # 'kreisYield'
+    target_col = train_config['TARGET_COL']
+    df.dropna(subset=[target_col, 'stage1_forecast'], inplace=True)
+
+    # --- STRUCTURAL PIVOT: PREDICT RATIO ---
+    df['yield_ratio'] = df[target_col] / df['stage1_forecast']
+    df['yield_ratio'] = df['yield_ratio'].clip(0.5, 1.5)
+
     feature_cols = train_config['FEATURE_COLS']
+    # Remove year features from Standalone too (Physics Focus)
+    valid_features = [c for c in feature_cols if c in df.columns and c not in ['year', 'year_trend']]
 
-    # 1. MAXIMIZE DATA: Filter only where Target is missing
-    # We allow 'stat_trend_forecast' to be NaN (XGBoost handles missing features)
-    initial_len = len(df)
-    df_train = df.dropna(subset=[target_col])
+    X_train = df[valid_features]
+    y_train = df['yield_ratio']  # Target is Ratio
 
-    logging.info(f"Target: {target_col}")
-    logging.info(f"Data Retention: {len(df_train)}/{initial_len} rows used for training.")
-    logging.info(f"Note: 1980s data included. Missing features handled by XGBoost.")
+    logging.info(f"Target: Yield Ratio. Features: {len(valid_features)}")
 
-    # 2. Features
-    valid_features = [c for c in feature_cols if c in df_train.columns]
-    X_train = df_train[valid_features]
-    y_train = df_train[target_col]
-
-    # 3. Train
     for name, quantile in train_config['QUANTILES'].items():
         logging.info(f"Training {name.upper()} model...")
         params = train_config[f'BEST_PARAMS_{name.upper()}']
