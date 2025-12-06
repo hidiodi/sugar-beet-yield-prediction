@@ -408,8 +408,20 @@ def main():
         # Previous linear logic was only ~10% penalty.
 
         df['effective_winter_water'] = df['winter_precip_sum'] * root_access_factor
+
+        # NEW: Full Tank Multiplier (Step 2)
+        if 'stage1_forecast' in df.columns:
+             # Normalize water: 250mm is roughly "full" effective tank
+             tank_status = (df['effective_winter_water'] / 250.0).clip(upper=1.5)
+             df['trend_x_winter_water'] = df['stage1_forecast'] * tank_status
+        else:
+             df['trend_x_winter_water'] = 0
+        df['winter_water_surplus'] = (df['effective_winter_water'] - 200.0).clip(lower=0)
+
     else:
         df['effective_winter_water'] = 0
+        df['trend_x_winter_water'] = 0
+        df['winter_water_surplus'] = 0
 
     # 4. Late Sowing x Heat (The Canopy Failure)
     # Late Sowing (High DOY) * High Heat = Maximum Stress
@@ -479,13 +491,42 @@ def main():
     physical_score = norm_solar + norm_water
 
     if 'summer_precip_anomaly_forecast' in df.columns and 'summer_temp_anomaly_forecast' in df.columns:
-        # 1. Base Definition: Heat * Precip (Active ONLY if Precip > 0)
-        # If it's wet, heat fuels growth. If it's dry, this is 0.
-        is_wet_summer = (df['summer_precip_anomaly_forecast'] > 0).astype(int)
-        base_growth_index = df['summer_temp_anomaly_forecast'] * df['summer_precip_anomaly_forecast'] * is_wet_summer
+        # 1. New Definition (Physics Fix v3): Smoothed Continuous Interaction
+        # Avoids the "Cliff" of the binary precip > 0 switch.
+
+        precip_anom = df['summer_precip_anomaly_forecast']
+        temp_anom = df['summer_temp_anomaly_forecast']
+
+        # Water Status: Smooth transition from -1 (Dry) to +1 (Wet)
+        # Using Tanh over a 20mm scale to create the curve
+        water_status = np.tanh(precip_anom / 20.0)
+
+        # Base Score: Reward Rain linearly
+        base_precip_score = precip_anom
+
+        # Temperature Interaction (Physics Fix v4):
+        # Goal: Fix the "2014 Bug" where Cool+Wet was penalized.
+
+        # Logic:
+        # 1. If Wet (water_status > 0):
+        #    - Heat is Good (Biomass).
+        #    - Cool is Neutral (Not Bad). -> max(0, temp)
+        # 2. If Dry (water_status < 0):
+        #    - Heat is Bad (Stress).
+        #    - Cool is Good (Survival). -> temp * water_status (Neg * Neg = Pos)
+
+        # We use a smooth blend based on water_status
+        # If water > 0: factor is water_status. We only want positive temp part.
+        # If water < 0: factor is water_status. We want full temp effect (reverses sign).
+
+        positive_heat_reward = np.maximum(0.0, temp_anom) * np.maximum(0.0, water_status) * 15.0
+        dry_temp_correction = temp_anom * np.minimum(0.0, water_status) * 20.0  # High penalty for Dry+Hot
+
+        temp_interaction = positive_heat_reward + dry_temp_correction
+
+        base_growth_index = base_precip_score + temp_interaction
 
         # 2. Early Sowing Bonus (The Canopy Factor)
-        # 2014 was Bumper because the leaves were big enough in June to use this energy.
         if 'sowing_doy' in df.columns:
             # DOY 80 (Early) -> Bonus 20. DOY 100 (Late) -> Bonus 0.
             early_sowing_bonus = (100 - df['sowing_doy']).clip(lower=0)
@@ -495,8 +536,41 @@ def main():
         else:
             df['optimal_growth_index'] = base_growth_index
 
+        # BUMPER SCORE (2014, 2024 style)
+        # 1. Tank Status: 0 at 100mm, 1 at 250mm
+        score_tank = ((df.get('effective_winter_water', 0) - 100) / 150).clip(0, 1)
+
+        # 2. Early Start: 1 at DOY 80, 0 at DOY 110
+        score_early = ((110 - df.get('sowing_doy', 100)) / 30).clip(0, 1)
+
+        # 3. Cool Summer: 1 at 0 days > 30C, 0 at 10 days
+        score_cool = ((10 - df.get('summer_days_tmax_gt_30c', 0)) / 10).clip(0, 1)
+
+        # Combined Bumper Score (Geometric Mean logic via multiplication)
+        df['flag_bumper_scenario'] = score_tank * score_early * score_cool
+
+        # FAILURE SCORE (2018 style)
+        # 1. Heat Intensity: 0 at 5 days, 1 at 20 days
+        score_heat = ((df.get('summer_days_tmax_gt_30c', 0) - 5) / 15).clip(0, 1)
+
+        # 2. Dryness Intensity: 0 at 0mm, 1 at -100mm
+        # (Negative anomaly means dry)
+        dryness = (df.get('summer_precip_anomaly_forecast', 0) * -1).clip(0, 100) / 100.0
+
+        df['flag_failure_scenario'] = score_heat * dryness
+
+        # --- REGIME INTERACTIONS ---
+        # Force the trend to jump when flags are active
+        if 'stage1_forecast' in df.columns:
+            df['trend_x_bumper'] = df['stage1_forecast'] * df['flag_bumper_scenario']
+            df['trend_x_failure'] = df['stage1_forecast'] * df['flag_failure_scenario']
+        else:
+            df['trend_x_bumper'] = 0
+            df['trend_x_failure'] = 0
+
     else:
         df['optimal_growth_index'] = 0
+        df['trend_x_optimal_growth'] = 0
 
     # Create the Interaction
     if 'year_trend' in df.columns:

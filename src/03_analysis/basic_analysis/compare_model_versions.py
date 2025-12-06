@@ -81,16 +81,45 @@ def print_anomaly_forensics(df):
 
         subset = df[df['year'] == year].copy()
         actual = subset['kreisYield'].mean()
-        trend_err = (subset['Statistical Trend_pred'] - subset['kreisYield']).abs().mean()
-        hybrid_err = (subset['Hybrid XGB_pred'] - subset['kreisYield']).abs().mean()
 
-        improvement = trend_err - hybrid_err
-        winner = "HYBRID" if improvement > 0 else "TREND"
+        # Calculate errors for all available models
+        errors = {}
+
+        if 'Statistical Trend_pred' in subset.columns:
+            trend_err = (subset['Statistical Trend_pred'] - subset['kreisYield']).abs().mean()
+            errors['TREND'] = trend_err
+
+        if 'Standalone XGB_pred' in subset.columns:
+            sa_err = (subset['Standalone XGB_pred'] - subset['kreisYield']).abs().mean()
+            errors['STANDALONE'] = sa_err
+
+        if 'Hybrid XGB_pred' in subset.columns:
+            hybrid_err = (subset['Hybrid XGB_pred'] - subset['kreisYield']).abs().mean()
+            errors['HYBRID'] = hybrid_err
 
         logging.info(f"YEAR {year} (Actual: {actual:.1f} dt/ha)")
-        logging.info(f"  > Trend Model Error: {trend_err:.1f}")
-        logging.info(f"  > Hybrid Model Error: {hybrid_err:.1f}")
-        logging.info(f"  > WINNER: {winner} (Improvement: {improvement:+.1f} dt/ha)")
+
+        if 'TREND' in errors:
+            logging.info(f"  > Trend Model Error:      {errors['TREND']:.1f}")
+        if 'STANDALONE' in errors:
+            logging.info(f"  > Standalone Model Error: {errors['STANDALONE']:.1f}")
+        if 'HYBRID' in errors:
+            logging.info(f"  > Hybrid Model Error:     {errors['HYBRID']:.1f}")
+
+        if errors:
+            winner = min(errors, key=errors.get)
+            best_err = errors[winner]
+            # Calculate improvement over Trend if Trend exists, otherwise N/A
+            if 'TREND' in errors and winner != 'TREND':
+                imp = errors['TREND'] - best_err
+                imp_str = f"(Improvement: +{imp:.1f} dt/ha)"
+            elif winner == 'TREND':
+                imp_str = "(Baseline)"
+            else:
+                imp_str = ""
+
+            logging.info(f"  > WINNER: {winner} {imp_str}")
+
         logging.info("-" * 40)
 
 
