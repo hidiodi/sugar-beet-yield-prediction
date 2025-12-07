@@ -7,42 +7,37 @@ from sklearn.metrics import mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# --- Project Setup ---
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 from src import config
 
-# --- Configuration ---
 LOG_LEVEL = logging.INFO
 
-# V16 MARCH CONFIG
+# SCENARIO CONFIG (V16 Optimized)
 CRISIS_QUANTILE = 0.87
 CRISIS_MAGNITUDE_FLOOR = 0.45
 BUMPER_QUANTILE = 0.90
 BUMPER_MAGNITUDE_FLOOR = 0.5
 
-# Plotting Configuration
 sns.set_theme(style="whitegrid")
 plt.rcParams['figure.figsize'] = (12, 6)
 
 
 def calculate_expanding_z_score(group, col_name, min_periods=5):
-    """Academic-Safe Expanding Window Z-Score."""
     group = group.sort_values('year')
     series = group[col_name]
     exp_mean = series.expanding(min_periods=min_periods).mean()
     exp_std = series.expanding(min_periods=min_periods).std()
     exp_std = exp_std.replace(0, 1.0)
-    z_scores = (series - exp_mean) / exp_std
-    return z_scores.fillna(0)
+    return ((series - exp_mean) / exp_std).fillna(0)
 
 
 def get_smart_indices(df):
-    """Calculates Regime Indices using HONEST MARCH FORECASTS."""
+    """Calculates Indices using OBSERVED SCENARIO DATA."""
     df = df.copy()
 
-    # THE SWAP: We use 'summer_temp_prob_warm_forecast' instead of observed days
-    cols = ['summer_temp_prob_warm_forecast', 'summer_water_balance_anomaly',
+    # We use OBSERVED summer heat days here
+    cols = ['summer_days_tmax_gt_30c', 'summer_water_balance_anomaly',
             'anoxia_events', 'effective_winter_water', 'summer_solar_rad_anomaly_forecast']
     for c in cols:
         if c in df.columns:
@@ -51,24 +46,18 @@ def get_smart_indices(df):
             df[c] = 0.0
 
     def apply_district_logic(g):
-        # HEAT: High Probability = High Z-Score (Bad)
-        z_heat = calculate_expanding_z_score(g, 'summer_temp_prob_warm_forecast')
-
-        # DROUGHT: High Water Balance = Positive Z-Score (Good). We multiply by -1 to make it a 'Risk' score
+        z_heat = calculate_expanding_z_score(g, 'summer_days_tmax_gt_30c')
         z_drought = calculate_expanding_z_score(g, 'summer_water_balance_anomaly') * -1
-
         z_anoxia = calculate_expanding_z_score(g, 'anoxia_events')
         z_winter = calculate_expanding_z_score(g, 'effective_winter_water')
         z_solar = calculate_expanding_z_score(g, 'summer_solar_rad_anomaly_forecast')
 
-        # Failure Index
         fail_idx = np.maximum.reduce([
             z_heat.clip(lower=0),
             z_drought.clip(lower=0),
             (z_anoxia - 0.5).clip(lower=0)
         ])
 
-        # Bumper Index
         bumper_idx = (
                              (z_heat * -1).clip(lower=-1, upper=2) +
                              (z_drought * -1).clip(lower=-1, upper=2) +
@@ -82,23 +71,17 @@ def get_smart_indices(df):
             'Index_Bumper_Local': bumper_idx
         })
 
-    # Apply logic
     indices = df.groupby('district_no').apply(apply_district_logic)
-
-    if isinstance(indices.index, pd.MultiIndex):
-        indices = indices.reset_index(level=0)
+    if isinstance(indices.index, pd.MultiIndex): indices = indices.reset_index(level=0)
 
     cols_to_drop = ['district_no']
     if 'year' in indices.columns: cols_to_drop.append('year')
     indices = indices.drop(columns=cols_to_drop, errors='ignore')
 
     df_result = pd.merge(df[['year', 'district_no']], indices, left_index=True, right_index=True)
-
-    # Global Aggregation
     annual = df_result.groupby('year')[['Index_Failure_Local', 'Index_Bumper_Local']].transform('mean')
     df_result['Global_Failure'] = annual['Index_Failure_Local']
     df_result['Global_Bumper'] = annual['Index_Bumper_Local']
-
     return df_result
 
 
@@ -108,7 +91,7 @@ def load_predictions():
     df_trend = pd.read_csv(trend_path)[['year', 'district_no', 'final_corrected_forecast', 'actual_yield']]
     df_trend.rename(columns={'final_corrected_forecast': 'Trend_Pred', 'actual_yield': 'Actual'}, inplace=True)
 
-    # 2. Standalone XGB (Fallback)
+    # 2. Standalone XGB (Fallback for early years)
     sa_path = config.MODEL_COMPARISON_CONFIG['STANDALONE_XGB_PREDICTIONS_FILE']
     df_sa = pd.read_csv(sa_path)[['year', 'district_no', 'predicted_yield_median']]
     df_sa.rename(columns={'predicted_yield_median': 'XGB_Median'}, inplace=True)
@@ -132,12 +115,11 @@ def load_predictions():
     else:
         df_ens = pd.DataFrame(columns=['year', 'district_no', 'Native_Ensemble'])
 
-    # Merge
     df = pd.merge(df_trend, df_sa, on=['year', 'district_no'], how='inner')
     df = pd.merge(df, df_native, on=['year', 'district_no'], how='left')
     df = pd.merge(df, df_ens, on=['year', 'district_no'], how='left')
 
-    # Backfill Logic
+    # Backfills
     if 'Native_Ensemble' in df.columns:
         df['Native_Ensemble'] = df['Native_Ensemble'].fillna(df['XGB_Median'])
     df['Native_Ensemble'] = df['Native_Ensemble'].fillna(df['Trend_Pred'])
@@ -151,7 +133,7 @@ def load_predictions():
 
 def run_strategy():
     logging.basicConfig(level=LOG_LEVEL, format='%(message)s')
-    print("--- REGIME SWITCHING STRATEGY V17 (Honest March Forecast) ---")
+    print("--- REGIME SWITCHING STRATEGY V18 (Scenario Mode: Perfect Info Stress Test) ---")
 
     pred_df, raw_df = load_predictions()
     pred_df['district_no'] = pred_df['district_no'].astype(int)
@@ -162,39 +144,34 @@ def run_strategy():
     df = pd.merge(pred_df, indices_df[['year', 'district_no', 'Global_Failure', 'Global_Bumper']],
                   on=['year', 'district_no'], how='left')
 
-    # Dynamic Thresholds
     annual_stats = df[['year', 'Global_Failure', 'Global_Bumper']].drop_duplicates().sort_values('year')
     annual_stats['Crisis_Threshold'] = annual_stats['Global_Failure'].expanding(min_periods=5).quantile(CRISIS_QUANTILE)
     annual_stats['Bumper_Threshold'] = annual_stats['Global_Bumper'].expanding(min_periods=5).quantile(BUMPER_QUANTILE)
     df = pd.merge(df, annual_stats[['year', 'Crisis_Threshold', 'Bumper_Threshold']], on='year', how='left')
 
-    # Logic
     df['Final_Pred'] = df['Native_Ensemble']
     df['Strategy_Mode'] = 'NORMAL (Ensemble)'
 
-    # Crisis
+    # Crisis Logic
     crisis_mask = (df['Global_Failure'] > df['Crisis_Threshold']) & (df['Global_Failure'] > CRISIS_MAGNITUDE_FLOOR)
     apply_crisis = crisis_mask & df['Native_V2'].notna()
     df.loc[apply_crisis, 'Final_Pred'] = df.loc[apply_crisis, 'Native_V2']
     df.loc[apply_crisis, 'Strategy_Mode'] = 'CRISIS (Native V2)'
 
-    # Bumper
+    # Bumper Logic
     bumper_mask = (df['Global_Bumper'] > df['Bumper_Threshold']) & (df['Global_Bumper'] > BUMPER_MAGNITUDE_FLOOR) & (
         ~crisis_mask)
     v8_higher = df['Native_V8'] > df['Native_Ensemble']
     apply_bumper = bumper_mask & v8_higher & df['Native_V8'].notna()
-
     df.loc[apply_bumper, 'Final_Pred'] = df.loc[apply_bumper, 'Native_V8']
     df.loc[apply_bumper, 'Strategy_Mode'] = 'BUMPER (Native V8)'
 
-    # Evaluation
     clean_df = df.dropna(subset=['Actual', 'Final_Pred'])
-
     mae_base = mean_absolute_error(clean_df['Actual'], clean_df['Native_Ensemble'])
     mae_final = mean_absolute_error(clean_df['Actual'], clean_df['Final_Pred'])
     r2_final = r2_score(clean_df['Actual'], clean_df['Final_Pred'])
 
-    print("\nRESULTS V17 (HONEST MARCH):")
+    print(f"\nSCENARIO RESULTS:")
     print(f"  Ensemble MAE: {mae_base:.2f}")
     print(f"  Strategy MAE: {mae_final:.2f}")
     print(f"  Final R²:     {r2_final:.4f}")
