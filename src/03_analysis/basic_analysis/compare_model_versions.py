@@ -1,26 +1,24 @@
-# File: src/03_analysis/basic_analysis/compare_model_versions.py
-# Description: Generates final comparison metrics and plots.
-#              UPDATED: Adds specific forensic logging for 2014/2018 anomalies.
-
 import pandas as pd
-import matplotlib.pyplot as plt
 import logging
 from pathlib import Path
 from sklearn.metrics import r2_score, mean_absolute_error
-import numpy as np
 import sys
-import math
 
+# --- Project Setup ---
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 from src import config
 
-logging.basicConfig(level=logging.INFO, format='%(message)s')  # Clean format
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 CONFIG = config.MODEL_COMPARISON_CONFIG
-WOFOST_CONFIG = config.WOFOST_CONFIG
 NOMINAL_COVERAGE_PERCENT = CONFIG['NOMINAL_COVERAGE_PERCENT']
 ALPHA = 1 - (NOMINAL_COVERAGE_PERCENT / 100.0)
 OUTPUT_DIR = Path(CONFIG['OUTPUT_DIR'])
+
+# Additional File Paths
+NATIVE_COMPARISON_PATH = project_root / 'src/models/native_physics_comparison/native_model_comparison_v2_v8.csv'
+NATIVE_ENSEMBLE_PATH = project_root / 'src/models/native_ensemble_champion/native_ensemble_forecasts.csv'
+SWITCHED_MODEL_PATH = config.DATA_DIR / '06_model_output' / 'final_switched_forecast.csv'
 
 
 def calculate_interval_score(y_true, lower, upper, alpha):
@@ -31,11 +29,11 @@ def calculate_interval_score(y_true, lower, upper, alpha):
 
 
 def load_and_merge_models():
-    # Base: Hybrid Model
+    # 1. Base: Hybrid Model
     base_path = Path(CONFIG['HYBRID_XGB_PREDICTIONS_FILE'])
     if not base_path.exists():
         logging.error("Hybrid XGB predictions not found.")
-        sys.exit(1)
+        return pd.DataFrame()
 
     df = pd.read_csv(base_path)
     df.rename(columns={
@@ -44,20 +42,21 @@ def load_and_merge_models():
         'predicted_yield_upper': 'Hybrid XGB_upper'
     }, inplace=True)
 
-    # Merge Standalone
+    # 2. Merge Standalone
     sa_path = Path(CONFIG['STANDALONE_XGB_PREDICTIONS_FILE'])
     if sa_path.exists():
         df_sa = pd.read_csv(sa_path)
         df = pd.merge(df, df_sa[
             ['year', 'district_no', 'predicted_yield_median', 'predicted_yield_lower', 'predicted_yield_upper']],
-                      on=['year', 'district_no'], suffixes=('', '_sa'))
+                      on=['year', 'district_no'], suffixes=('', '_sa'),
+                      how='left')
         df.rename(columns={
             'predicted_yield_median': 'Standalone XGB_pred',
             'predicted_yield_lower': 'Standalone XGB_lower',
             'predicted_yield_upper': 'Standalone XGB_upper'
         }, inplace=True)
 
-    # Merge Statistical Trend
+    # 3. Merge Statistical Trend
     trend_path = Path(CONFIG['STATISTICAL_TREND_FILE'])
     if trend_path.exists():
         df_trend = pd.read_csv(trend_path)
@@ -65,7 +64,91 @@ def load_and_merge_models():
                       on=['year', 'district_no'], how='left')
         df.rename(columns={'final_corrected_forecast': 'Statistical Trend_pred'}, inplace=True)
 
+    # 4. Merge Native Physics V2 & V8
+    if NATIVE_COMPARISON_PATH.exists():
+        df_native = pd.read_csv(NATIVE_COMPARISON_PATH)
+        df_native['district_no'] = df_native['district_no'].astype(int)
+        df = pd.merge(df, df_native[['year', 'district_no', 'Native_V2', 'Native_V8']],
+                      on=['year', 'district_no'], how='left')
+        df.rename(columns={
+            'Native_V2': 'Native V2 (Anchored)_pred',
+            'Native_V8': 'Native V8 (Unanchored)_pred'
+        }, inplace=True)
+
+    # 5. Merge Native Ensemble
+    if NATIVE_ENSEMBLE_PATH.exists():
+        df_ensemble = pd.read_csv(NATIVE_ENSEMBLE_PATH)
+        df_ensemble['district_no'] = df_ensemble['district_no'].astype(int)
+        df = pd.merge(df, df_ensemble[['year', 'district_no', 'Ensemble_Pred']],
+                      on=['year', 'district_no'], how='left')
+        df.rename(columns={'Ensemble_Pred': 'Native Ensemble_pred'}, inplace=True)
+
+    # 6. Merge Regime Switch V10 (Now includes Strategy_Mode)
+    if SWITCHED_MODEL_PATH.exists():
+        df_switch = pd.read_csv(SWITCHED_MODEL_PATH)
+        df_switch['district_no'] = df_switch['district_no'].astype(int)
+
+        # Load Strategy Mode if available
+        cols = ['year', 'district_no', 'Final_Pred']
+        if 'Strategy_Mode' in df_switch.columns:
+            cols.append('Strategy_Mode')
+
+        df = pd.merge(df, df_switch[cols], on=['year', 'district_no'], how='left')
+        df.rename(columns={'Final_Pred': 'Regime Switch V10_pred'}, inplace=True)
+        logging.info("✓ Regime Switch V10 loaded (with Strategy Modes).")
+
     return df
+
+
+def analyze_strategy_effectiveness(df):
+    """New: Breakdown of performance by Strategy Mode (V10 feature)."""
+    if 'Strategy_Mode' not in df.columns or 'Regime Switch V10_pred' not in df.columns:
+        return
+
+    logging.info("\n" + "=" * 80)
+    logging.info("      STRATEGY MODE ANALYSIS (The 'Switch' Effectiveness)")
+    logging.info("=" * 80)
+
+    # Define required columns for this analysis
+    req_cols = ['Strategy_Mode', 'Regime Switch V10_pred', 'kreisYield', 'Native Ensemble_pred']
+
+    # Ensure they exist in the dataframe
+    missing = [c for c in req_cols if c not in df.columns]
+    if missing:
+        logging.warning(f"Skipping Strategy Analysis due to missing columns: {missing}")
+        return
+
+    # Drop NaNs only for the columns we are actually using here to prevent crashes
+    clean = df.dropna(subset=req_cols).copy()
+
+    if clean.empty:
+        logging.warning("No overlapping data found for Strategy Analysis.")
+        return
+
+    # Iterate manually to compute metrics (safer than complex lambdas)
+    results = []
+    for mode, group in clean.groupby('Strategy_Mode'):
+        count = len(group)
+        mae_switch = mean_absolute_error(group['kreisYield'], group['Regime Switch V10_pred'])
+        mae_base = mean_absolute_error(group['kreisYield'], group['Native Ensemble_pred'])
+        gain = mae_base - mae_switch
+        results.append({
+            'Strategy Mode': mode,
+            'Count': count,
+            'MAE': mae_switch,
+            'Base MAE': mae_base,
+            'Gain': gain
+        })
+
+    # Sort for readability (maybe by Count or Gain)
+    res_df = pd.DataFrame(results).sort_values('Count', ascending=False)
+
+    logging.info(f"{'Strategy Mode':<35} | {'Count':<6} | {'MAE':<6} | {'Base MAE':<8} | {'Gain':<6}")
+    logging.info("-" * 80)
+
+    for _, row in res_df.iterrows():
+        logging.info(
+            f"{row['Strategy Mode']:<35} | {int(row['Count']):<6} | {row['MAE']:.2f}  | {row['Base MAE']:.2f}     | {row['Gain']:+.2f}")
 
 
 def print_anomaly_forensics(df):
@@ -75,6 +158,15 @@ def print_anomaly_forensics(df):
     logging.info("=" * 80)
 
     anomalies = [2014, 2018]
+    model_map = {
+        'TREND': 'Statistical Trend_pred',
+        'STANDALONE': 'Standalone XGB_pred',
+        'HYBRID': 'Hybrid XGB_pred',
+        'NATIVE_V2': 'Native V2 (Anchored)_pred',
+        'NATIVE_V8': 'Native V8 (Unanchored)_pred',
+        'NATIVE_ENSEMBLE': 'Native Ensemble_pred',
+        'REGIME_SWITCH': 'Regime Switch V10_pred'
+    }
 
     for year in anomalies:
         if year not in df['year'].values: continue
@@ -82,43 +174,27 @@ def print_anomaly_forensics(df):
         subset = df[df['year'] == year].copy()
         actual = subset['kreisYield'].mean()
 
-        # Calculate errors for all available models
+        # Determine the active strategy for this year
+        mode_info = ""
+        if 'Strategy_Mode' in subset.columns:
+            mode = subset['Strategy_Mode'].mode()
+            if not mode.empty:
+                mode_info = f" [Mode: {mode[0]}]"
+
+        logging.info(f"YEAR {year} (Actual: {actual:.1f} dt/ha){mode_info}")
+
         errors = {}
+        for key, col in model_map.items():
+            if col in subset.columns:
+                errors[key] = (subset[col] - subset['kreisYield']).abs().mean()
 
-        if 'Statistical Trend_pred' in subset.columns:
-            trend_err = (subset['Statistical Trend_pred'] - subset['kreisYield']).abs().mean()
-            errors['TREND'] = trend_err
+        sorted_errors = sorted(errors.items(), key=lambda x: x[1])
 
-        if 'Standalone XGB_pred' in subset.columns:
-            sa_err = (subset['Standalone XGB_pred'] - subset['kreisYield']).abs().mean()
-            errors['STANDALONE'] = sa_err
-
-        if 'Hybrid XGB_pred' in subset.columns:
-            hybrid_err = (subset['Hybrid XGB_pred'] - subset['kreisYield']).abs().mean()
-            errors['HYBRID'] = hybrid_err
-
-        logging.info(f"YEAR {year} (Actual: {actual:.1f} dt/ha)")
-
-        if 'TREND' in errors:
-            logging.info(f"  > Trend Model Error:      {errors['TREND']:.1f}")
-        if 'STANDALONE' in errors:
-            logging.info(f"  > Standalone Model Error: {errors['STANDALONE']:.1f}")
-        if 'HYBRID' in errors:
-            logging.info(f"  > Hybrid Model Error:     {errors['HYBRID']:.1f}")
-
-        if errors:
-            winner = min(errors, key=errors.get)
-            best_err = errors[winner]
-            # Calculate improvement over Trend if Trend exists, otherwise N/A
-            if 'TREND' in errors and winner != 'TREND':
-                imp = errors['TREND'] - best_err
-                imp_str = f"(Improvement: +{imp:.1f} dt/ha)"
-            elif winner == 'TREND':
-                imp_str = "(Baseline)"
-            else:
-                imp_str = ""
-
-            logging.info(f"  > WINNER: {winner} {imp_str}")
+        for m, err in sorted_errors:
+            marker = "  >"
+            # Highlight our V10 model
+            if m == 'REGIME_SWITCH': marker = "  >>"
+            logging.info(f"{marker} {m:<18}: {err:.1f}")
 
         logging.info("-" * 40)
 
@@ -127,15 +203,29 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     df = load_and_merge_models()
+    if df.empty:
+        logging.error("No data loaded.")
+        return
 
     # 1. Point Accuracy
-    models = ['Statistical Trend', 'Standalone XGB', 'Hybrid XGB']
+    models = [
+        'Statistical Trend',
+        'Standalone XGB',
+        'Hybrid XGB',
+        'Native V2 (Anchored)',
+        'Native V8 (Unanchored)',
+        'Native Ensemble',
+        'Regime Switch V10'
+    ]
+
     results = []
     for m in models:
-        if f'{m}_pred' in df.columns:
-            clean = df.dropna(subset=[f'{m}_pred', 'kreisYield'])
-            mae = mean_absolute_error(clean['kreisYield'], clean[f'{m}_pred'])
-            r2 = r2_score(clean['kreisYield'], clean[f'{m}_pred'])
+        col = f'{m}_pred'
+        if col in df.columns:
+            clean = df.dropna(subset=[col, 'kreisYield'])
+            if clean.empty: continue
+            mae = mean_absolute_error(clean['kreisYield'], clean[col])
+            r2 = r2_score(clean['kreisYield'], clean[col])
             results.append({'Model': m, 'MAE': mae, 'R2': r2})
 
     res_df = pd.DataFrame(results).sort_values('MAE')
@@ -144,31 +234,12 @@ def main():
     logging.info("=" * 80)
     logging.info(res_df.to_string(index=False, float_format="%.4f"))
 
-    # 2. Anomaly Check
+    # 2. Strategy Analysis
+    analyze_strategy_effectiveness(df)
+
+    # 3. Anomaly Check
     if 'Statistical Trend_pred' in df.columns:
         print_anomaly_forensics(df)
-
-    # 3. Interval Quality
-    q_models = ['Standalone XGB', 'Hybrid XGB']
-    q_results = []
-    for m in q_models:
-        if f'{m}_lower' in df.columns:
-            clean = df.dropna(subset=[f'{m}_lower', 'kreisYield'])
-            score = calculate_interval_score(clean['kreisYield'], clean[f'{m}_lower'], clean[f'{m}_upper'],
-                                             ALPHA).mean()
-            cov = ((clean['kreisYield'] >= clean[f'{m}_lower']) & (
-                        clean['kreisYield'] <= clean[f'{m}_upper'])).mean() * 100
-            width = (clean[f'{m}_upper'] - clean[f'{m}_lower']).mean()
-            q_results.append({'Model': m, 'Interval Score': score, 'Coverage %': cov, 'Width': width})
-
-    q_df = pd.DataFrame(q_results).sort_values('Interval Score')
-    logging.info("\n" + "=" * 80)
-    logging.info(f"      UNCERTAINTY & RISK ({int(NOMINAL_COVERAGE_PERCENT)}% Intervals)")
-    logging.info("=" * 80)
-    logging.info(q_df.to_string(index=False, float_format="%.4f"))
-    logging.info("\nNOTE: Lower Interval Score is better. Higher Coverage is better.")
-
-    # (Plots are generated but code omitted here for brevity as requested - keep existing plot code if needed)
 
 
 if __name__ == '__main__':

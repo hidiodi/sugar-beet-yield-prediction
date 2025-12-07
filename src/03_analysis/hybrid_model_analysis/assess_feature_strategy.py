@@ -2,8 +2,8 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import sys
+from sklearn.linear_model import LinearRegression
 
-# Add project root to path
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 from src import config
@@ -16,132 +16,103 @@ def calculate_z_score(series):
     return (series - series.mean()) / std
 
 
-def simulate_v14_logic(df):
-    """
-    V14: V13 + Flood Logic.
-    """
+def simulate_smart_features(df):
     df = df.copy()
     groups = df.groupby('district_no')
 
-    # 1. Component Z-Scores
+    # 1. Base Z-Scores (Standardized Context)
+    # Heat (High = Bad)
     df['z_heat'] = groups['summer_days_tmax_gt_30c'].transform(calculate_z_score)
-    df['z_bal'] = groups['summer_water_balance_anomaly'].transform(calculate_z_score)
-    df['z_tank'] = groups['effective_winter_water'].transform(calculate_z_score)
-    df['z_rain'] = groups['summer_precip_anomaly_forecast'].transform(calculate_z_score)
+    # Water Balance (Inverted: High = Dry = Bad)
+    df['z_drought'] = groups['summer_water_balance_anomaly'].transform(calculate_z_score) * -1
+    # Anoxia (High = Bad)
     df['z_anoxia'] = groups['anoxia_events'].transform(calculate_z_score)
-    df['z_sow'] = groups['sowing_doy'].transform(calculate_z_score)  # High = Late (Bad)
+    # Winter Tank (High = Good)
+    df['z_tank'] = groups['effective_winter_water'].transform(calculate_z_score)
+    # Solar (High = Good)
+    df['z_solar'] = groups['summer_solar_rad_anomaly_forecast'].transform(calculate_z_score)
 
-    # 2. FAILURE INDEX (Multi-Mode)
+    # 2. Local Indices
 
-    # Mode A: Scorch (Heat * Dry Balance)
-    dryness = (df['z_bal'] * -1).clip(lower=0)
-    heat = df['z_heat'].clip(lower=0)
+    # FAILURE: Max Risk (Heat OR Drought OR Anoxia)
+    # We clip negative Z-scores to 0 (Good weather doesn't subtract from failure risk)
+    df['Index_Failure_Local'] = np.maximum.reduce([
+        df['z_heat'].clip(lower=0),
+        df['z_drought'].clip(lower=0),
+        (df['z_anoxia'] - 0.5).clip(lower=0)  # Anoxia needs to be significant
+    ])
 
-    scorch = np.maximum(
-        heat * dryness,
-        (heat - 1.5).clip(lower=0) * 2.0
-    )
+    # BUMPER: All Systems Go (Water AND Coolness) + Solar Bonus
+    # Water Supply: Tank OR Rain (Low Drought)
+    water_avail = np.maximum(df['z_tank'], (df['z_drought'] * -1))
+    coolness = (df['z_heat'] * -1)
 
-    # Mode B: Drowning (Flood)
-    # Threshold 0.8
-    drown = (df['z_anoxia'] - 0.8).clip(lower=0) * 2.0
+    # We use Average instead of Min to be softer, but penalize negatives
+    base_growth = (water_avail + coolness) / 2.0
 
-    # Mode C: Late Sowing (Mud)
-    # If Sowing is > 1.5 Sigma Late, it's a risk
-    late_start = (df['z_sow'] - 1.5).clip(lower=0) * 2.0
+    df['Index_Bumper_Local'] = base_growth + (df['z_solar'].clip(lower=0) * 0.5)
 
-    df['Index_Failure'] = np.maximum.reduce([scorch, drown, late_start])
-
-    # 3. BUMPER INDEX (Unchanged)
-    water_supply = (df['z_tank'].clip(lower=0) + df['z_rain'].clip(lower=0)) / 2.0
-    coolness = (df['z_heat'] * -1).clip(lower=0)
-
-    df['Index_Bumper'] = water_supply * coolness
+    # 3. Global Context (The "Classifier" Stage)
+    # Calculate annual averages
+    annual_stats = df.groupby('year')[['Index_Failure_Local', 'Index_Bumper_Local']].transform('mean')
+    df['Global_Failure'] = annual_stats['Index_Failure_Local']
+    df['Global_Bumper'] = annual_stats['Index_Bumper_Local']
 
     return df
 
 
-def analyze_year(df, year, global_std):
-    subset = df[df['year'] == year]
-    if subset.empty: return None
-
-    avg_residual = subset['target_residual'].mean()
-    yield_z = avg_residual / global_std
-
-    fail_signal = subset['Index_Failure'].mean()
-    bump_signal = subset['Index_Bumper'].mean()
-
-    # Actual
-    actual_state = "Normal"
-    if yield_z > 0.7:
-        actual_state = "Bumper (+)"
-    elif yield_z < -0.7:
-        actual_state = "Crash (-)"
-
-    # Predicted
-    predicted_state = "Normal"
-
-    if fail_signal > 0.5:
-        predicted_state = "Crash (-)"
-    elif bump_signal > 0.30:
-        predicted_state = "Bumper (+)"
-
-    if predicted_state == "Bumper (+)" and fail_signal > 0.5:
-        predicted_state = "Normal"
-
-    success = (actual_state == predicted_state)
-    if actual_state == "Normal" and predicted_state == "Normal": success = True
-
-    return {
-        'year': year,
-        'actual': actual_state,
-        'pred': predicted_state,
-        'success': success,
-        'Fail': fail_signal,
-        'Bump': bump_signal,
-        'z_anoxia': subset['z_anoxia'].mean(),
-        'z_sow': subset['z_sow'].mean()
-    }
-
-
 def run_analysis():
-    print("--- V14 FULL HISTORY AUDIT (1981-2024) ---")
+    print("--- SMARTER FEATURE ASSESSMENT (Z-Scores + Global Context) ---")
     df = pd.read_csv(config.XGBOOST_TRAINING_CONFIG['DATA_PATH'])
+
+    # Target: Residuals (Yield - Trend)
     df['target_residual'] = df['kreisYield'] - df['stage1_forecast']
 
-    df = simulate_v14_logic(df)
-    residual_std = df['target_residual'].std()
+    df = simulate_smart_features(df)
 
-    print(
-        f"\n{'Year':<5} | {'Actual':<11} | {'Pred':<11} | {'Verdict':<4} | {'Fail':<6} | {'Bump':<6} | {'Anoxia':<6} | {'Sow(Z)'}")
-    print("-" * 105)
+    print(f"\n{'Year':<5} | {'Actual':<10} | {'Global Fail':<12} | {'Global Bump':<12} | {'Verdict'}")
+    print("-" * 65)
 
-    results = []
-    years = sorted(df['year'].unique())
+    years_of_interest = sorted(df['year'].unique())
+    correct_count = 0
 
-    for year in years:
-        res = analyze_year(df, year, residual_std)
-        results.append(res)
+    for year in years_of_interest:
+        subset = df[df['year'] == year]
+        if subset.empty: continue
 
-        icon = "✅" if res['success'] else "❌"
-        print(
-            f"{year:<5} | {res['actual']:<11} | {res['pred']:<11} | {icon:<7} | {res['Fail']:>5.2f}  | {res['Bump']:>5.2f}  | {res['z_anoxia']:>5.2f}  | {res['z_sow']:>5.2f}")
+        # 1. Determine Reality
+        actual_res = subset['target_residual'].mean()
+        status = "Normal"
+        if actual_res < -50: status = "CRASH"
+        if actual_res > 50: status = "BUMPER"
 
-    # Summary
-    df_res = pd.DataFrame(results)
-    recent = df_res[df_res['year'] >= 2000]
-    print("\n=======================================================")
-    print(f"Total Accuracy (1981-2024): {df_res['success'].mean():.1%}")
-    print(f"Recent Accuracy (2000-2024): {recent['success'].mean():.1%}")
-    print("=======================================================")
+        # 2. Get Signals
+        g_fail = subset['Global_Failure'].mean()
+        g_bump = subset['Global_Bumper'].mean()
 
-    # Forensic 2013 vs 2014
-    y13 = df_res[df_res['year'] == 2013].iloc[0]
-    y14 = df_res[df_res['year'] == 2014].iloc[0]
+        # 3. Apply Smarter Logic
+        pred = "Normal"
 
-    print(f"\n2013 (Crash) -> Fail: {y13['Fail']:.2f}, Anoxia: {y13['z_anoxia']:.2f}, Sowing: {y13['z_sow']:.2f}")
-    print(f"2014 (Bumper)-> Fail: {y14['Fail']:.2f}, Anoxia: {y14['z_anoxia']:.2f}, Sowing: {y14['z_sow']:.2f}")
+        # RULE 1: The Hard Cliff (Massive Stress = Death)
+        if g_fail > 1.25:
+            pred = "CRASH"
 
+        # RULE 2: The Fragile Zone (Moderate Stress + No Recovery = Death)
+        elif g_fail > 0.5 and g_bump < 0.2:
+            pred = "CRASH"
+
+        # RULE 3: The Clean Win (High Growth + Low Stress = Bumper)
+        elif g_bump > 0.8 and g_fail < 0.4:
+            pred = "BUMPER"
+
+        # -------------------------
+
+        match = "✅" if status == pred else "❌"
+        if match == "✅": correct_count += 1
+
+        print(f"{year:<5} | {status:<10} | {g_fail:>6.2f} (Z)     | {g_bump:>6.2f} (Z)     | {match}")
+    print("-" * 85)
+    print(f"Accuracy: {correct_count}/{len(years_of_interest)} ({correct_count/len(years_of_interest):.1%})")
 
 if __name__ == "__main__":
     run_analysis()
