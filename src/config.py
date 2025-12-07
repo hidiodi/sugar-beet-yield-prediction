@@ -153,7 +153,7 @@ FEATURE_ENGINEERING_CONFIG = {
         'SATELLITE_FEATURES_CSV': DATA_DIR / '03_processed/satellite_features_districts_2001-2024.csv',
         'GEOJSON_DISTRICTS': DATA_DIR / '01_raw/districts_official.geojson',
         'ECMWF_FORECAST_FEATURES_CSV': DATA_DIR / '02_intermediate/ecmwf51_forecast_features_BY_MEMBER.csv',
-        'DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather',
+        'DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather', #we cant use this, this is not know in March!!!
         'WALKFORWARD_FORECAST_CSV': DATA_DIR / '05_model_input/wofost_walkforward/final_honest_forecasts.csv', #technical trend model
         'WOFOST_ENSEMBLE_CSV': DATA_DIR / '06_model_output/multi_year_final/forecast_ensemble_results_raw.csv', #actual wofost yield output
         'WOFOST_METRICS_CSV': DATA_DIR / '06_model_output/multi_year_final/forecast_extreme_weather_metrics.csv', #actual wofost weather output
@@ -181,6 +181,7 @@ FEATURE_ENGINEERING_CONFIG = {
 #Residual XGboost model config
 XGBOOST_TRAINING_CONFIG = {
     'DATA_PATH': DATA_DIR / '05_model_input/stage1_preseason_features.csv',
+    'HEAT_DAY_DIR': DATA_DIR / '02_intermediate/predicted_heat_stress_march.csv',  # forecasted heat days
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models',
     'FEATURE_COLS': [
         # --- 1. The Core Physics (V14 Logic) ---
