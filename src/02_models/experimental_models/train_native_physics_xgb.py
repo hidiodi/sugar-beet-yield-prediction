@@ -19,6 +19,7 @@ LOG_LEVEL = logging.INFO
 OUTPUT_DIR = config.DATA_DIR / '06_model_output'
 MODEL_DIR = Path('src/models/native_physics_comparison')
 DATA_PATH = config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
+HEAT_PATH = config.XGBOOST_TRAINING_CONFIG['HEAT_DAY_DIR']
 
 # --- PARAMS (Kept consistent) ---
 XGB_PARAMS_V2 = {  # V2 (Anchored)
@@ -50,8 +51,18 @@ def load_data():
     df['residual_target'] = df['kreisYield'] - df['final_corrected_forecast']
 
     # Global Context
-    df['Global_Water_Balance'] = df.groupby('year')['summer_water_balance_anomaly'].transform('mean')
-    df['Global_Heat'] = df.groupby('year')['summer_days_tmax_gt_30c'].transform('mean')
+    df['Global_Water_Balance'] = df.groupby('year')['summer_water_balance_anomaly'].transform('mean') #is this truly leak proof? it should be
+
+
+    #df['Global_Heat'] = df.groupby('year')['summer_days_tmax_gt_30c'].transform('mean') # uses the true heat days not the forecast
+
+
+    if HEAT_PATH.exists():
+        trend_df = pd.read_csv(HEAT_PATH)[['year', 'district_no', 'predicted_heat_days']]
+        df = pd.merge(df, trend_df, on=['year', 'district_no'], how='left')
+
+        #year,district_no,predicted_heat_days
+    df['Global_Heat'] = df.groupby('year')['predicted_heat_days'].transform('mean')
 
     if 'summer_solar_rad_anomaly_forecast' in df.columns:
         df['summer_solar_rad_anomaly_forecast'] = df['summer_solar_rad_anomaly_forecast'].fillna(0)
