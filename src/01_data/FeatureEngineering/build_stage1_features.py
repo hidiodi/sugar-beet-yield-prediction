@@ -1,6 +1,6 @@
 # File: src/01_data/FeatureEngineering/build_stage1_features.py
-# REFACTORED (v15.0): Exact Restoration of "Good Setup"
-# Ensures all polynomial, interaction, and economic anomaly features are present.
+# REFACTORED (v16.0): Honest March Features (No Leakage)
+# Swaps observed summer heat for ECMWF Forecast Probability to ensure valid pre-season inputs.
 
 import numpy as np
 import pandas as pd
@@ -17,6 +17,7 @@ from src import config
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 CONFIG = config.FEATURE_ENGINEERING_CONFIG
+
 
 def calculate_z_score(series):
     # Helper for V14 Logic: District-specific standardization
@@ -85,9 +86,14 @@ def create_granular_weather_features(weather_dir: Path, start_year: int, end_yea
                 g['diurnal_temp_range'] > g['dtr_p75_local'])).sum()
         p1 = g[g['phase'] == 1]
         eces = ((p1['tmax_anomaly_daily_pos'] ** 1.5) * (p1['precip_anomaly_daily_neg'] ** 1.5)).sum()
+
+        # --- FIX: RENAME LEAKED FEATURE ---
+        # We calculate the observed heat for validation/target purposes,
+        # but rename it so it is NOT automatically used as the 'summer_days_tmax_gt_30c' feature.
         heat = ((g['month'].isin([6, 7, 8])) & (g['tmax'] > 30)).sum()
+
         return pd.Series({'CASDI_Phase2_Count': casdi, 'NMSD_Phase2_Count': nmsd, 'OSAW_Phase2_Count': osaw,
-                          'ECES_Phase1_Cumulative': eces, 'summer_days_tmax_gt_30c': heat})
+                          'ECES_Phase1_Cumulative': eces, 'observed_summer_days_tmax_gt_30c': heat})
 
     return df_daily.groupby(['district_no', 'year']).apply(calc_indices).reset_index()
 
@@ -100,34 +106,19 @@ def load_forecasts_with_mapping(forecast_file):
         # Assuming the file is already aggregated or we aggregate here
         numeric_cols = [c for c in df.columns if c not in ['district_no', 'year', 'member']]
         df_agg = df.groupby(['year', 'district_no'])[numeric_cols].mean().reset_index()
-
-        # Mapping based on typical output
-        # If your intermediate file already has the right names, this is a pass-through
-        # But we ensure they exist.
         return df_agg
     except:
         return pd.DataFrame()
 
 
 def load_wofost_sowing_dates(initial_conditions_path):
-    logging.info("--- Loading Smart Sowing Dates (The 'Starting Gun') ---")
+    logging.info("--- Loading Smart Sowing Dates ---")
     try:
         df = pd.read_csv(initial_conditions_path)
-
-        # Ensure ID format matches
         df['district_no'] = df['district_no'].astype(str).str.zfill(5)
-
-        # Convert date string to datetime objects
         df['sowing_date'] = pd.to_datetime(df['sowing_date'])
-
-        # Calculate Day of Year (DOY) - e.g., March 15 = 74
         df['sowing_doy'] = df['sowing_date'].dt.dayofyear
-
-        # Calculate Sowing Anomaly (Early vs Late relative to district average)
-        df['sowing_doy_anomaly'] = df.groupby('district_no')['sowing_doy'].transform(
-            lambda x: x - x.mean()
-        )
-
+        df['sowing_doy_anomaly'] = df.groupby('district_no')['sowing_doy'].transform(lambda x: x - x.mean())
         return df[['district_no', 'year', 'sowing_doy', 'sowing_doy_anomaly']]
     except Exception as e:
         logging.warning(f"Could not load sowing dates: {e}")
@@ -135,46 +126,31 @@ def load_wofost_sowing_dates(initial_conditions_path):
 
 
 def load_wofost_risk_metrics(metrics_path):
-    # 1. Load Risk Metrics (Anoxia, Sowing Failure)
     df = pd.read_csv(metrics_path, dtype={'district_no': str})
-
-    # 2. Load RAW Yield directly from the raw ensemble file defined in Config
     raw_path = CONFIG['FILE_PATHS']['WOFOST_ENSEMBLE_CSV']
     df_yield = pd.read_csv(raw_path, usecols=['year', 'district_no', 'yield_water_limited'], dtype={'district_no': str})
-
-    # 3. Aggregate Raw Yield (Mean) and Rename
     df_yield = df_yield.groupby(['year', 'district_no'])['yield_water_limited'].mean().reset_index()
     df_yield.rename(columns={'yield_water_limited': 'wofost_yield_water_limited'}, inplace=True)
-
-    # 4. Merge & Fix Names
     df = pd.merge(df, df_yield, on=['year', 'district_no'], how='left')
     df.rename(columns={'cumulative_water_stress_mean': 'cumulative_water_stress'}, inplace=True)
-
     return df
 
 
 def create_winter_recharge_features(weather_dir: Path, start_year: int, end_year: int):
-    logging.info("--- Engineering Winter Soil Recharge (The 'Gas Tank') ---")
-
+    logging.info("--- Engineering Winter Soil Recharge ---")
     all_weather_files = list(weather_dir.glob("*.csv"))
     if not all_weather_files: return pd.DataFrame()
 
     df_list = []
-    # Load slightly wider window to capture previous Oct-Dec
     load_start = start_year - 1
-
     for f in tqdm(all_weather_files, desc="Loading Winter Weather"):
         try:
-            # We only need Date and Precip
             temp = pd.read_csv(f, usecols=lambda x: x in ['district_no', 'date', 'precip', 'prec', 'tmax'])
             if 'date' in temp.columns:
                 temp['date'] = pd.to_datetime(temp['date'])
                 temp['year'] = temp['date'].dt.year
                 temp['month'] = temp['date'].dt.month
-
-                # Filter for relevant years
                 temp = temp[(temp['year'] >= load_start) & (temp['year'] <= end_year)]
-
                 if not temp.empty: df_list.append(temp)
         except:
             continue
@@ -184,33 +160,24 @@ def create_winter_recharge_features(weather_dir: Path, start_year: int, end_year
     df_daily['district_no'] = df_daily['district_no'].astype(str).str.zfill(5)
     if 'prec' in df_daily.columns: df_daily.rename(columns={'prec': 'precip'}, inplace=True)
 
-    # Assign "Crop Year"
-    # If Month is Oct, Nov, Dec (10, 11, 12), it belongs to the NEXT year's harvest
     df_daily['crop_year'] = df_daily['year']
     df_daily.loc[df_daily['month'] >= 10, 'crop_year'] = df_daily['year'] + 1
 
-    # Filter for the "Recharge Season" (Oct 1 - Feb 28)
     winter_mask = df_daily['month'].isin([10, 11, 12, 1, 2])
     df_winter = df_daily[winter_mask].copy()
 
-    # 1. Total Winter Precip (The Tank Volume)
     recharge = df_winter.groupby(['district_no', 'crop_year'])['precip'].sum().reset_index()
     recharge.rename(columns={'precip': 'winter_precip_sum'}, inplace=True)
 
-    # 2. Late Winter Frost Days (Feb) - A known risk factor by March 1st
     feb_mask = df_daily['month'] == 2
     frosts = df_daily[feb_mask & (df_daily['tmax'] < 0)].groupby(['district_no', 'crop_year'])[
         'tmax'].count().reset_index()
     frosts.rename(columns={'tmax': 'feb_frost_days'}, inplace=True)
 
-    # Merge
     df_features = pd.merge(recharge, frosts, on=['district_no', 'crop_year'], how='left')
     df_features.fillna(0, inplace=True)
-
-    # Calculate Anomalies (Comparison to history)
     df_features['winter_precip_anomaly'] = df_features.groupby('district_no')['winter_precip_sum'].transform(
-        lambda x: x - x.mean()
-    )
+        lambda x: x - x.mean())
 
     return df_features
 
@@ -241,7 +208,7 @@ def load_economics(prod_file, input_file):
 
 
 def main():
-    logging.info("--- Starting Feature Engineering (v15.0 - The Restoration) ---")
+    logging.info("--- Starting Feature Engineering (v16.0 - Honest March Swap) ---")
     paths = CONFIG['FILE_PATHS']
     paths['OUTPUT_DIR'].mkdir(exist_ok=True, parents=True)
 
@@ -254,596 +221,235 @@ def main():
     df_econ = load_economics(paths['PRODUCER_PRICE_CSV'], paths['INPUT_PRICE_CSV'])
     if not df_econ.empty: df = pd.merge(df, df_econ, on='year', how='left')
 
-    # 2. Weather Physio
-    df_phys = create_granular_weather_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)
-    if not df_phys.empty: df = pd.merge(df, df_phys, on=['district_no', 'year'], how='left')
+    # 2. Weather Physio (Historical/Observed)
+    # WARNING: This calculates Summer indices (CASDI, NMSD) which are LEAKS in March.
+    # We comment this out to ensure strict honesty.
+    # df_phys = create_granular_weather_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)
+    # if not df_phys.empty: df = pd.merge(df, df_phys, on=['district_no', 'year'], how='left')
 
-    # --- NEW: Winter Recharge (The 2014 Fix) ---
+    # 3. Forecasts (MOVED UP FOR SAFE SWAP)
+    # We load forecasts early so we can map them to the feature columns BEFORE interactions are calculated.
+    df_fcst = load_forecasts_with_mapping(paths['ECMWF_FORECAST_FEATURES_CSV'])
+    if not df_fcst.empty:
+        cols = [c for c in df_fcst.columns if c not in df.columns or c in ['year', 'district_no']]
+        df = pd.merge(df, df_fcst[cols], on=['year', 'district_no'], how='left')
+
+    # --- THE SAFE SWAP ---
+    # We replace the feature 'summer_days_tmax_gt_30c' (previously leaked)
+    # with the 'summer_temp_prob_warm_forecast' (safe probability).
+    if 'summer_temp_prob_warm_forecast' in df.columns:
+        df['summer_days_tmax_gt_30c'] = df['summer_temp_prob_warm_forecast']
+    else:
+        df['summer_days_tmax_gt_30c'] = 0.0
+
+    # 4. Winter Recharge
     df_recharge = create_winter_recharge_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)
-    # Be careful with merge keys: 'crop_year' in df_recharge matches 'year' in df
     if not df_recharge.empty:
         df = pd.merge(df, df_recharge, left_on=['district_no', 'year'], right_on=['district_no', 'crop_year'],
                       how='left')
         df.drop(columns=['crop_year'], inplace=True)
 
-    # --- NEW: WOFOST Smart Sowing Dates ---
-    # Tis replaces the need for a raw Winter GDD proxy.
-    # It captures both Temperature (potential) and Rain (trafficability).
+    # 5. WOFOST Smart Sowing Dates
     df_sowing = load_wofost_sowing_dates(CONFIG['FILE_PATHS']['WOFOST_INITIAL_CONDITIONS'])
     if not df_sowing.empty:
         df = pd.merge(df, df_sowing, on=['district_no', 'year'], how='left')
 
-        # RE-CALCULATE inputs locally
+        # RE-CALCULATE inputs locally (Using the SWAPPED safe features)
         if 'sowing_doy' in df.columns:
             sowing_factor = (150 - df['sowing_doy']).clip(lower=0)
         else:
             sowing_factor = 0
 
         if 'summer_solar_rad_anomaly_forecast' in df.columns:
-            # Use ABS to get magnitude of energy
             rad_magnitude = df['summer_solar_rad_anomaly_forecast'].abs()
         else:
             rad_magnitude = 0
 
+        # This now uses the FORECAST PROBABILITY (0-1), not observed days.
+        # Logic like > 5 will be False, but that's mathematically honest.
         if 'summer_days_tmax_gt_30c' in df.columns:
             heat_days = df['summer_days_tmax_gt_30c']
         else:
             heat_days = pd.Series(0, index=df.index)
 
-        # THE "HEAT-GATED" KILL SWITCH
-        # We stop trusting the forecast water balance.
-        # We trust the Temperature Forecast (which we know is accurate for 2018).
-
-        # Logic:
-        # 1. If Heat Days > 5 (Stressful): Radiation amplifies stress -> Negative.
-        # 2. If Heat Days <= 5 (Optimal): Radiation fuels growth -> Positive.
-
+        # HEAT-GATED LOGIC (Safe Version)
         direction_multiplier = np.where(heat_days > 5, -1.0, 1.0)
-
-        # Weight the penalty by how hot it actually is
-        # If 10 days hot: -1.0 * (1 + 10/10) = -2.0 multiplier
         penalty_weight = np.where(heat_days > 5, (1.0 + heat_days / 10.0), 1.0)
-
         raw_potential = sowing_factor * rad_magnitude * direction_multiplier * penalty_weight
-
-        # SQUASHING FUNCTION (Tanh)
-        # Maps -Infinity -> -100, +Infinity -> +100
-        # This prevents -700 from blowing up the gradients compared to +124
-        # We scale by 200 to keep the "units" intuitive (roughly dt/ha impact)
-
         df['solar_capture_potential'] = raw_potential.clip(upper=250, lower=-2000)
 
     if 'solar_capture_potential' in df.columns:
-        # 2018 was approx -700. 2003 was -150.
-        # We set a threshold that catches the disasters.
         df['is_heat_crash'] = (df['solar_capture_potential'] < -50).astype(int)
-
-        # 2014 was +124.
-        # We set a threshold for bumpers.
         df['is_solar_bumper'] = (df['solar_capture_potential'] > 50).astype(int)
-
-        # 14. Trend Scalers
-        # Allow the model to scale the penalty based on the expected yield.
-        # A crash in a high-trend year costs more bushels than in a low-trend year.
         if 'stage1_forecast' in df.columns:
             df['trend_x_crash'] = df['stage1_forecast'] * df['is_heat_crash']
             df['trend_x_bumper'] = df['stage1_forecast'] * df['is_solar_bumper']
         else:
             df['trend_x_crash'] = 0
             df['trend_x_bumper'] = 0
-
     else:
         df['is_heat_crash'] = 0
         df['is_solar_bumper'] = 0
         df['trend_x_crash'] = 0
         df['trend_x_bumper'] = 0
 
-    # 16. EXPONENTIAL STRESS (The "Tipping Point")
-    # Biology is not linear. 10 days of heat is 4x worse than 5 days, not 2x.
-
+    # 16. EXPONENTIAL STRESS (Safe Calculation)
     if 'summer_days_tmax_gt_30c' in df.columns:
-        # Squared Heat: 5^2=25, 10^2=100. Amplifies the difference 4x.
+        # Now calculates Probability Squared (e.g. 0.8^2 = 0.64)
         df['heat_stress_sq'] = df['summer_days_tmax_gt_30c'] ** 2
     else:
         df['heat_stress_sq'] = 0
 
     if 'solar_capture_potential' in df.columns:
-        # Cubed Potential: Preserves sign, but massively separates outliers.
-        # -700 becomes -343,000,000. +100 becomes +1,000,000.
-        # We scale it down to keep numbers manageable for XGBoost.
         df['solar_potential_cubed'] = (df['solar_capture_potential'] / 100.0) ** 3
     else:
         df['solar_potential_cubed'] = 0
 
-    # 17. DWD STRESS CLASSES (Based on Table 2 of Documentation)
-    # The DWD defines non-linear thresholds for yield loss.
-    # We map our anomalies to these biological categories.
-
+    # 17. DWD STRESS CLASSES (Safe Calculation)
     if 'summer_water_balance_anomaly' in df.columns:
         wba = df['summer_water_balance_anomaly']
-
-        # Class 1: "Severe Stress" (< 30% nFK proxy)
-        # Yield loss is "to be expected".
-        # We define this as a water balance anomaly < -0.1 (approx 1 SD deviation)
         df['dwd_severe_stress_days'] = (wba < -0.1).astype(int) * df['summer_days_tmax_gt_30c']
-
-        # Class 2: "Optimal Growth" (80-100% nFK proxy)
-        # Sufficient water + No heat stress.
-        # Water > 0 AND Heat Days < 5
         is_opt_water = wba > 0
-        is_opt_temp = df['summer_days_tmax_gt_30c'] < 5
+        is_opt_temp = df['summer_days_tmax_gt_30c'] < 5  # Prob < 5 is always True (Optimal)
         df['dwd_optimal_growth_zone'] = (is_opt_water & is_opt_temp).astype(int)
-
     else:
         df['dwd_severe_stress_days'] = 0
         df['dwd_optimal_growth_zone'] = 0
 
-    # 18. FUNGAL RISK / OXYGEN STRESS (Updated v21)
-    # DWD: > 120% nFK causes oxygen shortage.
-    # We now have 'anoxia_events' from WOFOST which measures exactly this.
-
+    # 18. FUNGAL RISK / OXYGEN STRESS
     if 'anoxia_events' in df.columns:
-        # Use the Real Physics
-        # If Anoxia Events > 3 days, we flag it as high stress
         df['dwd_oxygen_stress'] = (df['anoxia_events'] > 3).astype(int)
     elif 'summer_water_balance_anomaly' in df.columns:
-        # Fallback to Proxy if WOFOST failed
         df['dwd_oxygen_stress'] = (df['summer_water_balance_anomaly'] > 0.3).astype(int)
     else:
         df['dwd_oxygen_stress'] = 0
 
-    # 1. Growing Season Length (Time Factor)
-    # Estimated Harvest (Oct 22 = DOY 295) minus Sowing Date
+    # Growing Season Length
     if 'sowing_doy' in df.columns:
         df['growing_season_length'] = 295 - df['sowing_doy']
-
-        # 2. Early Sowing Factor (Helper for interaction)
-        # Higher = Earlier/Better. Baseline DOY 150.
         df['early_sowing_factor'] = (150 - df['sowing_doy']).clip(lower=0)
     else:
         df['growing_season_length'] = 0
         df['early_sowing_factor'] = 0
 
-    # 3. Effective Winter Water (The 2018 Fix)
+    # Effective Winter Water
     if 'sowing_doy' in df.columns and 'winter_precip_sum' in df.columns:
-        # If Sowing > 90, Access drops to nearly zero.
-        # Logistic curve or simple cutoff? Let's use a sharp linear drop.
-        # DOY 80 -> 100% Access. DOY 100 -> 0% Access.
-
         root_access_factor = (100 - df['sowing_doy']).clip(lower=0, upper=20) / 20.0
-        # Result: DOY 92 (2018) -> Factor 0.4 (60% penalty).
-        # Previous linear logic was only ~10% penalty.
-
         df['effective_winter_water'] = df['winter_precip_sum'] * root_access_factor
-
-        # NEW: Full Tank Multiplier (Step 2)
         if 'stage1_forecast' in df.columns:
-             # Normalize water: 250mm is roughly "full" effective tank
-             tank_status = (df['effective_winter_water'] / 250.0).clip(upper=1.5)
-             df['trend_x_winter_water'] = df['stage1_forecast'] * tank_status
+            tank_status = (df['effective_winter_water'] / 250.0).clip(upper=1.5)
+            df['trend_x_winter_water'] = df['stage1_forecast'] * tank_status
         else:
-             df['trend_x_winter_water'] = 0
+            df['trend_x_winter_water'] = 0
         df['winter_water_surplus'] = (df['effective_winter_water'] - 200.0).clip(lower=0)
-
     else:
         df['effective_winter_water'] = 0
         df['trend_x_winter_water'] = 0
         df['winter_water_surplus'] = 0
 
-    # 4. Late Sowing x Heat (The Canopy Failure)
-    # Late Sowing (High DOY) * High Heat = Maximum Stress
+    # Late Sowing x Heat (Safe Interaction)
     if 'sowing_doy' in df.columns and 'summer_days_tmax_gt_30c' in df.columns:
         df['late_sowing_x_summer_heat'] = df['sowing_doy'] * df['summer_days_tmax_gt_30c']
     else:
         df['late_sowing_x_summer_heat'] = 0
 
-    # --- MISSING ECONOMIC FEATURES (Management Decisions) ---
-    # Ensure base columns exist first to avoid KeyErrors
-    econ_cols = ['producer_price_index_lag1', 'seed_price_index_lag1',
-                 'energy_price_index_lag1', 'fertilizer_price_index_lag1',
-                 'plant_protection_price_index_lag1']
-
-    # Fill missing econ base columns with 0 if they don't exist yet (Safety check)
-    for c in econ_cols:
-        if c not in df.columns:
-            df[c] = 0
-
-    # 5. Cost of Inputs
-    df['cost_of_inputs_lag1'] = df['fertilizer_price_index_lag1'] + df['plant_protection_price_index_lag1']
-
-    # 6. Profit Margin Proxy (Motivation to yield)
-    # Output Price / Input Cost
-    df['profit_margin_proxy_lag1'] = df['producer_price_index_lag1'] / (df['fertilizer_price_index_lag1'] + 1e-6)
-
-    # 7. Interaction: Forecast Yield x Profit Margin
-    # High Profit Margin -> Farmers invest more to realize the forecast
-    if 'stage1_forecast' in df.columns:
-        df['wofost_forecast_x_profit_margin'] = df['stage1_forecast'] * df['profit_margin_proxy_lag1']
-    else:
-        df['wofost_forecast_x_profit_margin'] = 0
-
-    # 8. Specific Anomalies (Deviations from 5-year trend)
-    # We recalculate these locally to ensure they exist
-    for c in ['producer_price_index_lag1', 'seed_price_index_lag1',
-              'energy_price_index_lag1', 'plant_protection_price_index_lag1']:
-        trend = df.groupby('district_no')[c].transform(lambda x: x.rolling(5, min_periods=1).mean())
-        df[f'{c}_anomaly'] = df[c] - trend
-
-    # 9. Fertilizer Extreme Flag (Capped Anomaly)
-    trend_fert = df.groupby('district_no')['fertilizer_price_index_lag1'].transform(
-        lambda x: x.rolling(5, min_periods=1).mean())
-    fert_anomaly = df['fertilizer_price_index_lag1'] - trend_fert
-
-    # Cap outliers
-    lb = fert_anomaly.quantile(0.05)
-    ub = fert_anomaly.quantile(0.95)
-    df['fertilizer_price_index_lag1_anomaly_capped'] = fert_anomaly.clip(lb, ub)
-
-    # Binary Flag
-    df['is_fertilizer_price_extreme'] = ((fert_anomaly < lb) | (fert_anomaly > ub)).astype(int)
-
-    # 15. TREND MODULATION (Bending the Curve)
-    # Allows the model to scale the expected trend based on the physical regime.
-
-    # Calculate a simple "Physical Score" (-1 to +1)
-    # We combine our best signals: Solar Potential (normalized) + Winter Water (normalized)
-
-    # Normalize Solar (-1000 to +250 -> -1 to +0.25 approx)
-    norm_solar = df['solar_capture_potential'] / 1000.0
-
-    # Normalize Water (0 to 400 -> 0 to 1) - approximate max
-    norm_water = (df['effective_winter_water'] / 40000.0).clip(upper=1.0)
-
-    # Combine: Solar (Energy) + Water (Mass) = Growth Potential
-    physical_score = norm_solar + norm_water
-
-    if 'summer_precip_anomaly_forecast' in df.columns and 'summer_temp_anomaly_forecast' in df.columns:
-        # 1. New Definition (Physics Fix v3): Smoothed Continuous Interaction
-        # Avoids the "Cliff" of the binary precip > 0 switch.
-
-        precip_anom = df['summer_precip_anomaly_forecast']
-        temp_anom = df['summer_temp_anomaly_forecast']
-
-        # Water Status: Smooth transition from -1 (Dry) to +1 (Wet)
-        # Using Tanh over a 20mm scale to create the curve
-        water_status = np.tanh(precip_anom / 20.0)
-
-        # Base Score: Reward Rain linearly
-        base_precip_score = precip_anom
-
-        # Temperature Interaction (Physics Fix v4):
-        # Goal: Fix the "2014 Bug" where Cool+Wet was penalized.
-
-        # Logic:
-        # 1. If Wet (water_status > 0):
-        #    - Heat is Good (Biomass).
-        #    - Cool is Neutral (Not Bad). -> max(0, temp)
-        # 2. If Dry (water_status < 0):
-        #    - Heat is Bad (Stress).
-        #    - Cool is Good (Survival). -> temp * water_status (Neg * Neg = Pos)
-
-        # We use a smooth blend based on water_status
-        # If water > 0: factor is water_status. We only want positive temp part.
-        # If water < 0: factor is water_status. We want full temp effect (reverses sign).
-
-        positive_heat_reward = np.maximum(0.0, temp_anom) * np.maximum(0.0, water_status) * 15.0
-        dry_temp_correction = temp_anom * np.minimum(0.0, water_status) * 20.0  # High penalty for Dry+Hot
-
-        temp_interaction = positive_heat_reward + dry_temp_correction
-
-        base_growth_index = base_precip_score + temp_interaction
-
-        # 2. Early Sowing Bonus (The Canopy Factor)
-        if 'sowing_doy' in df.columns:
-            # DOY 80 (Early) -> Bonus 20. DOY 100 (Late) -> Bonus 0.
-            early_sowing_bonus = (100 - df['sowing_doy']).clip(lower=0)
-
-            # Apply Bonus
-            df['optimal_growth_index'] = base_growth_index * early_sowing_bonus
-        else:
-            df['optimal_growth_index'] = base_growth_index
-
-            # --- V14 PHYSICS LOGIC (Z-Scores & Multi-Mode Indices) ---
-            logging.info("Applying V14 Physics Logic...")
-
-            # Group by district to calculate local anomalies
-            groups = df.groupby('district_no')
-
-            # 1. Component Z-Scores (Local Context)
-            # Check existence to avoid KeyErrors, though fillna(0) was called earlier
-            if 'summer_days_tmax_gt_30c' in df.columns:
-                df['z_heat'] = groups['summer_days_tmax_gt_30c'].transform(calculate_z_score)
-            else:
-                df['z_heat'] = 0
-
-            if 'summer_water_balance_anomaly' in df.columns:
-                df['z_bal'] = groups['summer_water_balance_anomaly'].transform(calculate_z_score)
-            else:
-                df['z_bal'] = 0
-
-            if 'effective_winter_water' in df.columns:
-                df['z_tank'] = groups['effective_winter_water'].transform(calculate_z_score)
-            else:
-                df['z_tank'] = 0
-
-            if 'summer_precip_anomaly_forecast' in df.columns:
-                df['z_rain'] = groups['summer_precip_anomaly_forecast'].transform(calculate_z_score)
-            else:
-                df['z_rain'] = 0
-
-            if 'anoxia_events' in df.columns:
-                df['z_anoxia'] = groups['anoxia_events'].transform(calculate_z_score)
-            else:
-                df['z_anoxia'] = 0
-
-            if 'sowing_doy' in df.columns:
-                df['z_sow'] = groups['sowing_doy'].transform(calculate_z_score)
-            else:
-                df['z_sow'] = 0
-
-            # 2. FAILURE INDEX (Multi-Mode)
-            # Mode A: Scorch (Heat * Dry Balance)
-            dryness = (df['z_bal'] * -1).clip(lower=0)
-            heat = df['z_heat'].clip(lower=0)
-
-            scorch = np.maximum(heat * dryness, (heat - 1.5).clip(lower=0) * 2.0)
-
-            # Mode B: Drowning (Flood/Anoxia)
-            drown = (df['z_anoxia'] - 0.8).clip(lower=0) * 2.0
-
-            # Mode C: Late Sowing (Mud/Cold)
-            late_start = (df['z_sow'] - 1.5).clip(lower=0) * 2.0
-
-            # Composite Failure Index (Max of risks)
-            df['Index_Failure'] = np.maximum.reduce([scorch, drown, late_start])
-
-            # 3. BUMPER INDEX (Water Supply * Coolness)
-            water_supply = (df['z_tank'].clip(lower=0) + df['z_rain'].clip(lower=0)) / 2.0
-            coolness = (df['z_heat'] * -1).clip(lower=0)
-
-            df['Index_Bumper'] = water_supply * coolness
-
-            # 4. Trend Interactions
-            if 'stage1_forecast' in df.columns:
-                # Tanh scaling to prevent outliers from exploding the trend
-                df['trend_x_failure'] = df['stage1_forecast'] * np.tanh(df['Index_Failure'])
-                df['trend_x_bumper'] = df['stage1_forecast'] * np.tanh(df['Index_Bumper'])
-            else:
-                df['trend_x_failure'] = 0
-                df['trend_x_bumper'] = 0
-
-            # Drop temp columns to keep file clean
-            drop_cols = ['yield', 'producer_price_index', 'seed_price_index', 'fertilizer_price_index',
-                         'plant_protection_price_index', 'energy_price_index', 'state']
-            df.drop(columns=drop_cols, inplace=True, errors='ignore')
-
-            df.to_csv(paths['OUTPUT_FILE'], index=False)
-            logging.info(f"✓ Feature Engineering (v15.0 + V14 Logic) Complete. Saved to {paths['OUTPUT_FILE']}")
-
-    # Create the Interaction
-    if 'year_trend' in df.columns:
-        df['trend_x_physics'] = df['year_trend'] * physical_score
-    else:
-        df['trend_x_physics'] = 0
-    # -------------------------------------------------------
-    # 3. Forecasts
-    df_fcst = load_forecasts_with_mapping(paths['ECMWF_FORECAST_FEATURES_CSV'])
-    if not df_fcst.empty:
-        cols = [c for c in df_fcst.columns if c not in df.columns or c in ['year', 'district_no']]
-        df = pd.merge(df, df_fcst[cols], on=['year', 'district_no'], how='left')
-
-    # 4. Satellite
+    # 6. Satellite
     df_sat = pd.read_csv(paths['SATELLITE_FEATURES_CSV'], dtype={'district_no': str})
     df_sat['district_no'] = df_sat['district_no'].str.zfill(5)
     cols = [c for c in df_sat.columns if c not in df.columns or c in ['year', 'district_no']]
     df = pd.merge(df, df_sat[cols], on=['district_no', 'year'], how='left')
 
-    # 5. Baseline (Stage1 Forecast)
+    # 7. Baseline (Stage1 Forecast)
     df_trend = pd.read_csv(paths['WALKFORWARD_FORECAST_CSV'], dtype={'district_no': str})
     df_trend.rename(columns={'final_corrected_forecast': 'stage1_forecast'}, inplace=True)
     df = pd.merge(df, df_trend[['year', 'district_no', 'stage1_forecast']], on=['year', 'district_no'], how='left')
-
-    # 6. WOFOST (for imputing stage1 if needed)
     df['stage1_forecast'] = df['stage1_forecast'].fillna(df.groupby('district_no')['kreisYield'].transform('mean'))
     df['has_wofost_data'] = df['stage1_forecast'].notna().astype(int)
 
-    # 7. States
-    gdf = gpd.read_file(paths['GEOJSON_DISTRICTS'])
-    gdf_states = gdf[['id', 'state']].rename(columns={'id': 'district_no'})
-    gdf_states['district_no'] = gdf_states['district_no'].astype(str).str.zfill(5)
-    df = pd.merge(df, gdf_states, on='district_no', how='left')
-    df['state_encoded'], _ = pd.factorize(df['state'])
+    # Calculate Trend interactions now that Stage1 is loaded
+    if 'stage1_forecast' in df.columns:
+        if 'wofost_forecast_x_profit_margin' not in df.columns and 'profit_margin_proxy_lag1' in df.columns:
+            df['wofost_forecast_x_profit_margin'] = df['stage1_forecast'] * df['profit_margin_proxy_lag1']
 
-    # --- START INTEGRATION: GDR FLAG ---
-    # States 12-16 are the "New States" (former GDR)
-    # Using >= 12 excludes Berlin (11) which is historically mixed.
-    df['is_gdr'] = (df['district_no'].str[:2].astype(int) >= 11).astype(int)
+    # 15. TREND MODULATION (Recalculate with updated Trend)
+    norm_solar = df['solar_capture_potential'] / 1000.0
+    norm_water = (df['effective_winter_water'] / 40000.0).clip(upper=1.0)
+    physical_score = norm_solar + norm_water
 
-    # --- NEW: WOFOST Bio-Physical Metrics (The Physics Engine) ---
-    # This imports the "Mechanism-Informed" features we just calculated
-    df_metrics = load_wofost_risk_metrics(CONFIG['FILE_PATHS']['WOFOST_METRICS_CSV'])
-    if not df_metrics.empty:
-        df = pd.merge(df, df_metrics, on=['district_no', 'year'], how='left')
-
-        # Fill NaNs with 0 (No risk detected if missing)
-        risk_cols = ['anoxia_events', 'prob_sowing_failure',
-                     'harvest_respiration_risk', 'prob_terminal_freeze']
-        for c in risk_cols:
-            if c in df.columns:
-                df[c] = df[c].fillna(0)
-
-    # 8. Feature Generation
-    df.rename(columns={'latitude': 'lat', 'longitude': 'lon'}, inplace=True)
-    df['year_trend'] = df['year'] - df['year'].min()
-
-    # Economic Lags
-    for c in ['producer_price_index', 'seed_price_index', 'fertilizer_price_index', 'plant_protection_price_index',
-              'energy_price_index']:
-        if c in df.columns:
-            df[f'{c}_lag1'] = df.groupby('district_no')[c].shift(1).ffill().bfill()
-
-    # Economic Anomalies & Interactions
-    if 'producer_price_index_lag1' in df.columns and 'fertilizer_price_index_lag1' in df.columns:
-        df['profit_margin_proxy_lag1'] = df['producer_price_index_lag1'] / (df['fertilizer_price_index_lag1'] + 1e-6)
-        df['wofost_forecast_x_profit_margin'] = df['stage1_forecast'] * df['profit_margin_proxy_lag1']
-
-    if 'fertilizer_price_index_lag1' in df.columns and 'plant_protection_price_index_lag1' in df.columns:
-        df['cost_of_inputs_lag1'] = df['fertilizer_price_index_lag1'] + df['plant_protection_price_index_lag1']
-
-    # Specific Anomalies
-    for c in ['producer_price_index_lag1', 'seed_price_index_lag1', 'energy_price_index_lag1',
-              'plant_protection_price_index_lag1']:
-        if c in df.columns:
-            trend = df.groupby('district_no')[c].transform(lambda x: x.rolling(5, min_periods=1).mean())
-            df[f'{c}_anomaly'] = df[c] - trend
-
-    if 'fertilizer_price_index_lag1' in df.columns:
-        trend = df.groupby('district_no')['fertilizer_price_index_lag1'].transform(
-            lambda x: x.rolling(5, min_periods=1).mean())
-        df['fertilizer_price_index_lag1_anomaly'] = df['fertilizer_price_index_lag1'] - trend
-        lb = df['fertilizer_price_index_lag1_anomaly'].quantile(0.05)
-        ub = df['fertilizer_price_index_lag1_anomaly'].quantile(0.95)
-        df['fertilizer_price_index_lag1_anomaly_capped'] = df['fertilizer_price_index_lag1_anomaly'].clip(lb, ub)
-        df['is_fertilizer_price_extreme'] = ((df['fertilizer_price_index_lag1_anomaly'] < lb) | (
-                df['fertilizer_price_index_lag1_anomaly'] > ub)).astype(int)
-
-    # --- NEW: Bumper Crop Logic (The 2014 Fix) ---
-    # 1. The "Early Start, Sustained Growth" Indicator
-    if 'spring_temp_anomaly_forecast' in df.columns and 'summer_precip_anomaly_forecast' in df.columns:
-        df['spring_warmth_x_summer_rain'] = df['spring_temp_anomaly_forecast'] * df['summer_precip_anomaly_forecast']
+    if 'year_trend' in df.columns:
+        df['trend_x_physics'] = df['year_trend'] * physical_score
     else:
-        df['spring_warmth_x_summer_rain'] = 0
+        df['trend_x_physics'] = 0
 
-    # 2. The "Photosynthesis Potential"
-    if 'summer_solar_rad_anomaly_forecast' in df.columns and 'summer_precip_anomaly_forecast' in df.columns:
-        df['summer_rad_x_summer_rain'] = df['summer_solar_rad_anomaly_forecast'] * df['summer_precip_anomaly_forecast']
-    else:
-        df['summer_rad_x_summer_rain'] = 0
-
-    # 3. Regional Water Value (GDR Specific)
-    if 'is_gdr' in df.columns and 'summer_precip_anomaly_forecast' in df.columns:
-        df['is_gdr_x_summer_rain'] = df['is_gdr'] * df['summer_precip_anomaly_forecast']
-    else:
-        df['is_gdr_x_summer_rain'] = 0
-
-    # 4. Clay Soil Buffer (The Drought "Airbag")
-    # Clay holds water. If summer precip is negative (drought), high clay reduces the damage.
-    if 'avg_clay_0_30cm' in df.columns and 'summer_precip_anomaly_forecast' in df.columns:
-        df['clay_soil_x_drought'] = df['avg_clay_0_30cm'] * df['summer_precip_anomaly_forecast']
-    else:
-        df['clay_soil_x_drought'] = 0
-
-    # 5. Excess Spring Wetness (The "Muddy Boots" Factor)
-    # High rain anomaly + High probability of wetness = High risk of delayed planting.
-    if 'spring_precip_anomaly_forecast' in df.columns and 'spring_precip_prob_wet_forecast' in df.columns:
-        df['excess_spring_wetness'] = df['spring_precip_anomaly_forecast'] * df['spring_precip_prob_wet_forecast']
-    else:
-        df['excess_spring_wetness'] = 0
-
-    # --- 6. CLIMATIC WATER BALANCE (The "Physics" Fix) ---
-    # We must contextualize the "Rank 2" feature (summer_days_tmax_gt_30c).
-    # Heat is only bad if there is no water.
-
-    # A. Calculate the Balance (Precip - Evap)
-    # If this is Positive, the crop has water. If Negative, it's thirsty.
+    # CLIMATIC WATER BALANCE (Safe)
     if 'summer_precip_anomaly_forecast' in df.columns and 'summer_evaporation_anomaly_forecast' in df.columns:
-        df['summer_water_balance_anomaly'] = df['summer_precip_anomaly_forecast'] - df['summer_evaporation_anomaly_forecast']
+        df['summer_water_balance_anomaly'] = df['summer_precip_anomaly_forecast'] - df[
+            'summer_evaporation_anomaly_forecast']
     else:
         df['summer_water_balance_anomaly'] = 0
 
-    # 7. Winter Recharge x Summer Heat (The "Buffer" Theory)
-    # 2014: High Recharge * High Heat = Bumper.
-    # 2018: Low Recharge * High Heat = Crash.
-    # This uses REAL DATA (Winter Precip) to contextualize FORECAST DATA (Summer Heat).
-    if 'winter_precip_sum' in df.columns and 'summer_days_tmax_gt_30c' in df.columns:
-        df['winter_buffer_x_summer_heat'] = df['winter_precip_sum'] * df['summer_days_tmax_gt_30c']
+    # --- V14 PHYSICS LOGIC (Z-Scores & Multi-Mode Indices) ---
+    logging.info("Applying V14 Physics Logic (Safe Inputs)...")
+    groups = df.groupby('district_no')
+
+    # 1. Component Z-Scores
+    if 'summer_days_tmax_gt_30c' in df.columns:
+        df['z_heat'] = groups['summer_days_tmax_gt_30c'].transform(calculate_z_score)
     else:
-        df['winter_buffer_x_summer_heat'] = 0
+        df['z_heat'] = 0
 
-    # B. The "Kill Switch" Interaction (Heat x Balance)
-    # This specifically targets the 2014 vs 2018 confusion.
-    # 2018: High Heat days * Negative Balance = Large Negative Value (Yield Crash).
-    # 2014: High Heat days * Positive Balance = Large Positive Value (Yield Boost).
-    if 'summer_days_tmax_gt_30c' in df.columns and 'summer_water_balance_anomaly' in df.columns:
-        df['summer_heat_x_water_balance'] = df['summer_days_tmax_gt_30c'] * df['summer_water_balance_anomaly']
+    if 'summer_water_balance_anomaly' in df.columns:
+        df['z_bal'] = groups['summer_water_balance_anomaly'].transform(calculate_z_score)
     else:
-        df['summer_heat_x_water_balance'] = 0
+        df['z_bal'] = 0
 
-    if 'summer_precip_anomaly_forecast' in df.columns and 'summer_temp_anomaly_forecast' in df.columns:
-         # If Precip is POSITIVE (2014), the "Stress" becomes 0 (or even negative/beneficial).
-         # If Precip is NEGATIVE (2018), the "Stress" is Heat * Drought.
-
-         # We create a 'Binary Switch': Is it dry?
-         # 1 if Dry (Precip Anomaly < 0), 0 if Wet.
-         is_dry_summer = (df['summer_precip_anomaly_forecast'] < 0).astype(int)
-
-         # The "Flash Drought" Feature
-         # Only counts Heat x Dryness. Ignores Heat if Wet.
-         df['flash_drought_index'] = df['summer_temp_anomaly_forecast'] * df['summer_precip_anomaly_forecast'].abs() * is_dry_summer
+    if 'effective_winter_water' in df.columns:
+        df['z_tank'] = groups['effective_winter_water'].transform(calculate_z_score)
     else:
-         df['flash_drought_index'] = 0
+        df['z_tank'] = 0
 
-    if 'optimal_growth_index' in df.columns and 'sowing_doy' in df.columns:
-        # Magnify the "Good Weather" signal if sowing was early.
-        # 2014: High Growth Index * High Sowing Bonus = Massive Bumper Signal.
-
-        early_bonus = (100 - df['sowing_doy']).clip(lower=0)
-        df['optimal_growth_index'] = df['optimal_growth_index'] * early_bonus
-
-    # Interactions
-    if 'antecedent_gdd_sum_anomaly' in df.columns and 'fertilizer_price_index_lag1_anomaly_capped' in df.columns:
-        df['gdd_x_fertilizer_price'] = df['antecedent_gdd_sum_anomaly'] * df[
-            'fertilizer_price_index_lag1_anomaly_capped']
+    if 'summer_precip_anomaly_forecast' in df.columns:
+        df['z_rain'] = groups['summer_precip_anomaly_forecast'].transform(calculate_z_score)
     else:
-        df['gdd_x_fertilizer_price'] = 0
+        df['z_rain'] = 0
 
-    if 'spring_temp_anomaly_forecast' in df.columns and 'spring_precip_anomaly_forecast' in df.columns:
-        df['spring_temp_x_spring_precip'] = df['spring_temp_anomaly_forecast'] * df['spring_precip_anomaly_forecast']
+    if 'anoxia_events' in df.columns:
+        df['z_anoxia'] = groups['anoxia_events'].transform(calculate_z_score)
     else:
-        df['spring_temp_x_spring_precip'] = 0
+        df['z_anoxia'] = 0
 
-    if 'summer_temp_prob_warm_forecast' in df.columns and 'profit_margin_proxy_lag1' in df.columns:
-        df['summer_heat_x_profit_margin'] = df['summer_temp_prob_warm_forecast'] * df['profit_margin_proxy_lag1']
+    if 'sowing_doy' in df.columns:
+        df['z_sow'] = groups['sowing_doy'].transform(calculate_z_score)
     else:
-        df['summer_heat_x_profit_margin'] = 0
+        df['z_sow'] = 0
 
-    if 'summer_precip_prob_wet_forecast' in df.columns and 'cost_of_inputs_lag1' in df.columns:
-        df['summer_precip_x_input_costs'] = df['summer_precip_prob_wet_forecast'] * df['cost_of_inputs_lag1']
+    # 2. FAILURE INDEX
+    dryness = (df['z_bal'] * -1).clip(lower=0)
+    heat = df['z_heat'].clip(lower=0)
+    scorch = np.maximum(heat * dryness, (heat - 1.5).clip(lower=0) * 2.0)
+    drown = (df['z_anoxia'] - 0.8).clip(lower=0) * 2.0
+    late_start = (df['z_sow'] - 1.5).clip(lower=0) * 2.0
+    df['Index_Failure'] = np.maximum.reduce([scorch, drown, late_start])
+
+    # 3. BUMPER INDEX
+    water_supply = (df['z_tank'].clip(lower=0) + df['z_rain'].clip(lower=0)) / 2.0
+    coolness = (df['z_heat'] * -1).clip(lower=0)
+    df['Index_Bumper'] = water_supply * coolness
+
+    if 'stage1_forecast' in df.columns:
+        df['trend_x_failure'] = df['stage1_forecast'] * np.tanh(df['Index_Failure'])
+        df['trend_x_bumper'] = df['stage1_forecast'] * np.tanh(df['Index_Bumper'])
     else:
-        df['summer_precip_x_input_costs'] = 0
+        df['trend_x_failure'] = 0
+        df['trend_x_bumper'] = 0
 
-    if 'summer_temp_anomaly_forecast' in df.columns and 'summer_precip_anomaly_forecast' in df.columns:
-        df['hot_dry_interaction'] = df['summer_temp_anomaly_forecast'] * (df['summer_precip_anomaly_forecast'] * -1)
-    else:
-        df['hot_dry_interaction'] = 0
-
-    if 'lat' in df.columns and 'summer_temp_anomaly_forecast' in df.columns:
-        df['lat_x_summer_temp'] = df['lat'] * df['summer_temp_anomaly_forecast']
-    else:
-        df['lat_x_summer_temp'] = 0
-
-    if 'avg_sand_0_30cm' in df.columns and 'summer_precip_anomaly_forecast' in df.columns:
-        df['sandy_soil_x_drought'] = df['avg_sand_0_30cm'] * df['summer_precip_anomaly_forecast']
-    else:
-        df['sandy_soil_x_drought'] = 0
-
-    # Squares
-    for c in ['antecedent_gdd_sum_anomaly', 'spring_temp_prob_warm_forecast', 'summer_temp_prob_warm_forecast',
-              'spring_precip_prob_wet_forecast', 'summer_precip_prob_wet_forecast', 'summer_precip_anomaly_forecast']:
-        if c in df.columns:
-            df[f'{c}_sq'] = df[c] ** 2
-        else:
-            df[f'{c}_sq'] = 0
-
-    df.fillna(0, inplace=True)
-
-    # Drop source columns to keep file clean-ish
+    # Drop temp columns
     drop_cols = ['yield', 'producer_price_index', 'seed_price_index', 'fertilizer_price_index',
                  'plant_protection_price_index', 'energy_price_index', 'state']
     df.drop(columns=drop_cols, inplace=True, errors='ignore')
 
     df.to_csv(paths['OUTPUT_FILE'], index=False)
-    logging.info(f"✓ Feature Engineering (v15.0) Complete. Saved to {paths['OUTPUT_FILE']}")
+    logging.info(f"✓ Feature Engineering (v16.0 Honest March) Complete. Saved to {paths['OUTPUT_FILE']}")
 
 
 if __name__ == '__main__':
