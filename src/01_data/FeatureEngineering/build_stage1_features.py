@@ -177,6 +177,44 @@ def load_economics(prod_file, input_file):
         return pd.DataFrame()
 
 
+def probability_to_days(probability_series, historical_mean_days=5.0, sensitivity=15.0):
+    """
+    Converts a seasonal probability forecast (0-1) into an expected number of heat days.
+
+    Logic:
+    - A probability of 0.33 (33%) is 'Climatology' (Neutral) -> Returns historical_mean_days.
+    - Higher probabilities add 'sensitivity' days.
+    - Lower probabilities subtract 'sensitivity' days.
+
+    Args:
+        probability_series: pd.Series of probabilities (0.0 to 1.0)
+        historical_mean_days: The average number of heat days in a normal year (approx 5-7 for Germany).
+        sensitivity: How many EXTRA days to add if the probability is 100%.
+
+    Returns:
+        pd.Series: Estimated number of heat days (floats).
+    """
+    # 1. Sanitize input: Ensure we are 0-1, not 0-100
+    p = probability_series.copy()
+    if p.max() > 1.0:
+        p = p / 100.0
+
+    # 2. Define the baseline (Neutral forecast = 33% probability for tercile forecasts)
+    baseline_prob = 0.333
+
+    # 3. Calculate the anomaly factor
+    # If p = 0.33 -> factor = 0
+    # If p = 0.80 -> factor = 0.47 (Positive driver)
+    anomaly_factor = p - baseline_prob
+
+    # 4. Scale to days
+    # estimated_days = Mean + (Anomaly * Sensitivity)
+    estimated_days = historical_mean_days + (anomaly_factor * sensitivity)
+
+    # 5. Clip to ensure no negative days and reasonable maximums
+    # (e.g., it's physically unlikely to have < 0 days or > 40 heat days in Germany)
+    return estimated_days.clip(lower=0.0, upper=40.0)
+
 def main():
     logging.info("--- Starting Feature Engineering (v17.0 - Scenario Analysis Mode) ---")
     paths = CONFIG['FILE_PATHS']
@@ -190,18 +228,22 @@ def main():
     df_econ = load_economics(paths['PRODUCER_PRICE_CSV'], paths['INPUT_PRICE_CSV'])
     if not df_econ.empty: df = pd.merge(df, df_econ, on='year', how='left')
 
-    # RESTORED: Weather Physio (Using Daily Data to get observed heat days)
-    df_phys = create_granular_weather_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)
-    if not df_phys.empty: df = pd.merge(df, df_phys, on=['district_no', 'year'], how='left')
-
     df_fcst = load_forecasts_with_mapping(paths['ECMWF_FORECAST_FEATURES_CSV'])
     if not df_fcst.empty:
         cols = [c for c in df_fcst.columns if c not in df.columns or c in ['year', 'district_no']]
         df = pd.merge(df, df_fcst[cols], on=['year', 'district_no'], how='left')
 
-    # DELETED: The "Honest Swap". We WANT the observed days now for the Scenario Analysis.
-    # if 'summer_temp_prob_warm_forecast' in df.columns:
-    #     df['summer_days_tmax_gt_30c'] = df['summer_temp_prob_warm_forecast']
+        # 1. Check if we have the forecast column
+        if 'summer_temp_prob_warm_forecast' in df.columns:
+            # 2. Apply the conversion function
+            # We assume ~5 heat days is normal, and a strong signal could add ~15 days
+            df['summer_days_tmax_gt_30c'] = probability_to_days(
+                df['summer_temp_prob_warm_forecast'],
+                historical_mean_days=5.0,
+                sensitivity=15.0
+            )
+
+            logging.info("Applied probability-to-days conversion for 'summer_days_tmax_gt_30c'")
 
     df_recharge = create_winter_recharge_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)
     if not df_recharge.empty:
