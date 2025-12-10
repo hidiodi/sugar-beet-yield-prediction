@@ -1,108 +1,163 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import sys
 from pathlib import Path
-from sklearn.cluster import KMeans
+import sys
 from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
+from tqdm import tqdm
 
-# --- Setup ---
+# Add project root to path
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 from src import config
 
-# --- Config ---
-DATA_PATH = config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
-OUTPUT_DIR = config.DATA_DIR / '06_model_output'
 
+def analyze_regimes():
+    print("--- STARTING REGIME DETECTION (Broad Feature Set) ---")
 
-def optimize_clusters():
-    print("Loading Scenario Data for Cluster Optimization...")
-    df = pd.read_csv(DATA_PATH)
+    # 1. Load Data
+    data_path = config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
+    df = pd.read_csv(data_path)
 
-    # 1. Select the "Physical Signature" Features
-    # These define the 'State of the World'
-    features = [
-        'summer_days_tmax_gt_30c',  # Heat Stress
-        'summer_water_balance_anomaly',  # Drought Stress
-        'effective_winter_water',  # Soil Memory
-        'anoxia_events',  # Wet Stress
-        'sowing_doy_anomaly',  # Management Stress
-        'solar_capture_potential'  # Energy Availability
+    # Calculate Residuals (Ground Truth for validation ONLY)
+    if 'stage1_forecast' in df.columns:
+        df['target_residual'] = df['kreisYield'] - df['stage1_forecast']
+    else:
+        print("CRITICAL: stage1_forecast missing. Cannot validate regimes.")
+        return
+
+    # 2. Select Clustering Features (Dynamic Drivers from your list)
+    # We use a mix of Raw Weather, WOFOST Biology, Satellite, and V14 Indices
+    cluster_features = [
+        # --- The V14 Normalized Signals ---
+        'z_heat', 'z_bal', 'z_tank', 'z_anoxia', 'z_sow',
+        'Index_Failure', 'Index_Bumper',
+
+        # --- Physical Drivers (Energy & Water) ---
+        'summer_solar_rad_anomaly_forecast',  # Energy
+        'summer_water_balance_anomaly',  # Raw Balance
+        'effective_winter_water',  # Raw Tank
+
+        # --- Biological Drivers (WOFOST) ---
+        'wofost_yield_water_limited',  # The theoretical ceiling
+        'cumulative_water_stress',  # Integrated drought
+        'anoxia_events',  # Integrated flood risk
+        'prob_sowing_failure',  # Operational risk
+
+        # --- Spring/Start Conditions ---
+        'spring_soil_temp_l1_anomaly_forecast',  # Early growth speed
+        'sowing_doy_anomaly',  # Relative timing
+
+        # --- Observations (Satellite) ---
+        'winter_cropland_ndvi_anomaly',  # Plant health check
+
+        # --- Teleconnections (Global State) ---
+        'nao_winter_avg'  # North Atlantic Oscillation
     ]
 
-    # Drop rows with missing features
-    data = df[features + ['year', 'district_no', 'kreisYield']].dropna()
-    X = data[features]
+    # Check if features exist in df
+    valid_features = [f for f in cluster_features if f in df.columns]
+    missing = set(cluster_features) - set(valid_features)
+    if missing:
+        print(f"Warning: Missing features from list: {missing}")
 
-    # 2. Normalize
+    print(f"Clustering on {len(valid_features)} features.")
+
+    # Drop rows with NaNs in these columns
+    df_clean = df.dropna(subset=valid_features).copy()
+    X = df_clean[valid_features]
+
+    # 3. Standardization
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
+    # 4. Find Optimal K (2 to 15)
+    print("\n... Scanning for optimal Cluster count (k=2..15) ...")
     results = []
 
-    # 3. Iterate k from 2 to 8
-    print("\n--- SEARCHING FOR OPTIMAL K ---")
-    for k in range(2, 9):
+    for k in tqdm(range(2, 16)):
         kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
         labels = kmeans.fit_predict(X_scaled)
 
-        # Metric 1: Silhouette (Mathematical compactness)
-        sil = silhouette_score(X_scaled, labels)
+        score = silhouette_score(X_scaled, labels)
 
-        # Metric 2: Yield Separation (Pragmatic utility)
-        # We calculate the difference between the Highest Yield Cluster and Lowest Yield Cluster
-        data['Temp_Cluster'] = labels
-        yield_means = data.groupby('Temp_Cluster')['kreisYield'].mean()
-        yield_spread = yield_means.max() - yield_means.min()
+        # Validation: Separation Power
+        # How different are the Yield Residuals between these clusters?
+        df_clean['temp_cluster'] = labels
+        # Calculate the standard deviation of the cluster means (Higher = Clusters describe yield well)
+        yield_separation = df_clean.groupby('temp_cluster')['target_residual'].mean().std()
 
         results.append({
             'k': k,
-            'silhouette': sil,
-            'yield_spread': yield_spread,
-            'model': kmeans,
-            'labels': labels
+            'silhouette': score,
+            'yield_separation': yield_separation
         })
-        print(f"k={k}: Silhouette={sil:.3f} | Yield Spread={yield_spread:.1f} dt/ha")
 
-    # 4. Find the "Best" K (Maximizing Yield Spread is usually best for Regime Switching)
-    best_result = sorted(results, key=lambda x: x['yield_spread'], reverse=True)[0]
-    best_k = best_result['k']
+    res_df = pd.DataFrame(results)
 
-    print(f"\n>>> WINNER: k={best_k} (Max Yield Spread) <<<")
+    # 5. Select Best K
+    # We weigh Yield Separation higher because we want clusters that explain Yield.
+    # Normalize metrics
+    res_df['sil_norm'] = (res_df['silhouette'] - res_df['silhouette'].min()) / (
+                res_df['silhouette'].max() - res_df['silhouette'].min())
+    res_df['sep_norm'] = (res_df['yield_separation'] - res_df['yield_separation'].min()) / (
+                res_df['yield_separation'].max() - res_df['yield_separation'].min())
 
-    # 5. Deep Dive into the Winner
-    data['Cluster'] = best_result['labels']
+    # Heuristic: Combined Score
+    res_df['score'] = res_df['sil_norm'] + (1.5 * res_df['sep_norm'])
 
-    # Cluster DNA
-    print(f"\n--- CLUSTER DNA (k={best_k}) ---")
-    profile = data.groupby('Cluster')[features + ['kreisYield']].mean()
-    # Add count of years
-    profile['Count'] = data.groupby('Cluster')['year'].count()
+    best_k = int(res_df.loc[res_df['score'].idxmax(), 'k'])
+
+    print("\n=== CLUSTERING RESULTS ===")
+    print(res_df.round(3).to_string(index=False))
+    print(f"\n>> WINNER: k={best_k}")
+
+    # 6. Apply Best Clustering
+    print(f"\n... Analyzing Regimes for k={best_k} ...")
+    final_model = KMeans(n_clusters=best_k, random_state=42, n_init=10)
+    df_clean['Regime_ID'] = final_model.fit_predict(X_scaled)
+
+    # 7. Regime Profiling (What defines them?)
+    print("\n=== REGIME PROFILES (Mean Z-Scores / Values) ===")
+
+    # We show key indicators to interpret the clusters
+    key_indicators = ['target_residual', 'Index_Failure', 'Index_Bumper', 'z_heat', 'z_bal', 'z_tank']
+    profile = df_clean.groupby('Regime_ID')[key_indicators].mean()
+    count = df_clean['Regime_ID'].value_counts().sort_index()
+    profile.insert(0, 'Count', count)
+
     print(profile.round(2).to_string())
 
-    # Key Years Check
-    print(f"\n--- WHERE ARE THE KEY YEARS? (k={best_k}) ---")
-    for year in [2003, 2007, 2014, 2018]:
-        sub = data[data['year'] == year]
-        if len(sub) == 0: continue
-        mode = sub['Cluster'].mode()[0]
-        count = len(sub[sub['Cluster'] == mode])
-        total = len(sub)
-        print(f"Year {year}: Cluster {mode} ({count}/{total} districts)")
+    # 8. Year Mapping (Global Context)
+    print("\n=== DOMINANT REGIME BY YEAR (Problem Years) ===")
+    year_regimes = df_clean.groupby('year')['Regime_ID'].agg(lambda x: x.mode()[0])
 
-    # 6. Visualization: Yield Boxplot
-    plt.figure(figsize=(10, 6))
-    sns.boxplot(x='Cluster', y='kreisYield', data=data, palette='viridis')
-    plt.title(f"Yield Distribution by Cluster (k={best_k})\nProof that Regimes differentiate Outcome")
-    plt.ylabel("Actual Yield (dt/ha)")
+    check_years = [2003, 2013, 2014, 2018, 2024]
 
-    out_path = OUTPUT_DIR / f'cluster_yield_distribution_k{best_k}.png'
-    plt.savefig(out_path)
-    print(f"Plot saved to {out_path}")
+    print(f"{'Year':<6} | {'Regime':<8} | {'Avg Yield Res':<14} | {'Interpretation'}")
+    print("-" * 60)
+
+    for y in check_years:
+        if y not in year_regimes.index: continue
+        rid = year_regimes[y]
+        res = profile.loc[rid, 'target_residual']
+
+        interp = "Normal"
+        if res < -50:
+            interp = "CRASH"
+        elif res > 50:
+            interp = "BUMPER"
+
+        print(f"{y:<6} | {rid:<8} | {res:>10.2f}     | {interp}")
+
+    # 9. Save
+    output_path = config.DATA_DIR / '05_model_input/stage1_features_with_regimes.csv'
+    # Merge regime back to original DF (keep NaNs as -1 or separate)
+    df_final = df.merge(df_clean[['district_no', 'year', 'Regime_ID']], on=['district_no', 'year'], how='left')
+    df_final.to_csv(output_path, index=False)
+    print(f"\n>> Saved Regime-Labeled Data to: {output_path}")
 
 
 if __name__ == "__main__":
-    optimize_clusters()
+    analyze_regimes()
