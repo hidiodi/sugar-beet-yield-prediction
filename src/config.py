@@ -27,7 +27,7 @@ SCRIPTS_TO_RUN = [
     #"src/02_models/Wofost7.1/run_wofost_pipeline.py",
     #"src/02_models/Wofost7.1/validation_dashboard.py",
     #"src/02_models/Wofost7.1/create_trendModel.py",
-    #"src/01_data/FeatureEngineering/build_stage1_features.py",
+    "src/01_data/FeatureEngineering/build_stage1_features.py",
     #"src/03_analysis/basic_analysis/analyze_stage1_features.py",
     "src/02_models/XGBoost/regression_model/ModelScripts/train_final_quantile_model.py", # trains on residual of wofost
     "src/02_models/XGBoost/regression_model/Testing/backtest_final_quantile_model.py",  # trains on residual of wofost
