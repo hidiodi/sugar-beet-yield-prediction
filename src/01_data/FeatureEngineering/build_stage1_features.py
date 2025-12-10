@@ -339,6 +339,15 @@ def main():
     else:
         df['late_sowing_x_summer_heat'] = 0
 
+    # --- START INTEGRATION: GDR FLAG ---
+    # States 12-16 are the "New States" (former GDR)
+    # 11: Berlin, 12: Brandenburg, 13: MV, 14: Sachsen, 15: Sachsen-Anhalt, 16: Thüringen
+    # (Note:  and is technically mixed, so we exclude it for a clean "East" signal)
+    # Using >= 12 excludes Berlin (11) which is historically mixed.
+    df['is_gdr'] = (df['district_no'].str[:2].astype(int) >= 11).astype(int)
+
+    df['state_encoded'] = df['district_no'].str[:2].astype(int)
+
     df_sat = pd.read_csv(paths['SATELLITE_FEATURES_CSV'], dtype={'district_no': str})
     df_sat['district_no'] = df_sat['district_no'].str.zfill(5)
     cols = [c for c in df_sat.columns if c not in df.columns or c in ['year', 'district_no']]
