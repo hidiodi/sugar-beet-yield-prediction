@@ -270,6 +270,19 @@ XGBOOST_TRAINING_CONFIG = {
     'MEDIAN_MODEL_PATH': BASE_DIR / 'src/models/final_quantile_model_median.joblib',
     'UPPER_MODEL_PATH': BASE_DIR / 'src/models/final_quantile_model_upper.joblib'
 }
+
+SWITCHER_CONFIG = {
+    'MODEL_PATH': BASE_DIR / 'src/models/switcher/regime_classifier.joblib',
+    'ENCODER_PATH': BASE_DIR / 'src/models/switcher/label_encoder.joblib',
+    # Mapping for Quantile Selection
+    # If Class is X, use Quantile Y
+    'ACTION_MAP': {
+        'Crash': 'lower',     # Pessimistic
+        'Normal': 'median',   # Realistic
+        'Bumper': 'upper'     # Optimistic
+    }
+}
+
 # --- XGBoost Model Tuning Configuration ---
 XGBOOST_TUNING_CONFIG = {
     'N_TRIALS_PER_MODEL': 75,  # Number of trials for EACH quantile model
@@ -311,9 +324,7 @@ STANDALONE_XGB_CONFIG = {
     'DATA_PATH': DATA_DIR / '05_model_input/stage1_preseason_features.csv',
     'MODEL_OUTPUT_DIR': BASE_DIR / 'src/models/standalone_xgb',
 
-    'FEATURE_COLS': XGBOOST_TRAINING_CONFIG['FEATURE_COLS'] + [
-        'stat_trend_forecast'
-    ],
+    'FEATURE_COLS': XGBOOST_TRAINING_CONFIG['FEATURE_COLS'],
 
     # The script will CREATE and use 'yield_detrended' as the target
     'TARGET_COL': 'kreisYield',
@@ -387,3 +398,5 @@ FINAL_FEATURE_COLUMNS = [
     'avg_bdod_0_30cm', 'avg_clay_0_30cm', 'avg_sand_0_30cm', 'avg_som_0_30cm', 'avg_phh2o_0_30cm',
     'avg_bdod_0_100cm', 'avg_clay_0_100cm', 'avg_sand_0_100cm', 'avg_som_0_100cm', 'avg_phh2o_0_100cm'
 ]
+
+
