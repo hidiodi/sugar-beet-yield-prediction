@@ -78,8 +78,16 @@ def create_granular_weather_features(weather_dir: Path, start_year: int, end_yea
 
         # RESTORED: Observed Heat Days (The "Scenario" Input)
         heat = ((g['month'].isin([6, 7, 8])) & (g['tmax'] > 30)).sum()
-        return pd.Series({'CASDI_Phase2_Count': casdi, 'NMSD_Phase2_Count': nmsd, 'OSAW_Phase2_Count': osaw,
-                          'ECES_Phase1_Cumulative': eces, 'summer_days_tmax_gt_30c': heat})
+
+        # UPDATED: Return explicit 'observed' column for comparison with forecast
+        return pd.Series({
+            'CASDI_Phase2_Count': casdi,
+            'NMSD_Phase2_Count': nmsd,
+            'OSAW_Phase2_Count': osaw,
+            'ECES_Phase1_Cumulative': eces,
+            'summer_days_tmax_gt_30c': heat,
+            '__obs_heat': heat
+        })
 
     return df_daily.groupby(['district_no', 'year']).apply(calc_indices).reset_index()
 
@@ -154,7 +162,6 @@ def create_winter_recharge_features(weather_dir: Path, start_year: int, end_year
         lambda x: x - x.mean())
     return df_features
 
-
 def load_economics(prod_file, input_file):
     try:
         df_prod = pd.read_csv(prod_file)
@@ -177,43 +184,128 @@ def load_economics(prod_file, input_file):
         return pd.DataFrame()
 
 
-def probability_to_days(probability_series, historical_mean_days=5.0, sensitivity=15.0):
+def probability_to_days(df):
     """
-    Converts a seasonal probability forecast (0-1) into an expected number of heat days.
-
-    Logic:
-    - A probability of 0.33 (33%) is 'Climatology' (Neutral) -> Returns historical_mean_days.
-    - Higher probabilities add 'sensitivity' days.
-    - Lower probabilities subtract 'sensitivity' days.
-
-    Args:
-        probability_series: pd.Series of probabilities (0.0 to 1.0)
-        historical_mean_days: The average number of heat days in a normal year (approx 5-7 for Germany).
-        sensitivity: How many EXTRA days to add if the probability is 100%.
-
-    Returns:
-        pd.Series: Estimated number of heat days (floats).
+    Loads 'data/processed/heat_signal_multivariate.csv' and merges 'pred_days'.
+    *** MODIFIED: Fallback to heuristic is REMOVED. NaN will be returned if CSV is missing or for gaps. ***
     """
-    # 1. Sanitize input: Ensure we are 0-1, not 0-100
-    p = probability_series.copy()
-    if p.max() > 1.0:
-        p = p / 100.0
+    # Original Heuristic Fallback logic (REMOVED)
+    # p = df[probability_col].copy() if probability_col in df.columns else pd.Series(0, index=df.index)
+    # if p.max() > 1.0: p = p / 100.0
+    # baseline_prob = 0.333
+    # heuristic_days = historical_mean_days + ((p - baseline_prob) * sensitivity)
+    # heuristic_days = heuristic_days.clip(lower=0.0, upper=40.0)
 
-    # 2. Define the baseline (Neutral forecast = 33% probability for tercile forecasts)
-    baseline_prob = 0.333
+    # 1. Load & Merge CSV
+    signal_path = config.BASE_DIR / 'data/processed/heat_signal_multivariate.csv'
 
-    # 3. Calculate the anomaly factor
-    # If p = 0.33 -> factor = 0
-    # If p = 0.80 -> factor = 0.47 (Positive driver)
-    anomaly_factor = p - baseline_prob
+    if signal_path.exists():
+        try:
+            logging.info(f"Loading multivariate signal from {signal_path} (No Fallback)...")
+            df_sig = pd.read_csv(signal_path, dtype={'district_no': str})
+            df_sig['district_no'] = df_sig['district_no'].str.zfill(5)
 
-    # 4. Scale to days
-    # estimated_days = Mean + (Anomaly * Sensitivity)
-    estimated_days = historical_mean_days + (anomaly_factor * sensitivity)
+            # Rename to avoid collision and select only needed cols
+            df_sig = df_sig[['district_no', 'year', 'pred_days']].rename(columns={'pred_days': 'mv_days'})
 
-    # 5. Clip to ensure no negative days and reasonable maximums
-    # (e.g., it's physically unlikely to have < 0 days or > 40 heat days in Germany)
-    return estimated_days.clip(lower=0.0, upper=40.0)
+            # Merge onto a copy of the key columns to preserve index alignment
+            df_keys = df[['district_no', 'year']].copy()
+            df_keys['__orig_idx'] = df_keys.index
+
+            merged = pd.merge(df_keys, df_sig, on=['district_no', 'year'], how='left')
+            merged.set_index('__orig_idx', inplace=True)
+            merged.sort_index(inplace=True)
+
+            # Return CSV value. NaN for gaps (Fallback removed)
+            # Original: return merged['mv_days'].combine_first(heuristic_days)
+            return merged['mv_days']
+
+        except Exception as e:
+            logging.warning(f"CSV Merge failed ({e}). Returning all NaNs.")
+            return pd.Series(np.nan, index=df.index)
+    else:
+        logging.warning("Multivariate signal CSV not found. Returning all NaNs.")
+        return pd.Series(np.nan, index=df.index)
+
+def validate_heat_forecast(df, output_dir):
+    """
+    Generates a diagnostic plot comparing the approximated forecast heat days
+    vs the actual observed heat days (Ground Truth).
+    Generates observed data on the fly to prevent leakage.
+    """
+    # 1. Generate Ground Truth (Observed) locally
+    df_obs = create_granular_weather_features(CONFIG['FILE_PATHS']['DAILY_WEATHER_DIR'], 1981, 2024)
+
+    if df_obs.empty:
+        logging.warning("Could not generate observed weather features for validation.")
+        return
+
+    # 2. Prepare Observed Column
+    # Check if __obs_heat already exists (from calc_indices)
+    if '__obs_heat' in df_obs.columns:
+        # Deduplicate columns just in case
+        df_obs = df_obs.loc[:, ~df_obs.columns.duplicated()]
+    elif 'summer_days_tmax_gt_30c' in df_obs.columns:
+        # Fallback: Rename if __obs_heat missing
+        df_obs = df_obs.rename(columns={'summer_days_tmax_gt_30c': '__obs_heat'})
+    else:
+        logging.warning("Observed heat days column not found in weather features.")
+        return
+
+    # Merge validation data
+    val_df = pd.merge(
+        df[['district_no', 'year', 'summer_days_tmax_gt_30c']],
+        df_obs[['district_no', 'year', '__obs_heat']],
+        on=['district_no', 'year'],
+        how='inner'
+    )
+
+    if val_df.empty: return
+
+    # 3. Plotting & Stats
+    import matplotlib.pyplot as plt
+
+    # Ensure inputs are Series
+    obs = val_df['__obs_heat'].astype(float)
+    fcst = val_df['summer_days_tmax_gt_30c'].astype(float)
+
+    corr = obs.corr(fcst)
+    logging.info(f"--- HEAT FORECAST VALIDATION ---")
+    logging.info(f"Correlation (Forecast vs Reality): {corr:.3f}")
+
+    plt.figure(figsize=(10, 6))
+
+    # Background points
+    plt.scatter(obs, fcst, alpha=0.2, color='gray', s=10, label='All Districts')
+
+    # Highlight Critical Years
+    years = {2003: 'red', 2014: 'blue', 2018: 'orange'}
+    for year, color in years.items():
+        mask = val_df['year'] == year
+        if mask.any():
+            yr_data = val_df[mask]
+            mean_obs = yr_data['__obs_heat'].mean()
+            mean_fcst = yr_data['summer_days_tmax_gt_30c'].mean()
+
+            plt.scatter(yr_data['__obs_heat'], yr_data['summer_days_tmax_gt_30c'],
+                        color=color, alpha=0.8, s=30,
+                        label=f'{year} (Obs:{mean_obs:.1f} vs Fcst:{mean_fcst:.1f})')
+            logging.info(f"Year {year}: Observed {mean_obs:.1f} vs Forecast {mean_fcst:.1f}")
+
+    # Reference Line
+    max_val = max(obs.max(), fcst.max())
+    plt.plot([0, max_val], [0, max_val], 'k--', label='Perfect Fit')
+
+    plt.xlabel('Observed Heat Days (Reality)')
+    plt.ylabel('Forecasted Heat Days (Approximation)')
+    plt.title(f'Forecast Calibration Check (Correlation: {corr:.2f})')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+
+    out_path = output_dir / 'heat_forecast_calibration.png'
+    plt.savefig(out_path)
+    plt.close()
+    logging.info(f"Validation plot saved to: {out_path}")
 
 def main():
     logging.info("--- Starting Feature Engineering (v17.0 - Scenario Analysis Mode) ---")
@@ -238,12 +330,11 @@ def main():
             # 2. Apply the conversion function
             # We assume ~5 heat days is normal, and a strong signal could add ~15 days
             df['summer_days_tmax_gt_30c'] = probability_to_days(
-                df['summer_temp_prob_warm_forecast'],
-                historical_mean_days=5.0,
-                sensitivity=15.0
+                df
             )
 
-            logging.info("Applied probability-to-days conversion for 'summer_days_tmax_gt_30c'")
+            validate_heat_forecast(df, config.BASE_DIR / 'reports/figures')
+            logging.info("Applied probability-to-days conversion.")
 
     df_recharge = create_winter_recharge_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)
     if not df_recharge.empty:
