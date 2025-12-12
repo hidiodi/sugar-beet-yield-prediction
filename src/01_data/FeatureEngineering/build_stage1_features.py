@@ -77,7 +77,7 @@ def create_granular_weather_features(weather_dir: Path, start_year: int, end_yea
         eces = ((p1['tmax_anomaly_daily_pos'] ** 1.5) * (p1['precip_anomaly_daily_neg'] ** 1.5)).sum()
 
         # RESTORED: Observed Heat Days (The "Scenario" Input)
-        heat = ((g['month'].isin([6, 7, 8])) & (g['tmax'] > 30)).sum()
+        heat = ((g['month'].isin([6, 7, 8])) & (g['tmax'] > 25)).sum()
 
         # UPDATED: Return explicit 'observed' column for comparison with forecast
         return pd.Series({
@@ -85,7 +85,7 @@ def create_granular_weather_features(weather_dir: Path, start_year: int, end_yea
             'NMSD_Phase2_Count': nmsd,
             'OSAW_Phase2_Count': osaw,
             'ECES_Phase1_Cumulative': eces,
-            'summer_days_tmax_gt_30c': heat,
+            'summer_days_tmax_gt_25c': heat,
             '__obs_heat': heat
         })
 
@@ -197,7 +197,7 @@ def probability_to_days(df):
     # heuristic_days = heuristic_days.clip(lower=0.0, upper=40.0)
 
     # 1. Load & Merge CSV
-    signal_path = config.BASE_DIR / 'data/processed/heat_signal_multivariate.csv'
+    signal_path = config.BASE_DIR / 'data/processed/heat_signal_multivariate_moderate.csv'
 
     if signal_path.exists():
         try:
@@ -245,7 +245,7 @@ def validate_heat_forecast(df, output_dir):
     if '__obs_heat' in df_obs.columns:
         # Deduplicate columns just in case
         df_obs = df_obs.loc[:, ~df_obs.columns.duplicated()]
-    elif 'summer_days_tmax_gt_30c' in df_obs.columns:
+    elif 'summer_days_tmax_gt_25c' in df_obs.columns:
         # Fallback: Rename if __obs_heat missing
         df_obs = df_obs.rename(columns={'summer_days_tmax_gt_30c': '__obs_heat'})
     else:
