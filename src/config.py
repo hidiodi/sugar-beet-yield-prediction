@@ -345,7 +345,7 @@ STANDALONE_XGB_CONFIG = {
 STANDALONE_BACKTESTING_CONFIG = {
     'GEOJSON_PATH': DATA_DIR / '01_raw/districts_official.geojson',
     'REPORT_DIR': BASE_DIR / 'reports/figures/district_level_diagnostics/standalone_xgb_champion',
-    'BACKTEST_START_YEAR': 2000,
+    'BACKTEST_START_YEAR': 2014,
     'BACKTEST_END_YEAR': 2024,
     'LOW_DATA_THRESHOLD': 10,
     'MIN_DATAPOINTS_FOR_PLOT': 10,

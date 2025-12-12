@@ -19,6 +19,10 @@ OUTPUT_DIR = Path(CONFIG['OUTPUT_DIR'])
 NATIVE_COMPARISON_PATH = project_root / 'src/models/native_physics_comparison/native_model_comparison_v2_v8.csv'
 NATIVE_ENSEMBLE_PATH = project_root / 'src/models/native_ensemble_champion/native_ensemble_forecasts.csv'
 SWITCHED_MODEL_PATH = config.DATA_DIR / '06_model_output' / 'final_switched_forecast.csv'
+V31_SOLAR_PATH = config.DATA_DIR / '06_model_output' / 'v31_solar_gated_forecast.csv'
+
+# --- CORRECTED PATH FOR SUPER ENSEMBLE ---
+SUPER_ENSEMBLE_PATH = OUTPUT_DIR / 'super_ensemble_final_forecast_TSCV.csv'
 
 
 def calculate_interval_score(y_true, lower, upper, alpha):
@@ -94,8 +98,36 @@ def load_and_merge_models():
             cols.append('Strategy_Mode')
 
         df = pd.merge(df, df_switch[cols], on=['year', 'district_no'], how='left')
-        df.rename(columns={'Final_Pred': 'Regime Switch V10_pred'}, inplace=True)
-        logging.info("✓ Regime Switch V10 loaded (with Strategy Modes).")
+
+    df.rename(columns={'Final_Pred': 'Regime Switch V10_pred'}, inplace=True)
+    logging.info("✓ Regime Switch V10 loaded (with Strategy Modes).")
+
+    # 7. Merge V31 Solar Gated (NEW)
+    if V31_SOLAR_PATH.exists():
+        df_v31 = pd.read_csv(V31_SOLAR_PATH)
+        # Ensure district_no is int for merging
+        df_v31['district_no'] = df_v31['district_no'].astype(int)
+
+        df = pd.merge(df, df_v31[['year', 'district_no', 'final_pred']],
+                      on=['year', 'district_no'], how='left')
+        df.rename(columns={'final_pred': 'V31 Solar Gated_pred'}, inplace=True)
+        logging.info("✓ V31 Solar Gated model loaded.")
+    else:
+        logging.warning(f"V31 Solar Gated file not found at {V31_SOLAR_PATH}")
+
+    # 8. Merge Super Ensemble (The New Champion)
+    if SUPER_ENSEMBLE_PATH.exists():
+        df_super = pd.read_csv(SUPER_ENSEMBLE_PATH)
+        df_super['district_no'] = df_super['district_no'].astype(int)
+
+        # We only need the prediction column and the identifier for the report
+        cols_to_merge = ['year', 'district_no', 'Super_Ensemble_pred']
+
+        df = pd.merge(df, df_super[cols_to_merge], on=['year', 'district_no'], how='left')
+        df.rename(columns={'Super_Ensemble_pred': 'Super Ensemble_pred'}, inplace=True)
+        logging.info("✓ Super Ensemble (TSCV) model loaded.")
+    else:
+        logging.warning(f"Super Ensemble file not found at {SUPER_ENSEMBLE_PATH}")
 
     return df
 
@@ -165,7 +197,9 @@ def print_anomaly_forensics(df):
         'NATIVE_V2': 'Native V2 (Anchored)_pred',
         'NATIVE_V8': 'Native V8 (Unanchored)_pred',
         'NATIVE_ENSEMBLE': 'Native Ensemble_pred',
-        'REGIME_SWITCH': 'Regime Switch V10_pred'
+        'REGIME_SWITCH': 'Regime Switch V10_pred',
+        'V31_SOLAR': 'V31 Solar Gated_pred',
+        'SUPER_ENSEMBLE': 'Super Ensemble_pred'  # Added the new model
     }
 
     for year in anomalies:
@@ -194,6 +228,7 @@ def print_anomaly_forensics(df):
             marker = "  >"
             # Highlight our V10 model
             if m == 'REGIME_SWITCH': marker = "  >>"
+            if m == 'SUPER_ENSEMBLE': marker = "  >>>"  # Highlight the new champion
             logging.info(f"{marker} {m:<18}: {err:.1f}")
 
         logging.info("-" * 40)
@@ -207,6 +242,17 @@ def main():
         logging.error("No data loaded.")
         return
 
+    # --- NEW FILTERING STEP TO LIMIT THE COMPARISON PERIOD ---
+    # Filter the dataframe to include only years from 2010 onwards
+    logging.info("Filtering data for comparison period: 2010-2024...")
+    # NOTE: The user requested a filter on >= 2010.
+    df = df[df['year'] >= 2010].copy()
+
+    if df.empty:
+        logging.error("No data available after filtering for 2010-2024.")
+        return
+    # --------------------------------------------------------
+
     # 1. Point Accuracy
     models = [
         'Statistical Trend',
@@ -215,7 +261,9 @@ def main():
         'Native V2 (Anchored)',
         'Native V8 (Unanchored)',
         'Native Ensemble',
-        'Regime Switch V10'
+        'Regime Switch V10',
+        'V31 Solar Gated',
+        'Super Ensemble'  # Added the new model here
     ]
 
     results = []
@@ -230,11 +278,11 @@ def main():
 
     res_df = pd.DataFrame(results).sort_values('MAE')
     logging.info("\n" + "=" * 80)
-    logging.info("      OVERALL POINT ACCURACY (2000-2024)")
+    logging.info("      OVERALL POINT ACCURACY (2010-2024)")
     logging.info("=" * 80)
     logging.info(res_df.to_string(index=False, float_format="%.4f"))
 
-    # 2. Strategy Analysis
+    # 2. Strategy Analysis (Remains focused on V10 for historical comparison)
     analyze_strategy_effectiveness(df)
 
     # 3. Anomaly Check
