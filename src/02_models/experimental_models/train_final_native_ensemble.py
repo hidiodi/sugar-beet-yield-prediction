@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import xgboost as xgb
-import matplotlib.pyplot as plt
 import joblib
 import sys
 import logging
@@ -19,22 +18,25 @@ OUTPUT_DIR = config.DATA_DIR / '06_model_output'
 MODEL_DIR = Path('src/models/native_ensemble_champion')
 DATA_PATH = config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
 
-# --- PARAMS (Optimized for each Role) ---
-PARAMS_V2 = {  # The Safety Officer (Anchored)
-    'n_estimators': 1500, 'learning_rate': 0.015, 'max_depth': 6,
-    'subsample': 0.7, 'colsample_bytree': 0.6, 'min_child_weight': 10,
-    'objective': 'reg:absoluteerror', 'n_jobs': -1, 'random_state': 42
+# --- PARAMS ---
+# V2: Safety (Deep trees to find the specific crash conditions)
+PARAMS_V2 = {
+    'n_estimators': 2000, 'learning_rate': 0.01, 'max_depth': 7,
+    'subsample': 0.6, 'colsample_bytree': 0.6, 'min_child_weight': 10,
+    'objective': 'reg:absoluteerror', 'n_jobs': -1, 'random_state': 42,
+    'gamma': 0.5
 }
 
-PARAMS_V8 = {  # The Opportunity Hunter (Unanchored)
-    'n_estimators': 2000, 'learning_rate': 0.01, 'max_depth': 5,
-    'subsample': 0.7, 'colsample_bytree': 0.6, 'min_child_weight': 15,
+# V8: Opportunity (Shallow trees to find general linear improvements)
+PARAMS_V8 = {
+    'n_estimators': 1500, 'learning_rate': 0.015, 'max_depth': 4,
+    'subsample': 0.8, 'colsample_bytree': 0.8, 'min_child_weight': 20,
     'objective': 'reg:absoluteerror', 'reg_alpha': 10.0,
     'n_jobs': -1, 'random_state': 42
 }
 
 
-def load_data():
+def load_data_with_smart_risk():
     logging.info(f"Loading data from {DATA_PATH}...")
     df = pd.read_csv(DATA_PATH)
 
@@ -47,17 +49,35 @@ def load_data():
     # 2. Residual Target
     df['residual_target'] = df['kreisYield'] - df['final_corrected_forecast']
 
-    # 3. Global Context
-    df['Global_Water_Balance'] = df.groupby('year')['summer_water_balance_anomaly'].transform('mean')
-    df['Global_Heat'] = df.groupby('year')['summer_days_tmax_gt_30c'].transform('mean')
+    # 3. --- SMART RISK CALCULATION (Fix V3) ---
+    # Heat is only bad if it's dry.
 
-    if 'summer_solar_rad_anomaly_forecast' in df.columns:
-        df['summer_solar_rad_anomaly_forecast'] = df['summer_solar_rad_anomaly_forecast'].fillna(0)
-        df['Global_Solar'] = df.groupby('year')['summer_solar_rad_anomaly_forecast'].transform('mean')
+    # A. Drought Intensity (0 if wet, Positive if dry)
+    # Anomaly < 0 means deficit. We flip it so positive = stress.
+    if 'summer_water_balance_anomaly' in df.columns:
+        # -150mm is the start of real stress. -300mm is catastrophic.
+        # We normalize so -150mm = 1.0 (Moderate Risk base)
+        df['drought_stress'] = (df['summer_water_balance_anomaly'] * -1 / 150.0).clip(lower=0)
     else:
-        df['Global_Solar'] = 0.0
+        df['drought_stress'] = 0
 
-    df['Global_Water'] = df.groupby('year')['summer_water_balance_anomaly'].transform('mean')
+    # B. Heat Multiplier (1.0 = Neutral, 1.5 = Hot)
+    if 'summer_days_tmax_gt_30c' in df.columns:
+        # If hot, we multiply the drought stress.
+        # 10 days = 1.2x, 20 days = 1.4x
+        df['heat_multiplier'] = 1.0 + (df['summer_days_tmax_gt_30c'] / 50.0)
+    else:
+        df['heat_multiplier'] = 1.0
+
+    # C. Combined Risk
+    # Logic: If Wet (drought_stress=0), Risk is 0 (regardless of heat).
+    # If Dry (drought_stress=1.0), and Hot (mult=1.4), Risk = 1.4.
+    df['Smart_Risk_Index'] = df['drought_stress'] * df['heat_multiplier']
+
+    # 4. Fill NaNs
+    fill_cols = ['drought_stress', 'heat_multiplier', 'Smart_Risk_Index']
+    for c in fill_cols:
+        df[c] = df[c].fillna(0)
 
     return df.dropna(subset=['kreisYield', 'final_corrected_forecast', 'residual_target'])
 
@@ -66,14 +86,15 @@ def train_ensemble_component(df, features, target_col, params, name):
     print(f"\n--- Training {name} ---")
     available_feats = [f for f in features if f in df.columns]
 
-    # Constraints (Simplified)
     constraints_map = {
-        'summer_water_balance_anomaly': 1, 'summer_days_tmax_gt_30c': -1,
-        'summer_solar_rad_anomaly_forecast': 1, 'sowing_doy_anomaly': -1,
-        'Global_Solar': 1, 'Global_Water': 1,
+        'summer_water_balance_anomaly': 1,  # More water -> High Yield
+        'summer_days_tmax_gt_30c': -1,  # More heat -> Low Yield (generally)
+        'Smart_Risk_Index': -1,  # High Risk -> Low Yield
+        'drought_stress': -1,
         'final_corrected_forecast': 1
     }
     constraints = tuple([constraints_map.get(f, 0) for f in available_feats])
+
     run_params = params.copy()
     run_params['monotone_constraints'] = constraints
 
@@ -94,66 +115,95 @@ def train_ensemble_component(df, features, target_col, params, name):
         res[f'Pred_{name}'] = p
         preds.append(res)
 
-        # Save final model (last fold acts as production model)
         if year == 2024:
             models.append(model)
 
     return pd.concat(preds), models[-1]
 
 
+def apply_smart_ensemble(df):
+    """
+    Switching Logic:
+    - Normal (Risk < 0.8): Trust Trend (80%) + Opportunity (20%)
+    - Crisis (Risk > 1.2): Trust Safety (100%)
+    - Transition: Linear blend
+    """
+
+    # 1. Low Risk (Normal/Good Years)
+    # 2014 should be here (Risk ~0 because wet)
+    mask_normal = df['Smart_Risk_Index'] < 0.8
+
+    # 2. High Risk (Crash Years)
+    # 2018 should be here (Risk > 1.5)
+    mask_crisis = df['Smart_Risk_Index'] > 1.2
+
+    trend = df['final_corrected_forecast']
+    v2 = df['Pred_V2']  # Safety
+    v8 = df['Pred_V8']  # Opportunity (Trend + Residual)
+
+    # Vectorized Selection
+    # Default (Transition Zone): 50/50 Blend
+    df['Ensemble_Pred'] = (v2 * 0.5) + (v8 * 0.5)
+    df['Ensemble_Mode'] = 'Transition'
+
+    # Apply Normal Logic
+    df.loc[mask_normal, 'Ensemble_Pred'] = (trend[mask_normal] * 0.85) + (v8[mask_normal] * 0.15)
+    df.loc[mask_normal, 'Ensemble_Mode'] = 'Normal (Trend_Guard)'
+
+    # Apply Crisis Logic
+    df.loc[mask_crisis, 'Ensemble_Pred'] = v2[mask_crisis]
+    df.loc[mask_crisis, 'Ensemble_Mode'] = 'CRISIS (Safety_First)'
+
+    return df
+
+
 def main():
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=LOG_LEVEL, format='%(message)s')
 
-    df = load_data()
+    df = load_data_with_smart_risk()
 
     # --- FEATURES ---
-
-    # V2 Features (Anchored Safety)
+    # V2 (Safety): Needs to see the Risk Index to know *how bad* the crash is
     feats_v2 = [
-        'final_corrected_forecast', 'summer_water_balance_anomaly', 'summer_days_tmax_gt_30c',
-        'effective_winter_water', 'avg_sand_0_30cm', 'avg_clay_0_30cm',
-        'sandy_soil_x_drought', 'clay_soil_x_drought', 'winter_buffer_x_summer_heat',
-        'Global_Water_Balance', 'Global_Heat'
+        'final_corrected_forecast',
+        'Smart_Risk_Index',  # <--- The corrected Signal
+        'drought_stress',
+        'summer_water_balance_anomaly',
+        'effective_winter_water'
     ]
 
-    # V8 Features (Unanchored Opportunity)
+    # V8 (Opportunity): Focuses on good conditions
     feats_v8 = [
-        'summer_water_balance_anomaly', 'summer_days_tmax_gt_30c', 'effective_winter_water',
-        'summer_solar_rad_anomaly_forecast', 'sowing_doy_anomaly',
-        'avg_sand_0_30cm', 'avg_clay_0_30cm', 'sandy_soil_x_drought', 'clay_soil_x_drought',
-        'Global_Solar', 'Global_Water'
+        'summer_water_balance_anomaly',
+        'summer_days_tmax_gt_30c',
+        'Smart_Risk_Index',
+        'sowing_doy_anomaly',
+        'avg_clay_0_30cm'
     ]
 
     # --- TRAIN ---
-
-    # 1. Train V2 (Target: Raw Yield)
     res_v2, model_v2 = train_ensemble_component(df, feats_v2, 'kreisYield', PARAMS_V2, 'V2')
-
-    # 2. Train V8 (Target: Residual)
     res_v8, model_v8 = train_ensemble_component(df, feats_v8, 'residual_target', PARAMS_V8, 'V8')
-    # Add Trend back to V8 residual
-    # We need to merge trend first because res_v8 only has IDs
+
+    # Reconstruct V8
     res_v8 = pd.merge(res_v8, df[['year', 'district_no', 'final_corrected_forecast']], on=['year', 'district_no'])
     res_v8['Pred_V8'] = res_v8['final_corrected_forecast'] + res_v8['Pred_V8']
 
     # --- ENSEMBLE ---
-
-    final = df[['year', 'district_no', 'kreisYield', 'final_corrected_forecast']].copy()
+    final = df[['year', 'district_no', 'kreisYield', 'final_corrected_forecast', 'Smart_Risk_Index']].copy()
     final = pd.merge(final, res_v2[['year', 'district_no', 'Pred_V2']], on=['year', 'district_no'])
     final = pd.merge(final, res_v8[['year', 'district_no', 'Pred_V8']], on=['year', 'district_no'])
 
-    # Simple Average
-    final['Ensemble_Pred'] = (final['Pred_V2'] + final['Pred_V8']) / 2
+    final = apply_smart_ensemble(final)
 
     # --- EVALUATION ---
-
     mae_t = mean_absolute_error(final['kreisYield'], final['final_corrected_forecast'])
     mae_e = mean_absolute_error(final['kreisYield'], final['Ensemble_Pred'])
     r2_e = r2_score(final['kreisYield'], final['Ensemble_Pred'])
 
     print("\n" + "=" * 50)
-    print(" NATIVE ENSEMBLE CHAMPION (V2 + V8)")
+    print(" SMART ENSEMBLE (Conditional Risk Logic)")
     print("=" * 50)
     print(f"Trend MAE:    {mae_t:.2f}")
     print(f"Ensemble MAE: {mae_e:.2f}")
@@ -163,22 +213,21 @@ def main():
     print("\nCRITICAL YEARS FORENSICS:")
     for y in [2007, 2014, 2018]:
         sub = final[final['year'] == y]
+        if sub.empty: continue
+
+        mode_counts = sub['Ensemble_Mode'].value_counts()
+        avg_risk = sub['Smart_Risk_Index'].mean()
         err_t = (sub['kreisYield'] - sub['final_corrected_forecast']).abs().mean()
-        err_v2 = (sub['kreisYield'] - sub['Pred_V2']).abs().mean()
-        err_v8 = (sub['kreisYield'] - sub['Pred_V8']).abs().mean()
         err_e = (sub['kreisYield'] - sub['Ensemble_Pred']).abs().mean()
 
         print(f"YEAR {y}:")
-        print(f"  Trend:    {err_t:.1f}")
-        print(f"  V2:       {err_v2:.1f} (Safety)")
-        print(f"  V8:       {err_v8:.1f} (Opportunity)")
-        print(f"  Ensemble: {err_e:.1f}  <-- FINAL")
+        print(f"  Avg Risk:     {avg_risk:.2f}")
+        print(f"  Dominant Mode: {mode_counts.idxmax()} ({mode_counts.max()} districts)")
+        print(f"  Trend Err:    {err_t:.1f}")
+        print(f"  Ensemble Err: {err_e:.1f}")
         print("-" * 30)
 
-    # Save
     final.to_csv(MODEL_DIR / 'native_ensemble_forecasts.csv', index=False)
-
-    # Save Models
     joblib.dump(model_v2, MODEL_DIR / 'model_v2_safety.joblib')
     joblib.dump(model_v8, MODEL_DIR / 'model_v8_opportunity.joblib')
     print(f"\nModels saved to {MODEL_DIR}")

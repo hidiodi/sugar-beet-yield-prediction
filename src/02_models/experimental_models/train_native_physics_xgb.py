@@ -4,7 +4,7 @@ import xgboost as xgb
 import sys
 import logging
 from pathlib import Path
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.metrics import mean_absolute_error
 
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
@@ -15,69 +15,66 @@ OUTPUT_DIR = config.DATA_DIR / '06_model_output'
 MODEL_DIR = Path('src/models/native_physics_comparison')
 DATA_PATH = config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
 
-# --- HYPERPARAMETERS (Tuned for Hybrid Inputs) ---
-# We use deeper trees because WOFOST features are high-quality signals
-XGB_PARAMS_V2 = {
-    'n_estimators': 1500, 'learning_rate': 0.01, 'max_depth': 5,
-    'subsample': 0.7, 'colsample_bytree': 0.7, 'min_child_weight': 10,
-    'objective': 'reg:absoluteerror', 'n_jobs': -1, 'random_state': 42
-}
-XGB_PARAMS_V8 = {
-    'n_estimators': 2000, 'learning_rate': 0.005, 'max_depth': 4,
-    'subsample': 0.7, 'colsample_bytree': 0.7, 'min_child_weight': 15,
-    'objective': 'reg:absoluteerror', 'reg_alpha': 10.0, 'n_jobs': -1, 'random_state': 42
+# --- QUANTILE HYPERPARAMETERS ---
+# We use the same parameters for both but change the Quantile Alpha.
+# This aligns with the "Standalone" success.
+
+COMMON_PARAMS = {
+    'n_estimators': 2000,
+    'learning_rate': 0.01,
+    'max_depth': 4,  # Moderate depth to prevent overfitting
+    'subsample': 0.7,
+    'colsample_bytree': 0.7,
+    'min_child_weight': 20,  # Robustness constraint
+    'objective': 'reg:quantileerror',
+    'n_jobs': -1,
+    'random_state': 42
 }
 
+# V2: PREDICT THE FLOOR (Conservative / Risk)
+PARAMS_V2 = COMMON_PARAMS.copy()
+PARAMS_V2['quantile_alpha'] = 0.20  # Predict the 20th percentile (Bad Year Outcome)
 
-def load_data():
+# V8: PREDICT THE CEILING (Optimistic / Potential)
+PARAMS_V8 = COMMON_PARAMS.copy()
+PARAMS_V8['quantile_alpha'] = 0.80  # Predict the 80th percentile (Good Year Outcome)
+
+
+def load_and_engineer_data():
     logging.info(f"Loading data from {DATA_PATH}...")
     df = pd.read_csv(DATA_PATH)
 
-    # 1. Trend Anchor
     if 'final_corrected_forecast' not in df.columns:
         trend_path = config.MODEL_COMPARISON_CONFIG['STATISTICAL_TREND_FILE']
         trend_df = pd.read_csv(trend_path)[['year', 'district_no', 'final_corrected_forecast']]
         df = pd.merge(df, trend_df, on=['year', 'district_no'], how='left')
 
-    df['residual_target'] = df['kreisYield'] - df['final_corrected_forecast']
+    # --- TARGET: RATIO ---
+    # We predict the multiplier relative to the trend (e.g., 0.9, 1.1)
+    df['target_ratio'] = df['kreisYield'] / df['final_corrected_forecast']
 
-    # 2. Check for WOFOST Features (The "Brain")
-    # If build_stage1_features.py ran correctly, these should be here.
+    # Clip extreme outliers (e.g. crop failures < 0.5 or data errors > 1.5)
+    # to prevent them from skewing the quantile learning.
+    df['target_ratio'] = df['target_ratio'].clip(0.5, 1.5)
+
     if 'wofost_yield_water_limited' not in df.columns:
-        logging.warning("WOFOST features missing! Model will be weak.")
-        df['wofost_yield_water_limited'] = df['final_corrected_forecast']  # Fallback
-        df['anoxia_events'] = 0.0
+        df['wofost_yield_water_limited'] = df['final_corrected_forecast']
 
-    # 3. Global Context (Using Forecasts + WOFOST)
-    if 'summer_temp_prob_warm_forecast' in df.columns:
-        df['Global_Heat_Forecast'] = df.groupby('year')['summer_temp_prob_warm_forecast'].transform('mean')
+    # --- PHYSICS SIGNALS ---
+    df['Wofost_Ratio'] = df['wofost_yield_water_limited'] / (df['final_corrected_forecast'] + 1)
+
+    # Interaction: Heat Stress per unit of Water
+    if 'summer_temp_prob_warm_forecast' in df.columns and 'effective_winter_water' in df.columns:
+        df['Stress_Index'] = df['summer_temp_prob_warm_forecast'] / (df['effective_winter_water'] + 10)
     else:
-        df['Global_Heat_Forecast'] = 0.0
+        df['Stress_Index'] = 0
 
-    df['Global_WOFOST'] = df.groupby('year')['wofost_yield_water_limited'].transform('mean')
-
-    return df.dropna(subset=['kreisYield', 'final_corrected_forecast', 'residual_target'])
+    return df.dropna(subset=['kreisYield', 'final_corrected_forecast', 'target_ratio'])
 
 
-def train_strict_walk_forward(df, model_name, features, target_col, params, start_year=2005):
-    """
-    STRICT WALK-FORWARD (HONEST).
-    No future data. No LOYO.
-    """
-    print(f"\n--- Training {model_name} (Strict Walk-Forward + WOFOST) ---")
+def train_quantile_walk_forward(df, model_name, features, params, start_year=2005):
+    print(f"\n--- Training {model_name} (Quantile: {params['quantile_alpha']}) ---")
     feats = [f for f in features if f in df.columns]
-
-    # Constraints: Ensure the model respects the Physics Engine
-    constraints_map = {
-        'wofost_yield_water_limited': 1,  # If WOFOST says high yield -> Predict High
-        'anoxia_events': -1,  # If WOFOST sees oxygen stress -> Predict Low
-        'summer_temp_prob_warm_forecast': -1,
-        'effective_winter_water': 1,
-        'final_corrected_forecast': 1
-    }
-    constraints = tuple([constraints_map.get(f, 0) for f in feats])
-    run_params = params.copy()
-    run_params['monotone_constraints'] = constraints
 
     preds = []
     years = sorted(df['year'].unique())
@@ -85,75 +82,109 @@ def train_strict_walk_forward(df, model_name, features, target_col, params, star
     for year in years:
         if year < start_year: continue
 
-        # STRICT PAST ONLY
+        # STRICT WALK-FORWARD: Train on ALL past data (Bad & Good years mixed)
         train = df[df['year'] < year]
         test = df[df['year'] == year]
 
         if len(train) < 50: continue
 
-        model = xgb.XGBRegressor(**run_params)
-        model.fit(train[feats], train[target_col])
-        p = model.predict(test[feats])
+        model = xgb.XGBRegressor(**params)
+        model.fit(train[feats], train['target_ratio'])
+
+        # Predict Ratio
+        p_ratio = model.predict(test[feats])
 
         res = test[['year', 'district_no']].copy()
-        if model_name == 'Native_V8':
-            res[model_name] = test['final_corrected_forecast'] + p
-        else:
-            res[model_name] = p
+        res[model_name] = p_ratio
         preds.append(res)
         print(f"  Processed {year} (Train size: {len(train)})")
 
     return pd.concat(preds)
 
 
+def safe_ensemble(row):
+    """
+    The Safety-First Ensemble.
+    Default: Trust the Trend (1.0).
+    Trigger: Only if WOFOST signal is strong, Blend Trend with Quantile Model.
+    """
+    trend_val = row['final_corrected_forecast']
+
+    # The Signals
+    wofost_signal = row['Wofost_Ratio']  # e.g., 0.90 means Physics says -10%
+
+    # The Specialists
+    v2_floor = row['Native_V2']  # e.g., 0.85
+    v8_ceiling = row['Native_V8']  # e.g., 1.15
+
+    # --- LOGIC ---
+
+    # Case 1: Physics indicates Significant Stress (< 0.95)
+    if wofost_signal < 0.95:
+        # We suspect a bad year.
+        # Blend Trend (Conservative) with V2 (Pessimistic Floor)
+        # Weight: 60% Trend, 40% V2. (Don't go all the way to the floor)
+        ratio_pred = (0.6 * 1.0) + (0.4 * v2_floor)
+        return trend_val * ratio_pred
+
+    # Case 2: Physics indicates Significant Growth (> 1.05)
+    elif wofost_signal > 1.05:
+        # We suspect a bumper year.
+        # Blend Trend (Conservative) with V8 (Optimistic Ceiling)
+        # Weight: 60% Trend, 40% V8.
+        ratio_pred = (0.6 * 1.0) + (0.4 * v8_ceiling)
+        return trend_val * ratio_pred
+
+    # Case 3: Physics is Neutral (0.95 - 1.05)
+    else:
+        # Trust the Trend completely.
+        return trend_val
+
+
 def main():
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=LOG_LEVEL, format='%(message)s')
-    df = load_data()
+    df = load_and_engineer_data()
 
-    # --- FEATURE SETS (HYBRID PHYSICS) ---
-
-    # V2 (Crisis): Needs to detect failure
+    # --- FEATURE SETS ---
+    # V2 (Floor): Needs features that signal disaster
     feats_v2 = [
-        'final_corrected_forecast',  # Trend
-        'wofost_yield_water_limited',  # BIOPHYSICAL OPINION (Crucial)
-        'anoxia_events',  # WOFOST Stress Metric
-        'effective_winter_water',  # Soil Memory
-        'summer_temp_prob_warm_forecast',  # Forecast
-        'avg_sand_0_30cm',
-        'Global_WOFOST'  # Global Context
+        'Wofost_Ratio',
+        'Stress_Index',
+        'anoxia_events',
+        'summer_temp_prob_warm_forecast'
     ]
 
-    # V8 (Opportunity): Needs to detect potential
+    # V8 (Ceiling): Needs features that signal abundance
     feats_v8 = [
-        'wofost_yield_water_limited',  # BIOPHYSICAL OPINION
+        'Wofost_Ratio',
         'effective_winter_water',
         'optimal_growth_index',
-        'summer_precip_anomaly_forecast',
-        'sowing_doy_anomaly',
-        'avg_clay_0_30cm',
-        'Global_WOFOST'
+        'avg_clay_0_30cm'
     ]
 
-    preds_v2 = train_strict_walk_forward(df, 'Native_V2', feats_v2, 'kreisYield', XGB_PARAMS_V2)
-    preds_v8 = train_strict_walk_forward(df, 'Native_V8', feats_v8, 'residual_target', XGB_PARAMS_V8)
+    # --- TRAIN ON ALL DATA (Quantile Regression) ---
+    preds_v2 = train_quantile_walk_forward(df, 'Native_V2', feats_v2, PARAMS_V2)
+    preds_v8 = train_quantile_walk_forward(df, 'Native_V8', feats_v8, PARAMS_V8)
 
-    final = df[['year', 'district_no', 'kreisYield', 'final_corrected_forecast']].copy()
+    # Merge
+    final = df[['year', 'district_no', 'kreisYield', 'final_corrected_forecast', 'Wofost_Ratio']].copy()
     final = pd.merge(final, preds_v2, on=['year', 'district_no'], how='inner')
     final = pd.merge(final, preds_v8, on=['year', 'district_no'], how='inner')
 
-    output_csv = MODEL_DIR / 'native_model_comparison_v2_v8.csv'
+    # Apply Ensemble
+    final['Ensemble_Pred'] = final.apply(safe_ensemble, axis=1)
+
+    output_csv = MODEL_DIR / 'native_model_comparison_quantile.csv'
     final.to_csv(output_csv, index=False)
 
-    final['Ensemble_Pred'] = (final['Native_V2'] + final['Native_V8']) / 2
     ens_path = config.DATA_DIR / '06_model_output/native_ensemble_champion/native_ensemble_forecasts.csv'
     ens_path.parent.mkdir(parents=True, exist_ok=True)
     final[['year', 'district_no', 'Ensemble_Pred']].to_csv(ens_path, index=False)
 
-    print("\nHYBRID WALK-FORWARD RESULTS:")
-    print(f"Trend MAE: {mean_absolute_error(final['kreisYield'], final['final_corrected_forecast']):.2f}")
-    print(f"V2 MAE:    {mean_absolute_error(final['kreisYield'], final['Native_V2']):.2f}")
-    print(f"Ensemble:  {mean_absolute_error(final['kreisYield'], final['Ensemble_Pred']):.2f}")
+    print("\n--- QUANTILE ENSEMBLE RESULTS ---")
+    print(f"Trend MAE:     {mean_absolute_error(final['kreisYield'], final['final_corrected_forecast']):.2f}")
+    print(f"Ensemble MAE:  {mean_absolute_error(final['kreisYield'], final['Ensemble_Pred']):.2f}")
 
 
 if __name__ == "__main__":
