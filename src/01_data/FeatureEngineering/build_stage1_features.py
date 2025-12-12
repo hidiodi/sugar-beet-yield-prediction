@@ -20,10 +20,23 @@ CONFIG = config.FEATURE_ENGINEERING_CONFIG
 
 
 def calculate_z_score(series):
-    series = series.fillna(series.mean())
-    std = series.std()
-    if std == 0: return pd.Series(0, index=series.index)
-    return (series - series.mean()) / std
+    # FIX: Use expanding window to prevent look-ahead bias.
+    # We only use data from the past up to the current row.
+
+    # 1. Calculate expanding stats (min_periods=2 to allow std calc)
+    exp_mean = series.expanding(min_periods=1).mean()
+    exp_std = series.expanding(min_periods=2).std()
+
+    # 2. Handle initial NaNs or zero std deviations
+    exp_std = exp_std.fillna(0)
+
+    # 3. Avoid division by zero
+    z_scores = (series - exp_mean) / exp_std
+
+    # Replace infinite values (div by 0) with 0 or a neutral value
+    z_scores = z_scores.replace([np.inf, -np.inf], 0).fillna(0)
+
+    return z_scores
 
 
 def create_granular_weather_features(weather_dir: Path, start_year: int, end_year: int):
@@ -109,7 +122,7 @@ def load_wofost_sowing_dates(initial_conditions_path):
         df['district_no'] = df['district_no'].astype(str).str.zfill(5)
         df['sowing_date'] = pd.to_datetime(df['sowing_date'])
         df['sowing_doy'] = df['sowing_date'].dt.dayofyear
-        df['sowing_doy_anomaly'] = df.groupby('district_no')['sowing_doy'].transform(lambda x: x - x.mean())
+        df['sowing_doy_anomaly'] = df.groupby('district_no')['sowing_doy'].transform(lambda x: x - x.expanding().mean())
         return df[['district_no', 'year', 'sowing_doy', 'sowing_doy_anomaly']]
     except:
         return pd.DataFrame()
@@ -159,7 +172,7 @@ def create_winter_recharge_features(weather_dir: Path, start_year: int, end_year
     df_features = pd.merge(recharge, frosts, on=['district_no', 'crop_year'], how='left')
     df_features.fillna(0, inplace=True)
     df_features['winter_precip_anomaly'] = df_features.groupby('district_no')['winter_precip_sum'].transform(
-        lambda x: x - x.mean())
+        lambda x: x - x.expanding().mean())
     return df_features
 
 def load_economics(prod_file, input_file):
@@ -447,7 +460,9 @@ def main():
     df_trend = pd.read_csv(paths['WALKFORWARD_FORECAST_CSV'], dtype={'district_no': str})
     df_trend.rename(columns={'final_corrected_forecast': 'stage1_forecast'}, inplace=True)
     df = pd.merge(df, df_trend[['year', 'district_no', 'stage1_forecast']], on=['year', 'district_no'], how='left')
-    df['stage1_forecast'] = df['stage1_forecast'].fillna(df.groupby('district_no')['kreisYield'].transform('mean'))
+    df['stage1_forecast'] = df['stage1_forecast'].fillna(
+        df.groupby('district_no')['kreisYield'].transform(lambda x: x.shift(1).expanding().mean())
+    )
     df['has_wofost_data'] = df['stage1_forecast'].notna().astype(int)
 
     if 'stage1_forecast' in df.columns:
