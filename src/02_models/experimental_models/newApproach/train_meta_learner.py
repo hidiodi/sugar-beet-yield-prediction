@@ -2,12 +2,12 @@ import pandas as pd
 import logging
 from pathlib import Path
 from xgboost import XGBClassifier
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import accuracy_score, mean_absolute_error
 import sys
 import numpy as np
 import json
 
-# --- Project Setup ---
 project_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(project_root))
 from src import config
@@ -15,103 +15,107 @@ from src import config
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 CONFIG = config.MODEL_COMPARISON_CONFIG
 OUTPUT_DIR = Path(CONFIG['OUTPUT_DIR'])
+
 INPUT_FILENAME = 'super_ensemble_training_data.csv'
-MODEL_FILENAME = 'super_ensemble_meta_learner_TSCV.json'  # Updated filename
-LABEL_MAP_FILENAME = 'meta_learner_label_map_TSCV.json'  # Updated filename
+MODEL_FILENAME = 'super_ensemble_meta_learner_TSCV.json'
+LABEL_MAP_FILENAME = 'meta_learner_label_map_TSCV.json'
 
-# --- Time Series Split Configuration ---
-# All data <= SPLIT_YEAR will be used for training.
-# All data > SPLIT_YEAR will be used for testing (Out-of-Time Validation).
-SPLIT_YEAR = 2019
+WALK_FORWARD_START_YEAR = 2015
+LAST_HISTORICAL_YEAR = 2024
 
 
-def train_and_evaluate_meta_learner_ts():
-    """
-    Loads prepared data and trains an XGBoost classifier using a strict Time-Series Split.
-    """
+def train_classifier():
     input_path = OUTPUT_DIR / INPUT_FILENAME
-    if not input_path.exists():
-        logging.error(f"Input file not found: {input_path}. Please run super_ensemble_data_prep.py first.")
-        return
+    if not input_path.exists(): return
 
-    logging.info("--- Loading Prepared Data for Meta-Learner Training (TSCV) ---")
+    logging.info("--- Training Context-Aware Meta-Learner ---")
     df = pd.read_csv(input_path)
 
-    # 1. Define Features (X) and Target (Y)
-    TARGET_COL = 'Best_Model'
+    # Features: Signals + Trend + CONTEXT
+    # We dynamically select columns that are NOT metadata
+    exclude_cols = ['year', 'district_no', 'kreisYield', 'Best_Model', 'Oracle_Error', 'Predicted_Model',
+                    'Switch_Prediction', 'Target_Encoded']
+    # Also exclude raw predictions (we rely on signals)
+    pred_cols = [c for c in df.columns if c.endswith('_pred') and c != 'Statistical_Trend_pred']
 
-    EXCLUDE_COLS = ['year', 'district_no', 'kreisYield', TARGET_COL]
-    PRED_COLS = [col for col in df.columns if col.endswith('_pred')]
+    feature_cols = [c for c in df.columns if c not in exclude_cols + pred_cols]
 
-    feature_cols = [col for col in df.columns if col not in EXCLUDE_COLS + PRED_COLS]
-    X = df[feature_cols]
-    y = df[TARGET_COL]
+    # Ensure specific context cols are present in the list if they exist
+    context_keys = ['is_gdr', 'summer_water_balance_anomaly', 'avg_clay_0_30cm']
+    found_context = [c for c in context_keys if c in feature_cols]
 
-    logging.info(f"Target variable: {TARGET_COL}")
-    logging.info(f"Number of training features: {len(feature_cols)}")
+    logging.info(f"Training Features: {feature_cols}")
+    logging.info(f"Context Features Found: {found_context}")
 
-    # 2. Strict Time-Series Split (TSCV)
-    # Train: All data up to and including SPLIT_YEAR
-    # Test: All data after SPLIT_YEAR
+    # Target
+    le = LabelEncoder()
+    df['Target_Encoded'] = le.fit_transform(df['Best_Model'])
+    label_map = dict(zip(le.classes_, le.transform(le.classes_)))
+    label_map_json = {k: int(v) for k, v in label_map.items()}
 
-    X_train = df[df['year'] <= SPLIT_YEAR][feature_cols]
-    y_train = df[df['year'] <= SPLIT_YEAR][TARGET_COL]
+    # Walk-Forward
+    results = []
+    final_model = None
 
-    X_test = df[df['year'] > SPLIT_YEAR][feature_cols]
-    y_test = df[df['year'] > SPLIT_YEAR][TARGET_COL]
+    for year in range(WALK_FORWARD_START_YEAR, LAST_HISTORICAL_YEAR + 1):
+        train = df[df['year'] < year]
+        test = df[df['year'] == year].copy()
 
-    logging.info("\n" + "=" * 50)
-    logging.info(f"Time Series Split Point: {SPLIT_YEAR}")
-    logging.info(f"Training Period: <={SPLIT_YEAR} ({len(X_train)} samples)")
-    logging.info(f"Testing Period: >{SPLIT_YEAR} ({len(X_test)} samples)")
-    logging.info("=" * 50)
+        if train.empty or test.empty: continue
 
-    if X_test.empty:
-        logging.error("Testing set is empty. Adjust SPLIT_YEAR.")
-        return
+        X_train = train[feature_cols]
+        y_train = train['Target_Encoded']
+        X_test = test[feature_cols]
 
-    # 3. Train the XGBoost Classifier
-    logging.info("\n--- Training XGBoost Meta-Learner (TSCV) ---")
+        # Classifier
+        clf = XGBClassifier(
+            objective='multi:softmax',
+            num_class=len(label_map),
+            n_estimators=150,  # Increased slightly
+            max_depth=4,  # Increased depth to learn interactions (e.g., East + Drought)
+            learning_rate=0.04,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            n_jobs=-1,
+            random_state=42
+        )
 
-    model = XGBClassifier(
-        objective='multi:softmax',
-        n_estimators=100,
-        learning_rate=0.1,
-        use_label_encoder=False,
-        eval_metric='mlogloss',
-        random_state=42
-    )
+        clf.fit(X_train, y_train)
 
-    # Need to map string labels to integers for XGBoost
-    label_map = {label: i for i, label in enumerate(y_train.unique())}
-    y_train_encoded = y_train.map(label_map)
-    y_test_encoded = y_test.map(label_map)
+        pred_encoded = clf.predict(X_test)
+        pred_labels = le.inverse_transform(pred_encoded)
+        test['Predicted_Model'] = pred_labels
 
-    model.fit(X_train, y_train_encoded)
+        # Simulation (Hard Switch for validation metrics)
+        def get_pred_value(row):
+            model_col = f"{row['Predicted_Model']}_pred"
+            return row.get(model_col, np.nan)
 
-    # 4. Evaluate the Model on Out-of-Time Test Set
-    y_pred_encoded = model.predict(X_test)
+        test['Switch_Prediction'] = test.apply(get_pred_value, axis=1)
+        results.append(test)
 
-    # Decode predictions back to original model names for clear reporting
-    reverse_label_map = {i: label for label, i in label_map.items()}
-    y_pred = pd.Series(y_pred_encoded).map(reverse_label_map)
+        if year == LAST_HISTORICAL_YEAR:
+            final_model = clf
 
-    accuracy = accuracy_score(y_test, y_pred)
-    logging.info(f"\nMeta-Learner Classification Accuracy (Out-of-Time Test Set): **{accuracy:.4f}**")
+    # Evaluation
+    df_res = pd.concat(results)
+    acc = accuracy_score(df_res['Target_Encoded'], le.transform(df_res['Predicted_Model']))
+    mae_switch = mean_absolute_error(df_res['kreisYield'], df_res['Switch_Prediction'])
+    mae_trend = mean_absolute_error(df_res['kreisYield'], df_res['Statistical_Trend_pred'])
 
-    logging.info("\nClassification Report (How well it picks the best model):")
-    logging.info(classification_report(y_test, y_pred))
+    logging.info("\n" + "=" * 60)
+    logging.info(f"META-LEARNER RESULTS ({WALK_FORWARD_START_YEAR}-{LAST_HISTORICAL_YEAR})")
+    logging.info("=" * 60)
+    logging.info(f"Accuracy: {acc:.2%}")
+    logging.info(f"Trend MAE:        {mae_trend:.4f}")
+    logging.info(f"Switch MAE:       {mae_switch:.4f} (Hard Switch)")
+    logging.info(f"Improvement:      {mae_trend - mae_switch:+.4f}")
 
-    # 5. Save the Trained Model and Map
-    model_path = OUTPUT_DIR / MODEL_FILENAME
-    model.save_model(model_path)
-
-    # Save the label map for future use in prediction
-    with open(OUTPUT_DIR / LABEL_MAP_FILENAME, 'w') as f:
-        json.dump(label_map, f)
-
-    logging.info(f"--- TSCV Meta-Learner training complete. Model saved to: {model_path} ---")
+    if final_model:
+        final_model.save_model(OUTPUT_DIR / MODEL_FILENAME)
+        with open(OUTPUT_DIR / LABEL_MAP_FILENAME, 'w') as f:
+            json.dump(label_map_json, f, indent=4)
 
 
 if __name__ == '__main__':
-    train_and_evaluate_meta_learner_ts()
+    train_classifier()
