@@ -45,11 +45,9 @@ MODEL_COLUMN_MAP = {
 def load_and_merge_components():
     logging.info("--- Loading and Merging Super-Ensemble Components ---")
 
-    # 1. Establish Backbone with Ground Truth (Hybrid XGB)
+    # 1. Establish Backbone (Hybrid XGB)
     if not HYBRID_XGB_PATH.exists():
-        logging.error("Hybrid XGB Path not found. Cannot load Ground Truth.")
         return pd.DataFrame()
-
     df = pd.read_csv(HYBRID_XGB_PATH)[['year', 'district_no', 'kreisYield']]
     df['district_no'] = df['district_no'].astype(int)
 
@@ -60,21 +58,17 @@ def load_and_merge_components():
             df_m = pd.read_csv(p)
             if 'district_no' in df_m.columns:
                 df_m['district_no'] = df_m['district_no'].astype(int)
-
             pred_col = MODEL_COLUMN_MAP[model_name]
             if pred_col in df_m.columns:
                 target_col = f'{model_name.replace(" ", "_")}_pred'
                 df_m = df_m[['year', 'district_no', pred_col]].rename(columns={pred_col: target_col})
                 df = pd.merge(df, df_m, on=['year', 'district_no'], how='left')
-                logging.info(f"✓ Merged {model_name}")
 
-    # 3. Clean & Fill Data
+    # 3. Clean & Fill
     df_clean = df[(df['year'] >= ANALYSIS_START_YEAR) & (df['year'] <= ANALYSIS_END_YEAR)].copy()
-
     anchor_col = f'{ANCHOR_MODEL.replace(" ", "_")}_pred'
     pred_cols = [f'{m.replace(" ", "_")}_pred' for m in COMPONENT_MODELS.keys()]
 
-    # Fill missing with Anchor
     if anchor_col in df_clean.columns:
         for col in pred_cols:
             if col in df_clean.columns:
@@ -96,12 +90,9 @@ def load_and_merge_components():
             'sowing_doy_anomaly'
         ]
         context_cols = [c for c in context_cols if c in df_ctx.columns]
-
         df_clean = pd.merge(df_clean, df_ctx[context_cols], on=['year', 'district_no'], how='left')
-
         for c in context_cols:
-            if c not in ['year', 'district_no']:
-                df_clean[c] = df_clean[c].fillna(0)
+            if c not in ['year', 'district_no']: df_clean[c] = df_clean[c].fillna(0)
 
     logging.info(f"Data ready: {len(df_clean)} records.")
     return df_clean
@@ -112,64 +103,47 @@ def create_classification_features(df):
     df_new = df.copy()
     anchor_col = f'{ANCHOR_MODEL.replace(" ", "_")}_pred'
 
-    # 1. Target: Best Model
+    # 1. Target
     error_cols = []
     model_pred_cols = []
-
     for model in COMPONENT_MODELS.keys():
         col_name = f'{model.replace(" ", "_")}_pred'
-        if col_name not in df_new.columns: continue
-        model_pred_cols.append(col_name)
-
-        err_col = f'Error_{model.replace(" ", "_")}'
-        df_new[err_col] = (df_new['kreisYield'] - df_new[col_name]).abs()
-        error_cols.append(err_col)
+        if col_name in df_new.columns:
+            model_pred_cols.append(col_name)
+            err_col = f'Error_{model.replace(" ", "_")}'
+            df_new[err_col] = (df_new['kreisYield'] - df_new[col_name]).abs()
+            error_cols.append(err_col)
 
     df_new['Best_Model'] = df_new[error_cols].idxmin(axis=1).apply(lambda x: x.replace('Error_', ''))
     df_new['Oracle_Error'] = df_new[error_cols].min(axis=1)
 
-    # 2. Basic Signals (Deviation from Trend)
-    signal_cols = []
+    # 2. Signals
     for model in COMPONENT_MODELS.keys():
         if model == ANCHOR_MODEL: continue
         col_name = f'{model.replace(" ", "_")}_pred'
-        if col_name not in df_new.columns: continue
-        signal_name = f'Signal_{model.replace(" ", "_")}'
-        df_new[signal_name] = df_new[col_name] - df_new[anchor_col]
-        signal_cols.append(signal_name)
+        if col_name in df_new.columns:
+            signal_name = f'Signal_{model.replace(" ", "_")}'
+            df_new[signal_name] = df_new[col_name] - df_new[anchor_col]
 
-    # 3. NEW: Consensus Features (The "Meta-Signals")
-    # Calculate across all available model prediction columns
+    # 3. Consensus Features
     pred_matrix = df_new[model_pred_cols]
-
-    # A. Ensemble Spread (How confused are the models?)
     df_new['Ensemble_Std'] = pred_matrix.std(axis=1)
-
-    # B. Max Crash Signal (Is anyone screaming fire?)
-    # We look for the minimum value relative to the Trend
-    # (Prediction - Trend).min()
     deviations = pred_matrix.subtract(df_new[anchor_col], axis=0)
     df_new['Max_Crash_Signal'] = deviations.min(axis=1)
+    df_new['Trend_Consensus_Count'] = deviations.abs().lt(df_new[anchor_col] * 0.05, axis=0).sum(axis=1)
 
-    # C. Max Bumper Signal (Is anyone screaming bumper?)
-    df_new['Max_Bumper_Signal'] = deviations.max(axis=1)
+    # 4. NEW: Regional Logic (State ID)
+    # Extracts the first 2 digits of district_no as 'state_id'
+    df_new['state_id'] = df_new['district_no'].astype(str).str.zfill(5).str[:2].astype(int)
+    logging.info("Added 'state_id' feature for granular regional learning.")
 
-    # D. Agreement Count (How many models are within +/- 5% of Trend?)
-    # This tells us if the "Consensus" is strong around the Trend
-    threshold = df_new[anchor_col] * 0.05
-    # (Abs deviation < threshold).sum()
-    df_new['Trend_Consensus_Count'] = deviations.abs().lt(threshold, axis=0).sum(axis=1)
-
-    # 4. Save
+    # 5. Save
     exclude = error_cols
     final_cols = [c for c in df_new.columns if c not in exclude]
 
     output_path = OUTPUT_DIR / OUTPUT_FILENAME
     df_new[final_cols].to_csv(output_path, index=False)
     logging.info(f"--- Training Data Saved: {output_path} ---")
-
-    new_feats = ['Ensemble_Std', 'Max_Crash_Signal', 'Trend_Consensus_Count']
-    logging.info(f"Added Consensus Features: {new_feats}")
 
 
 def main():
