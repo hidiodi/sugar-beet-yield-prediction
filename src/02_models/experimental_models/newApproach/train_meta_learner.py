@@ -28,23 +28,28 @@ def train_classifier():
     input_path = OUTPUT_DIR / INPUT_FILENAME
     if not input_path.exists(): return
 
-    logging.info("--- Training Meta-Learner (v3: State-Aware) ---")
+    logging.info("--- Training Meta-Learner (v4: History-Aware + Cleaned) ---")
     df = pd.read_csv(input_path)
+
+    # --- NEW: CLEANING STEP ---
+    # Remove data points where Oracle Error > 200 (e.g. Aurich 2012)
+    # These are likely data collection errors that confuse the classifier
+    if 'Is_Garbage_Data' in df.columns:
+        n_garbage = df['Is_Garbage_Data'].sum()
+        if n_garbage > 0:
+            logging.info(f"🧹 Removing {n_garbage} 'Garbage' rows (Oracle Error > 200) from Training...")
+            df = df[df['Is_Garbage_Data'] == 0].copy()
 
     # Feature Selection
     exclude_cols = ['year', 'district_no', 'kreisYield', 'Best_Model', 'Oracle_Error', 'Predicted_Model',
-                    'Switch_Prediction', 'Target_Encoded']
+                    'Switch_Prediction', 'Target_Encoded', 'Is_Garbage_Data']
     pred_cols = [c for c in df.columns if c.endswith('_pred') and c != 'Statistical_Trend_pred']
 
     feature_cols = [c for c in df.columns if c not in exclude_cols + pred_cols]
 
-    # Check for State ID
-    if 'state_id' in feature_cols:
-        logging.info("✓ 'state_id' found. The model will now learn state-specific rules.")
-    else:
-        logging.warning("⚠ 'state_id' NOT found. Check data prep.")
-
     logging.info(f"Features: {feature_cols}")
+    if 'District_Historical_Bias' in feature_cols:
+        logging.info("✓ 'District_Historical_Bias' active. Model knows which districts usually fail.")
 
     # Target
     le = LabelEncoder()
@@ -99,11 +104,10 @@ def train_classifier():
     mae_trend = mean_absolute_error(df_res['kreisYield'], df_res['Statistical_Trend_pred'])
 
     logging.info("\n" + "=" * 60)
-    logging.info(f"META-LEARNER v3 RESULTS ({WALK_FORWARD_START_YEAR}-{LAST_HISTORICAL_YEAR})")
+    logging.info(f"META-LEARNER v4 RESULTS ({WALK_FORWARD_START_YEAR}-{LAST_HISTORICAL_YEAR})")
     logging.info("=" * 60)
     logging.info(f"Trend MAE:        {mae_trend:.4f}")
     logging.info(f"Hard Switch MAE:  {mae_switch:.4f}")
-    logging.info(f"Improvement:      {mae_trend - mae_switch:+.4f}")
 
     if final_model:
         final_model.save_model(OUTPUT_DIR / MODEL_FILENAME)
