@@ -40,11 +40,18 @@ def generate_forecast():
 
     sorted_models = sorted(label_map.keys(), key=lambda x: label_map[x])
 
-    # Feature Selection
-    exclude_cols = ['year', 'district_no', 'kreisYield', 'Best_Model', 'Oracle_Error', 'Predicted_Model',
-                    'Switch_Prediction', 'Target_Encoded']
+    # Feature Selection (Must match Training exactly!)
+    # Added 'Is_Garbage_Data' and 'Raw_Bias' to exclusion list
+    exclude_cols = [
+        'year', 'district_no', 'kreisYield', 'Best_Model', 'Oracle_Error',
+        'Predicted_Model', 'Switch_Prediction', 'Target_Encoded',
+        'Is_Garbage_Data', 'Raw_Bias'
+    ]
+
     pred_cols = [c for c in df.columns if c.endswith('_pred') and c != 'Statistical_Trend_pred']
     feature_cols = [c for c in df.columns if c not in exclude_cols + pred_cols]
+
+    logging.info(f"Inference Features ({len(feature_cols)}): {feature_cols}")
 
     # Predict Probas
     probas = clf.predict_proba(df[feature_cols])

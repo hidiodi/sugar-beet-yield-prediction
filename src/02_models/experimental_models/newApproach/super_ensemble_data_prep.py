@@ -45,13 +45,11 @@ MODEL_COLUMN_MAP = {
 def load_and_merge_components():
     logging.info("--- Loading and Merging Super-Ensemble Components ---")
 
-    # 1. Establish Backbone (Hybrid XGB)
     if not HYBRID_XGB_PATH.exists():
         return pd.DataFrame()
     df = pd.read_csv(HYBRID_XGB_PATH)[['year', 'district_no', 'kreisYield']]
     df['district_no'] = df['district_no'].astype(int)
 
-    # 2. Merge Components
     for model_name, path in COMPONENT_MODELS.items():
         p = Path(path)
         if p.exists():
@@ -64,7 +62,6 @@ def load_and_merge_components():
                 df_m = df_m[['year', 'district_no', pred_col]].rename(columns={pred_col: target_col})
                 df = pd.merge(df, df_m, on=['year', 'district_no'], how='left')
 
-    # 3. Clean & Fill
     df_clean = df[(df['year'] >= ANALYSIS_START_YEAR) & (df['year'] <= ANALYSIS_END_YEAR)].copy()
     anchor_col = f'{ANCHOR_MODEL.replace(" ", "_")}_pred'
     pred_cols = [f'{m.replace(" ", "_")}_pred' for m in COMPONENT_MODELS.keys()]
@@ -76,32 +73,52 @@ def load_and_merge_components():
 
     df_clean.dropna(subset=[anchor_col, 'kreisYield'], inplace=True)
 
-    # 4. Merge Context Features
     if STAGE1_FEATURES_PATH.exists():
         logging.info("Merging Context Features...")
         df_ctx = pd.read_csv(STAGE1_FEATURES_PATH)
         df_ctx['district_no'] = df_ctx['district_no'].astype(int)
-
-        context_cols = [
-            'year', 'district_no',
-            'is_gdr', 'avg_clay_0_30cm',
-            'summer_water_balance_anomaly',
-            'summer_days_tmax_gt_30c',
-            'sowing_doy_anomaly'
-        ]
+        context_cols = ['year', 'district_no', 'is_gdr', 'avg_clay_0_30cm', 'summer_water_balance_anomaly',
+                        'summer_days_tmax_gt_30c', 'sowing_doy_anomaly']
         context_cols = [c for c in context_cols if c in df_ctx.columns]
         df_clean = pd.merge(df_clean, df_ctx[context_cols], on=['year', 'district_no'], how='left')
         for c in context_cols:
             if c not in ['year', 'district_no']: df_clean[c] = df_clean[c].fillna(0)
 
-    logging.info(f"Data ready: {len(df_clean)} records.")
     return df_clean
+
+
+def calculate_district_history(df):
+    """
+    Calculates the historical bias (Yield - Trend) for each district.
+    Strictly Walk-Forward: Year X only knows about X-1, X-2...
+    """
+    logging.info("Calculating District Historical Bias (Walk-Forward)...")
+
+    anchor_col = f'{ANCHOR_MODEL.replace(" ", "_")}_pred'
+    df = df.sort_values(['district_no', 'year'])
+
+    # Raw Bias: Positive = Yield > Trend (Overperformer), Negative = Yield < Trend (Underperformer)
+    df['Raw_Bias'] = df['kreisYield'] - df[anchor_col]
+
+    # Expanding Mean, Shifted by 1 to prevent leakage
+    # Group by district, calculate expanding mean, then shift down
+    df['District_Historical_Bias'] = df.groupby('district_no')['Raw_Bias'].transform(
+        lambda x: x.expanding().mean().shift(1)
+    )
+
+    # Fill NaN for the first year of each district with 0 (Neutral assumption)
+    df['District_Historical_Bias'] = df['District_Historical_Bias'].fillna(0)
+
+    return df
 
 
 def create_classification_features(df):
     logging.info("\n--- Creating Classification Targets & Consensus Features ---")
     df_new = df.copy()
     anchor_col = f'{ANCHOR_MODEL.replace(" ", "_")}_pred'
+
+    # 0. NEW: Add History Feature
+    df_new = calculate_district_history(df_new)
 
     # 1. Target
     error_cols = []
@@ -117,7 +134,11 @@ def create_classification_features(df):
     df_new['Best_Model'] = df_new[error_cols].idxmin(axis=1).apply(lambda x: x.replace('Error_', ''))
     df_new['Oracle_Error'] = df_new[error_cols].min(axis=1)
 
-    # 2. Signals
+    # 2. Outlier Flag (For Filtering in Trainer)
+    # Flag rows where even the Oracle is off by > 200 (Aurich 2012 type errors)
+    df_new['Is_Garbage_Data'] = (df_new['Oracle_Error'] > 200).astype(int)
+
+    # 3. Signals
     for model in COMPONENT_MODELS.keys():
         if model == ANCHOR_MODEL: continue
         col_name = f'{model.replace(" ", "_")}_pred'
@@ -125,25 +146,24 @@ def create_classification_features(df):
             signal_name = f'Signal_{model.replace(" ", "_")}'
             df_new[signal_name] = df_new[col_name] - df_new[anchor_col]
 
-    # 3. Consensus Features
+    # 4. Consensus
     pred_matrix = df_new[model_pred_cols]
     df_new['Ensemble_Std'] = pred_matrix.std(axis=1)
     deviations = pred_matrix.subtract(df_new[anchor_col], axis=0)
     df_new['Max_Crash_Signal'] = deviations.min(axis=1)
     df_new['Trend_Consensus_Count'] = deviations.abs().lt(df_new[anchor_col] * 0.05, axis=0).sum(axis=1)
 
-    # 4. NEW: Regional Logic (State ID)
-    # Extracts the first 2 digits of district_no as 'state_id'
+    # 5. State ID
     df_new['state_id'] = df_new['district_no'].astype(str).str.zfill(5).str[:2].astype(int)
-    logging.info("Added 'state_id' feature for granular regional learning.")
 
-    # 5. Save
-    exclude = error_cols
+    # 6. Save
+    exclude = error_cols + ['Raw_Bias']  # Don't save the raw bias used for calculation
     final_cols = [c for c in df_new.columns if c not in exclude]
 
     output_path = OUTPUT_DIR / OUTPUT_FILENAME
     df_new[final_cols].to_csv(output_path, index=False)
     logging.info(f"--- Training Data Saved: {output_path} ---")
+    logging.info("Added: 'District_Historical_Bias', 'Is_Garbage_Data'")
 
 
 def main():
