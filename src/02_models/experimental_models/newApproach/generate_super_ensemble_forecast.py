@@ -29,7 +29,7 @@ def generate_forecast():
 
     if not model_path.exists(): return
 
-    logging.info("--- Generating Context-Aware Super-Ensemble Forecast ---")
+    logging.info("--- Generating Consensus-Aware Super-Ensemble Forecast ---")
     df = pd.read_csv(input_path)
 
     clf = XGBClassifier()
@@ -40,13 +40,11 @@ def generate_forecast():
 
     sorted_models = sorted(label_map.keys(), key=lambda x: label_map[x])
 
-    # Feature Selection (Must match Training!)
+    # Feature Selection
     exclude_cols = ['year', 'district_no', 'kreisYield', 'Best_Model', 'Oracle_Error', 'Predicted_Model',
                     'Switch_Prediction', 'Target_Encoded']
     pred_cols = [c for c in df.columns if c.endswith('_pred') and c != 'Statistical_Trend_pred']
     feature_cols = [c for c in df.columns if c not in exclude_cols + pred_cols]
-
-    logging.info(f"Inference Features: {feature_cols}")
 
     # Predict Probas
     probas = clf.predict_proba(df[feature_cols])
@@ -60,16 +58,12 @@ def generate_forecast():
         df[f'Prob_{model_name}'] = model_prob
 
     df['Super_Ensemble_pred'] = weighted_preds
-
-    # Hard Pred for logging
     df['Predicted_Best_Model'] = [sorted_models[i] for i in np.argmax(probas, axis=1)]
 
     # Analysis
     df_test = df[df['year'] >= TEST_YEAR_START].copy()
     if not df_test.empty:
-        if 'Oracle_Error' not in df_test.columns:
-            # Fallback
-            pass
+        if 'Oracle_Error' not in df_test.columns: pass
 
         mae_trend = mean_absolute_error(df_test['kreisYield'], df_test['Statistical_Trend_pred'])
         mae_ens = mean_absolute_error(df_test['kreisYield'], df_test['Super_Ensemble_pred'])
@@ -78,7 +72,7 @@ def generate_forecast():
         logging.info(f"TEST PERIOD ({TEST_YEAR_START}-2024)")
         logging.info("=" * 80)
         logging.info(f"Trend MAE:          {mae_trend:.4f}")
-        logging.info(f"Super Ensemble MAE: {mae_ens:.4f} (Context-Aware)")
+        logging.info(f"Super Ensemble MAE: {mae_ens:.4f} (Consensus-Aware)")
         logging.info(f"Gain vs Trend:      {mae_trend - mae_ens:+.4f}")
 
     df[['year', 'district_no', 'kreisYield', 'Super_Ensemble_pred', 'Predicted_Best_Model'] + [c for c in df.columns if

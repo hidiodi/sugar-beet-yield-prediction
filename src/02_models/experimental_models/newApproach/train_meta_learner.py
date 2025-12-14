@@ -28,24 +28,18 @@ def train_classifier():
     input_path = OUTPUT_DIR / INPUT_FILENAME
     if not input_path.exists(): return
 
-    logging.info("--- Training Context-Aware Meta-Learner ---")
+    logging.info("--- Training Meta-Learner (v2: Consensus-Aware) ---")
     df = pd.read_csv(input_path)
 
-    # Features: Signals + Trend + CONTEXT
-    # We dynamically select columns that are NOT metadata
+    # Feature Selection
     exclude_cols = ['year', 'district_no', 'kreisYield', 'Best_Model', 'Oracle_Error', 'Predicted_Model',
                     'Switch_Prediction', 'Target_Encoded']
-    # Also exclude raw predictions (we rely on signals)
     pred_cols = [c for c in df.columns if c.endswith('_pred') and c != 'Statistical_Trend_pred']
 
     feature_cols = [c for c in df.columns if c not in exclude_cols + pred_cols]
 
-    # Ensure specific context cols are present in the list if they exist
-    context_keys = ['is_gdr', 'summer_water_balance_anomaly', 'avg_clay_0_30cm']
-    found_context = [c for c in context_keys if c in feature_cols]
-
-    logging.info(f"Training Features: {feature_cols}")
-    logging.info(f"Context Features Found: {found_context}")
+    # Log key features
+    logging.info(f"Features ({len(feature_cols)}): {feature_cols}")
 
     # Target
     le = LabelEncoder()
@@ -67,15 +61,16 @@ def train_classifier():
         y_train = train['Target_Encoded']
         X_test = test[feature_cols]
 
-        # Classifier
+        # Tuned Hyperparameters for better generalization
         clf = XGBClassifier(
             objective='multi:softmax',
             num_class=len(label_map),
-            n_estimators=150,  # Increased slightly
-            max_depth=4,  # Increased depth to learn interactions (e.g., East + Drought)
-            learning_rate=0.04,
-            subsample=0.8,
-            colsample_bytree=0.8,
+            n_estimators=200,  # More trees (was 150)
+            max_depth=4,  # Keep depth 4 for interactions
+            learning_rate=0.03,  # Slower learning (was 0.04)
+            subsample=0.75,  # More randomness to prevent overfitting
+            colsample_bytree=0.75,
+            gamma=0.1,  # Slight regularization
             n_jobs=-1,
             random_state=42
         )
@@ -86,7 +81,6 @@ def train_classifier():
         pred_labels = le.inverse_transform(pred_encoded)
         test['Predicted_Model'] = pred_labels
 
-        # Simulation (Hard Switch for validation metrics)
         def get_pred_value(row):
             model_col = f"{row['Predicted_Model']}_pred"
             return row.get(model_col, np.nan)
@@ -104,11 +98,11 @@ def train_classifier():
     mae_trend = mean_absolute_error(df_res['kreisYield'], df_res['Statistical_Trend_pred'])
 
     logging.info("\n" + "=" * 60)
-    logging.info(f"META-LEARNER RESULTS ({WALK_FORWARD_START_YEAR}-{LAST_HISTORICAL_YEAR})")
+    logging.info(f"META-LEARNER v2 RESULTS ({WALK_FORWARD_START_YEAR}-{LAST_HISTORICAL_YEAR})")
     logging.info("=" * 60)
     logging.info(f"Accuracy: {acc:.2%}")
     logging.info(f"Trend MAE:        {mae_trend:.4f}")
-    logging.info(f"Switch MAE:       {mae_switch:.4f} (Hard Switch)")
+    logging.info(f"Hard Switch MAE:  {mae_switch:.4f}")
     logging.info(f"Improvement:      {mae_trend - mae_switch:+.4f}")
 
     if final_model:
