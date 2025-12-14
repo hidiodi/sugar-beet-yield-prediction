@@ -104,8 +104,15 @@ def train_ensemble_component(df, features, target_col, params, name):
     for year in sorted(df['year'].unique()):
         if year < 2005: continue
 
-        train = df[df['year'] != year]
+        # --- FIX: Changed from LOYO (df['year'] != year) to Walk-Forward (df['year'] < year) ---
+        train = df[df['year'] < year]
         test = df[df['year'] == year]
+
+        # Skip if no training data (should only happen for the very first year we loop over)
+        if train.empty:
+            logging.info(f"Skipping prediction for year {year}: No training data available (Walk-Forward).")
+            continue
+        # ---------------------------------------------------------------------------------------
 
         model = xgb.XGBRegressor(**run_params)
         model.fit(train[available_feats], train[target_col])
@@ -118,7 +125,9 @@ def train_ensemble_component(df, features, target_col, params, name):
         if year == 2024:
             models.append(model)
 
-    return pd.concat(preds), models[-1]
+    final_model = models[-1] if models else None
+
+    return pd.concat(preds), final_model
 
 
 def apply_smart_ensemble(df):
