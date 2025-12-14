@@ -41,8 +41,11 @@ def train_classifier():
             df = df[df['Is_Garbage_Data'] == 0].copy()
 
     # Feature Selection
-    exclude_cols = ['year', 'district_no', 'kreisYield', 'Best_Model', 'Oracle_Error', 'Predicted_Model',
-                    'Switch_Prediction', 'Target_Encoded', 'Is_Garbage_Data']
+    exclude_cols = [
+        'year', 'district_no', 'kreisYield', 'Best_Model', 'Oracle_Error',
+        'Predicted_Model', 'Switch_Prediction', 'Target_Encoded',
+        'Is_Garbage_Data', 'Raw_Bias', 'Regret_Weight', 'Median_Error'
+    ]
     pred_cols = [c for c in df.columns if c.endswith('_pred') and c != 'Statistical_Trend_pred']
 
     feature_cols = [c for c in df.columns if c not in exclude_cols + pred_cols]
