@@ -40,12 +40,12 @@ def generate_forecast():
 
     sorted_models = sorted(label_map.keys(), key=lambda x: label_map[x])
 
-    # Feature Selection (Must match Training exactly!)
-    # Added 'Is_Garbage_Data' and 'Raw_Bias' to exclusion list
+    # Feature Selection (Must match Training!)
+    # FIX: Explicitly exclude Regret_Weight and Median_Error so they aren't used as features
     exclude_cols = [
         'year', 'district_no', 'kreisYield', 'Best_Model', 'Oracle_Error',
         'Predicted_Model', 'Switch_Prediction', 'Target_Encoded',
-        'Is_Garbage_Data', 'Raw_Bias'
+        'Is_Garbage_Data', 'Raw_Bias', 'Regret_Weight', 'Median_Error'
     ]
 
     pred_cols = [c for c in df.columns if c.endswith('_pred') and c != 'Statistical_Trend_pred']
