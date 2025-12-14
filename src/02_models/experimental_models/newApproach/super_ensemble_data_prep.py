@@ -19,7 +19,6 @@ STATISTICAL_TREND_PATH = Path(CONFIG['STATISTICAL_TREND_FILE'])
 HYBRID_XGB_PATH = Path(CONFIG['HYBRID_XGB_PREDICTIONS_FILE'])
 V31_SOLAR_PATH = config.DATA_DIR / '06_model_output' / 'v31_solar_gated_forecast.csv'
 ROBUST_LINEAR_PATH = config.DATA_DIR / '06_model_output' / 'recovery_models' / 'stage2_forecasts.csv'
-# NEW: Stage 1 Features for Context
 STAGE1_FEATURES_PATH = config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
 
 ANALYSIS_START_YEAR = 2000
@@ -46,8 +45,7 @@ MODEL_COLUMN_MAP = {
 def load_and_merge_components():
     logging.info("--- Loading and Merging Super-Ensemble Components ---")
 
-    # 1. Establish Backbone with Ground Truth
-    # FIX: Use Hybrid XGB because it contains 'kreisYield' (Target)
+    # 1. Establish Backbone with Ground Truth (Hybrid XGB)
     if not HYBRID_XGB_PATH.exists():
         logging.error("Hybrid XGB Path not found. Cannot load Ground Truth.")
         return pd.DataFrame()
@@ -84,27 +82,23 @@ def load_and_merge_components():
 
     df_clean.dropna(subset=[anchor_col, 'kreisYield'], inplace=True)
 
-    # 4. NEW: Merge Context Features (The "Why")
+    # 4. Merge Context Features
     if STAGE1_FEATURES_PATH.exists():
-        logging.info("Merging Context Features (Soil, Water, Region)...")
+        logging.info("Merging Context Features...")
         df_ctx = pd.read_csv(STAGE1_FEATURES_PATH)
         df_ctx['district_no'] = df_ctx['district_no'].astype(int)
 
-        # Select critical context features
         context_cols = [
             'year', 'district_no',
-            'is_gdr',  # Regional Logic
-            'avg_clay_0_30cm',  # Soil Logic
-            'summer_water_balance_anomaly',  # Drought Logic
-            'summer_days_tmax_gt_30c',  # Heat Logic
-            'sowing_doy_anomaly'  # Ag Logic
+            'is_gdr', 'avg_clay_0_30cm',
+            'summer_water_balance_anomaly',
+            'summer_days_tmax_gt_30c',
+            'sowing_doy_anomaly'
         ]
-        # Only keep available columns
         context_cols = [c for c in context_cols if c in df_ctx.columns]
 
         df_clean = pd.merge(df_clean, df_ctx[context_cols], on=['year', 'district_no'], how='left')
 
-        # Fill context NaNs with 0 to prevent dropping
         for c in context_cols:
             if c not in ['year', 'district_no']:
                 df_clean[c] = df_clean[c].fillna(0)
@@ -114,25 +108,27 @@ def load_and_merge_components():
 
 
 def create_classification_features(df):
-    logging.info("\n--- Creating Classification Targets & Features ---")
+    logging.info("\n--- Creating Classification Targets & Consensus Features ---")
     df_new = df.copy()
     anchor_col = f'{ANCHOR_MODEL.replace(" ", "_")}_pred'
 
     # 1. Target: Best Model
     error_cols = []
+    model_pred_cols = []
+
     for model in COMPONENT_MODELS.keys():
         col_name = f'{model.replace(" ", "_")}_pred'
         if col_name not in df_new.columns: continue
+        model_pred_cols.append(col_name)
+
         err_col = f'Error_{model.replace(" ", "_")}'
         df_new[err_col] = (df_new['kreisYield'] - df_new[col_name]).abs()
         error_cols.append(err_col)
 
     df_new['Best_Model'] = df_new[error_cols].idxmin(axis=1).apply(lambda x: x.replace('Error_', ''))
-
-    # Oracle Stats
     df_new['Oracle_Error'] = df_new[error_cols].min(axis=1)
 
-    # 2. Signals
+    # 2. Basic Signals (Deviation from Trend)
     signal_cols = []
     for model in COMPONENT_MODELS.keys():
         if model == ANCHOR_MODEL: continue
@@ -142,14 +138,38 @@ def create_classification_features(df):
         df_new[signal_name] = df_new[col_name] - df_new[anchor_col]
         signal_cols.append(signal_name)
 
-    # 3. Save
+    # 3. NEW: Consensus Features (The "Meta-Signals")
+    # Calculate across all available model prediction columns
+    pred_matrix = df_new[model_pred_cols]
+
+    # A. Ensemble Spread (How confused are the models?)
+    df_new['Ensemble_Std'] = pred_matrix.std(axis=1)
+
+    # B. Max Crash Signal (Is anyone screaming fire?)
+    # We look for the minimum value relative to the Trend
+    # (Prediction - Trend).min()
+    deviations = pred_matrix.subtract(df_new[anchor_col], axis=0)
+    df_new['Max_Crash_Signal'] = deviations.min(axis=1)
+
+    # C. Max Bumper Signal (Is anyone screaming bumper?)
+    df_new['Max_Bumper_Signal'] = deviations.max(axis=1)
+
+    # D. Agreement Count (How many models are within +/- 5% of Trend?)
+    # This tells us if the "Consensus" is strong around the Trend
+    threshold = df_new[anchor_col] * 0.05
+    # (Abs deviation < threshold).sum()
+    df_new['Trend_Consensus_Count'] = deviations.abs().lt(threshold, axis=0).sum(axis=1)
+
+    # 4. Save
     exclude = error_cols
     final_cols = [c for c in df_new.columns if c not in exclude]
 
     output_path = OUTPUT_DIR / OUTPUT_FILENAME
     df_new[final_cols].to_csv(output_path, index=False)
     logging.info(f"--- Training Data Saved: {output_path} ---")
-    logging.info(f"Context Features Included: {[c for c in df_new.columns if c in ['is_gdr', 'avg_clay_0_30cm']]}")
+
+    new_feats = ['Ensemble_Std', 'Max_Crash_Signal', 'Trend_Consensus_Count']
+    logging.info(f"Added Consensus Features: {new_feats}")
 
 
 def main():
