@@ -19,7 +19,7 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 
 # Ensure the project root is in the Python path
-project_root = Path(__file__).resolve().parents[3]
+project_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(project_root))
 
 from src import config as global_config

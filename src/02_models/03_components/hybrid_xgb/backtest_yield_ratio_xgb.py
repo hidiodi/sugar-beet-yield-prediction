@@ -12,7 +12,7 @@ import warnings
 import sys
 import numpy as np
 
-project_root = Path(__file__).resolve().parents[5]
+project_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(project_root))
 from src import config as global_config
 import importlib

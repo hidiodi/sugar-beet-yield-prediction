@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from sklearn.metrics import mean_absolute_error
 
-project_root = Path(__file__).resolve().parents[3]
+project_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(project_root))
 from src import config as global_config
 import importlib

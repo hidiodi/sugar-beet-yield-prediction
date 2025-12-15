@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # --- Project Setup ---
-project_root = Path(__file__).resolve().parents[2]
+project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 from src import config as global_config
 import importlib

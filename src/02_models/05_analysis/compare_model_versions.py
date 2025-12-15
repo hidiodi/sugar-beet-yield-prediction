@@ -8,7 +8,8 @@ import numpy as np
 # --- Project Setup ---
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
-from src import config
+import importlib
+config = importlib.import_module("src.03_analysis.config")
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 CONFIG = config.MODEL_COMPARISON_CONFIG
