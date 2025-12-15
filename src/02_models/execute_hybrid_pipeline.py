@@ -18,7 +18,7 @@ SCRIPTS = [
     #"src/02_models/01_simulation/Wofost7.1/execute_wofost_simulation.py",
 
     # --- 1. Simulation Prep & Execution (Heat Signal) ---
-    "src/02_models/01_simulation/multivariate_heat_signal.py",
+    #"src/02_models/01_simulation/multivariate_heat_signal.py",
 
     # --- 2. Feature Engineering & Trend ---
     "src/02_models/03_components/statistical/estimate_yield_trend.py",

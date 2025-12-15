@@ -40,73 +40,6 @@ def calculate_z_score(series):
 
     return z_scores
 
-
-def create_granular_weather_features(weather_dir: Path, start_year: int, end_year: int):
-    logging.info("--- Engineering Physiological Weather Features (Observed Scenarios) ---")
-    all_weather_files = list(weather_dir.glob("*.csv"))
-    if not all_weather_files: return pd.DataFrame()
-
-    df_list = []
-    for f in tqdm(all_weather_files, desc="Loading Daily Weather"):
-        try:
-            temp = pd.read_csv(f, usecols=lambda x: x in ['district_no', 'date', 'tmin', 'tmax', 'precip', 'prec'])
-            if 'date' in temp.columns:
-                temp['date'] = pd.to_datetime(temp['date'])
-                temp['year'] = temp['date'].dt.year
-                temp = temp[(temp['year'] >= start_year) & (temp['year'] <= end_year)]
-                if not temp.empty: df_list.append(temp)
-        except:
-            continue
-
-    if not df_list: return pd.DataFrame()
-    df_daily = pd.concat(df_list, ignore_index=True)
-    df_daily['district_no'] = df_daily['district_no'].astype(str).str.zfill(5)
-    df_daily['month'] = df_daily['date'].dt.month
-    if 'prec' in df_daily.columns: df_daily.rename(columns={'prec': 'precip'}, inplace=True)
-
-    df_daily.sort_values(by=['district_no', 'date'], inplace=True)
-    df_daily['precip_rolling_sum'] = df_daily.groupby('district_no')['precip'].transform(
-        lambda x: x.rolling(30, min_periods=1).sum())
-    df_daily['diurnal_temp_range'] = df_daily['tmax'] - df_daily['tmin']
-
-    # Climatology
-    daily_clim = df_daily.groupby(df_daily['date'].dt.dayofyear)[['tmax', 'precip']].mean()
-    df_daily['doy'] = df_daily['date'].dt.dayofyear
-    df_daily = df_daily.merge(daily_clim, left_on='doy', right_index=True, suffixes=('', '_clim'))
-    df_daily['tmax_anomaly_daily_pos'] = (df_daily['tmax'] - df_daily['tmax_clim']).clip(lower=0)
-    df_daily['precip_anomaly_daily_neg'] = (df_daily['precip_clim'] - df_daily['precip']).clip(lower=0)
-
-    dtr_thresh = df_daily.groupby(['district_no', 'month'])['diurnal_temp_range'].transform('quantile', 0.75)
-    df_daily['dtr_p75_local'] = dtr_thresh
-
-    df_daily['phase'] = 0
-    df_daily.loc[df_daily['month'].isin([4, 5, 6]), 'phase'] = 1
-    df_daily.loc[df_daily['month'].isin([7, 8, 9]), 'phase'] = 2
-
-    def calc_indices(g):
-        casdi = ((g['phase'] == 2) & (g['tmax'] > 30) & (g['precip_rolling_sum'] < 20)).sum()
-        nmsd = ((g['phase'] == 2) & (g['tmin'] > 17)).sum()
-        osaw = ((g['phase'] == 2) & (g['tmax'].between(17, 25)) & (g['tmin'] < 15) & (g['precip_rolling_sum'] > 20) & (
-                g['diurnal_temp_range'] > g['dtr_p75_local'])).sum()
-        p1 = g[g['phase'] == 1]
-        eces = ((p1['tmax_anomaly_daily_pos'] ** 1.5) * (p1['precip_anomaly_daily_neg'] ** 1.5)).sum()
-
-        # RESTORED: Observed Heat Days (The "Scenario" Input)
-        heat = ((g['month'].isin([6, 7, 8])) & (g['tmax'] > 25)).sum()
-
-        # UPDATED: Return explicit 'observed' column for comparison with forecast
-        return pd.Series({
-            'CASDI_Phase2_Count': casdi,
-            'NMSD_Phase2_Count': nmsd,
-            'OSAW_Phase2_Count': osaw,
-            'ECES_Phase1_Cumulative': eces,
-            'summer_days_tmax_gt_25c': heat,
-            '__obs_heat': heat
-        })
-
-    return df_daily.groupby(['district_no', 'year']).apply(calc_indices).reset_index()
-
-
 def load_forecasts_with_mapping(forecast_file):
     try:
         df = pd.read_csv(forecast_file)
@@ -242,86 +175,6 @@ def probability_to_days(df):
         logging.warning("Multivariate signal CSV not found. Returning all NaNs.")
         return pd.Series(np.nan, index=df.index)
 
-def validate_heat_forecast(df, output_dir):
-    """
-    Generates a diagnostic plot comparing the approximated forecast heat days
-    vs the actual observed heat days (Ground Truth).
-    Generates observed data on the fly to prevent leakage.
-    """
-    # 1. Generate Ground Truth (Observed) locally
-    df_obs = create_granular_weather_features(CONFIG['FILE_PATHS']['DAILY_WEATHER_DIR'], 1981, 2024)
-
-    if df_obs.empty:
-        logging.warning("Could not generate observed weather features for validation.")
-        return
-
-    # 2. Prepare Observed Column
-    # Check if __obs_heat already exists (from calc_indices)
-    if '__obs_heat' in df_obs.columns:
-        # Deduplicate columns just in case
-        df_obs = df_obs.loc[:, ~df_obs.columns.duplicated()]
-    elif 'summer_days_tmax_gt_25c' in df_obs.columns:
-        # Fallback: Rename if __obs_heat missing
-        df_obs = df_obs.rename(columns={'summer_days_tmax_gt_30c': '__obs_heat'})
-    else:
-        logging.warning("Observed heat days column not found in weather features.")
-        return
-
-    # Merge validation data
-    val_df = pd.merge(
-        df[['district_no', 'year', 'summer_days_tmax_gt_30c']],
-        df_obs[['district_no', 'year', '__obs_heat']],
-        on=['district_no', 'year'],
-        how='inner'
-    )
-
-    if val_df.empty: return
-
-    # 3. Plotting & Stats
-    import matplotlib.pyplot as plt
-
-    # Ensure inputs are Series
-    obs = val_df['__obs_heat'].astype(float)
-    fcst = val_df['summer_days_tmax_gt_30c'].astype(float)
-
-    corr = obs.corr(fcst)
-    logging.info(f"--- HEAT FORECAST VALIDATION ---")
-    logging.info(f"Correlation (Forecast vs Reality): {corr:.3f}")
-
-    plt.figure(figsize=(10, 6))
-
-    # Background points
-    plt.scatter(obs, fcst, alpha=0.2, color='gray', s=10, label='All Districts')
-
-    # Highlight Critical Years
-    years = {2003: 'red', 2014: 'blue', 2018: 'orange'}
-    for year, color in years.items():
-        mask = val_df['year'] == year
-        if mask.any():
-            yr_data = val_df[mask]
-            mean_obs = yr_data['__obs_heat'].mean()
-            mean_fcst = yr_data['summer_days_tmax_gt_30c'].mean()
-
-            plt.scatter(yr_data['__obs_heat'], yr_data['summer_days_tmax_gt_30c'],
-                        color=color, alpha=0.8, s=30,
-                        label=f'{year} (Obs:{mean_obs:.1f} vs Fcst:{mean_fcst:.1f})')
-            logging.info(f"Year {year}: Observed {mean_obs:.1f} vs Forecast {mean_fcst:.1f}")
-
-    # Reference Line
-    max_val = max(obs.max(), fcst.max())
-    plt.plot([0, max_val], [0, max_val], 'k--', label='Perfect Fit')
-
-    plt.xlabel('Observed Heat Days (Reality)')
-    plt.ylabel('Forecasted Heat Days (Approximation)')
-    plt.title(f'Forecast Calibration Check (Correlation: {corr:.2f})')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-
-    out_path = output_dir / 'heat_forecast_calibration.png'
-    plt.savefig(out_path)
-    plt.close()
-    logging.info(f"Validation plot saved to: {out_path}")
-
 def main():
     logging.info("--- Starting Feature Engineering (v17.0 - Scenario Analysis Mode) ---")
     paths = CONFIG['FILE_PATHS']
@@ -347,8 +200,6 @@ def main():
             df['summer_days_tmax_gt_30c'] = probability_to_days(
                 df
             )
-
-            validate_heat_forecast(df, global_config.BASE_DIR / 'reports/figures')
             logging.info("Applied probability-to-days conversion.")
 
     df_recharge = create_winter_recharge_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)
