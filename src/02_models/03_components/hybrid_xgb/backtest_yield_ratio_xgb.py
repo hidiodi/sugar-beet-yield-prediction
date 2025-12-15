@@ -14,11 +14,14 @@ import numpy as np
 
 project_root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+models_config = importlib.import_module("src.02_models.config")
+analysis_config = importlib.import_module("src.03_analysis.config")
 
 warnings.filterwarnings("ignore")
-XGB_CONFIG = config.STANDALONE_XGB_CONFIG
-BACKTEST_CONFIG = config.STANDALONE_BACKTESTING_CONFIG
+XGB_CONFIG = models_config.STANDALONE_XGB_CONFIG
+BACKTEST_CONFIG = analysis_config.STANDALONE_BACKTESTING_CONFIG
 
 # Burn-in for backtesting stability (ensure training set has settled stats)
 MIN_HISTORY_YEARS = 10

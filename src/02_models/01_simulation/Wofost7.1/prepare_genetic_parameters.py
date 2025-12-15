@@ -6,7 +6,7 @@ import logging
 
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -27,7 +27,7 @@ def main():
     start_year = 1979
     end_year = 2025
 
-    output_json = config.PROCESSED_DATA_DIR / 'GeneticGainFactors.json'
+    output_json = global_config.PROCESSED_DATA_DIR / 'GeneticGainFactors.json'
 
     final_factors = {}
 

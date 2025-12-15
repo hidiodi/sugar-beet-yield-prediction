@@ -24,14 +24,16 @@ from sklearn.linear_model import Ridge
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 
-from src import config
+from src import config as global_config
+import importlib
+models_config = importlib.import_module("src.02_models.config")
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-CONFIG = config.WOFOST_CONFIG
+CONFIG = models_config.WOFOST_CONFIG
 ERA5_SOIL_DATA_DIR = Path("data/01_raw/era5_land_monthly_soil")
 SATELLITE_FEATURES_PATH = "data/03_processed/satellite_features_districts_2001-2024.csv"
-FORECAST_PARTS_DIR = config.PROCESSED_DATA_DIR / 'forecast_weather_parts'
+FORECAST_PARTS_DIR = global_config.PROCESSED_DATA_DIR / 'forecast_weather_parts'
 
 # Sensitivity Config
 # Note: We reduced Sowing Shift Factor because we now model soil temp directly.
@@ -348,7 +350,8 @@ def main():
         static_df = pd.read_csv(CONFIG['FILE_PATHS']['STATIC_SOIL_FEATURES'], dtype={'district_no': str})
         if static_df['RDMSOL'].mean() < 10: static_df['RDMSOL'] *= 100
 
-        gdf_districts = gpd.read_file(config.DISTRICTS_GEOJSON_PATH).rename(columns={'id': 'district_no'})
+        data_config = importlib.import_module("src.01_data.config")
+        gdf_districts = gpd.read_file(data_config.DISTRICTS_GEOJSON_PATH).rename(columns={'id': 'district_no'})
         gdf_districts['district_no'] = gdf_districts['district_no'].astype(str).str.zfill(5)
 
         limit = CONFIG.get('DISTRICT_LIMIT')
@@ -434,7 +437,7 @@ def main():
     df_final['CROP_END_DATE'] = CONFIG['AGROMANAGEMENT']['CROP_END_DATE']
     df_final['DVSEND'] = cp_variety.get('DVSEND', [2.0])[0]
 
-    output_path = config.PROCESSED_DATA_DIR / 'InitialConditions.csv'
+    output_path = global_config.PROCESSED_DATA_DIR / 'InitialConditions.csv'
     cols = ['district_no', 'year', 'sowing_date', 'WAV', 'TDWI', 'RDI', 'CROP_END_DATE', 'DVSEND']
     df_final[cols].to_csv(output_path, index=False)
 

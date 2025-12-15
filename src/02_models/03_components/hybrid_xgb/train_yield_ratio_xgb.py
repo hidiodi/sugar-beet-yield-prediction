@@ -7,10 +7,12 @@ import logging
 
 project_root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+models_config = importlib.import_module("src.02_models.config")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-TRAIN_CONFIG = config.STANDALONE_XGB_CONFIG
+TRAIN_CONFIG = models_config.STANDALONE_XGB_CONFIG
 
 # NEW: Define a Burn-In threshold to ignore statistically unstable early years
 BURN_IN_YEARS = 7

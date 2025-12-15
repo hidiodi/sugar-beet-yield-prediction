@@ -22,10 +22,12 @@ warnings.filterwarnings("ignore")
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 
-from src import config
+from src import config as global_config
+import importlib
+models_config = importlib.import_module("src.02_models.config")
 
 # Use the DETRENDING_CONFIG dictionary from the central config file
-CONFIG = config.DETRENDING_CONFIG
+CONFIG = models_config.DETRENDING_CONFIG
 
 # ==============================================================================
 # === S C R I P T   S T A R T S   H E R E ===

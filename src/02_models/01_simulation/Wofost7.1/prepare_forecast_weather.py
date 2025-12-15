@@ -15,12 +15,14 @@ import argparse
 # --- Setup Project Root ---
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+models_config = importlib.import_module("src.02_models.config")
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-CONFIG = config.WOFOST_CONFIG
-FORECAST_PARTS_DIR = config.PROCESSED_DATA_DIR / 'forecast_weather_parts'
+CONFIG = models_config.WOFOST_CONFIG
+FORECAST_PARTS_DIR = global_config.PROCESSED_DATA_DIR / 'forecast_weather_parts'
 
 ANALOG_WEIGHTS = {
     'spring_temp': 1.0, 'spring_precip': 0.5,

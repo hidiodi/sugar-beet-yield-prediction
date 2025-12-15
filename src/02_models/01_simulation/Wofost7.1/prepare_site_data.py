@@ -18,13 +18,15 @@ import logging
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 
-from src import config
+from src import config as global_config
+import importlib
+models_config = importlib.import_module("src.02_models.config")
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-PROCESSED_DATA_DIR = config.PROCESSED_DATA_DIR
-INTERMEDIATE_DATA_DIR = config.INTERMEDIATE_DATA_DIR
-RAW_DATA_DIR = config.RAW_DATA_DIR
+PROCESSED_DATA_DIR = global_config.PROCESSED_DATA_DIR
+INTERMEDIATE_DATA_DIR = global_config.INTERMEDIATE_DATA_DIR
+RAW_DATA_DIR = global_config.RAW_DATA_DIR
 
 # --- Input File Paths ---
 STATIC_SOIL_PHYSICS_PATH = PROCESSED_DATA_DIR / 'static_features_districts.csv'
@@ -33,7 +35,7 @@ HISTORICAL_YIELD_PATH = INTERMEDIATE_DATA_DIR / 'sugarbeet_yield.csv'
 
 # --- Output File Path ---
 FINAL_OUTPUT_PATH = PROCESSED_DATA_DIR / 'StaticSiteData.csv'
-cap = config.WOFOST_CONFIG['CONSTANTS'].get('MAX_ROOTING_DEPTH_GLOBAL_CAP_CM', 120.0)
+cap = models_config.WOFOST_CONFIG['CONSTANTS'].get('MAX_ROOTING_DEPTH_GLOBAL_CAP_CM', 120.0)
 
 def main():
     """

@@ -10,10 +10,12 @@ import json
 
 project_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+analysis_config = importlib.import_module("src.03_analysis.config")
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
-CONFIG = config.MODEL_COMPARISON_CONFIG
+CONFIG = analysis_config.MODEL_COMPARISON_CONFIG
 OUTPUT_DIR = Path(CONFIG['OUTPUT_DIR'])
 
 INPUT_FILENAME = 'super_ensemble_training_data.csv'

@@ -10,15 +10,17 @@ from pathlib import Path
 
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+models_config = importlib.import_module("src.02_models.config")
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
-OUTPUT_DIR = config.DATA_DIR / '06_model_output' / 'recovery_models'
+OUTPUT_DIR = global_config.DATA_DIR / '06_model_output' / 'recovery_models'
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-STAGE1_PATH = config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
-STAGE2_PATH = config.DATA_DIR / '05_model_input/stage2_refined_features.csv'
+STAGE1_PATH = models_config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
+STAGE2_PATH = global_config.DATA_DIR / '05_model_input/stage2_refined_features.csv'
 
 
 def calculate_trend_walk_forward(df):
