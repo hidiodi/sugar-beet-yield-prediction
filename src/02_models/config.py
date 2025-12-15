@@ -201,3 +201,38 @@ STANDALONE_XGB_CONFIG = {
     'MEDIAN_MODEL_PATH': BASE_DIR / 'src/models/standalone_xgb/standalone_model_median.joblib',
     'UPPER_MODEL_PATH': BASE_DIR / 'src/models/standalone_xgb/standalone_model_upper.joblib'
 }
+
+
+# --- Feature Engineering Configuration ---
+FEATURE_ENGINEERING_CONFIG = {
+    'FILE_PATHS': {
+        'MASTER_DATASET': DATA_DIR / '04_master/master_dataset.csv',
+        'PRODUCER_PRICE_CSV': DATA_DIR / '01_raw/Bundesdatenbank/61211-0001_de.csv',
+        'INPUT_PRICE_CSV': DATA_DIR / '01_raw/Bundesdatenbank/61221-0003_de.csv',
+        'SATELLITE_FEATURES_CSV': DATA_DIR / '03_processed/satellite_features_districts_2001-2024.csv',
+        'GEOJSON_DISTRICTS': DATA_DIR / '01_raw/districts_official.geojson',
+        'ECMWF_FORECAST_FEATURES_CSV': DATA_DIR / '02_intermediate/ecmwf51_forecast_features_BY_MEMBER.csv',
+        'DAILY_WEATHER_DIR': DATA_DIR / '02_intermediate/daily_weather', #we cant use this, this is not know in March!!!
+        'WALKFORWARD_FORECAST_CSV': DATA_DIR / '05_model_input/wofost_walkforward/final_honest_forecasts.csv', #technical trend model
+        'WOFOST_ENSEMBLE_CSV': DATA_DIR / '06_model_output/multi_year_final/forecast_ensemble_results_raw.csv', #actual wofost yield output
+        'WOFOST_METRICS_CSV': DATA_DIR / '06_model_output/multi_year_final/forecast_extreme_weather_metrics.csv', #actual wofost weather output
+        'WOFOST_INITIAL_CONDITIONS': DATA_DIR / '03_processed/InitialConditions.csv',
+        'WOFOST_STATIC_SITE_DATA': DATA_DIR / '03_processed/StaticSiteData.csv',
+
+        'OUTPUT_DIR': DATA_DIR / '05_model_input/',
+        'OUTPUT_FILE': DATA_DIR / '05_model_input/stage1_preseason_features.csv'
+    },
+    'WEATHER_FEATURE_YEAR_START': 1981,
+    'WEATHER_FEATURE_YEAR_END': 2024,
+    'PHYSIOLOGY_PARAMS': {
+        'TMAX_STRESS_THRESHOLD': 30.0,
+        'TMIN_STRESS_THRESHOLD': 17.0,
+        'TMAX_OPTIMAL_MIN': 17.0,
+        'TMAX_OPTIMAL_MAX': 25.0,
+        'TMIN_OPTIMAL_MAX': 15.0,
+        'PRECIP_DEFICIT_WINDOW': 30,
+        'PRECIP_DEFICIT_THRESHOLD': 20.0,
+        'ECES_EXPONENT': 1.5,
+        'DTR_SUNNY_DAY_QUANTILE': 0.75
+    }
+}

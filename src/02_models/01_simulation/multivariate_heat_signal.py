@@ -7,9 +7,11 @@ import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 # --- PATH SETUP ---
-project_root = Path(__file__).resolve().parents[2]
+project_root = Path(__file__).resolve().parents[3]
 sys.path.append(str(project_root))
-from src import config
+import importlib
+models_config = importlib.import_module("src.02_models.config")
+
 
 # --- CONFIGURATION ---
 MAX_DAYS_CAP = 92.0
@@ -21,7 +23,7 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 # --- 1. DATA LOADER ---
 def load_data():
     logging.info("LOADING DATA (Target: Days > 25°C)...")
-    paths = config.FEATURE_ENGINEERING_CONFIG['FILE_PATHS']
+    paths = models_config.FEATURE_ENGINEERING_CONFIG['FILE_PATHS']
 
     # -------------------------------------------------------
     # A. Ground Truth
@@ -283,7 +285,7 @@ if __name__ == "__main__":
         df_final = apply_volatility_correction(df_res)
         audit_results(df_final)
 
-        out = config.BASE_DIR / 'data/processed/heat_signal_multivariate_moderate.csv'
+        out = models_config.BASE_DIR / 'data/processed/heat_signal_multivariate_moderate.csv'
         out.parent.mkdir(parents=True, exist_ok=True)
         df_final.to_csv(out, index=False)
         logging.info(f"Saved: {out}")
