@@ -124,7 +124,7 @@ This study employs a two-stage feature engineering pipeline designed to translat
       
 #### 2.5 Evaluation and Validation Strategy
 
-*   **Strategy:** Strict **Time-Dependent Walk-Forward Validation** (Backtesting). The model is trained on years $1...t$ and predicts $t+1$, expanding the window annually. This mirrors the operational forecasting constraint.
+Strategy: Strict Time-Dependent Walk-Forward Validation (Backtesting). The model is trained on years $1...t$ and predicts $t+1$, expanding the window annually. This mirrors the operational forecasting constraint. Note: While component models and the trend are validated starting from 2000, the Meta-Learner is trained and validated only for the period 2015-2024 to ensure a sufficiently large feature space for the Meta-Learner's classification task.
 *   **Metrics:** **MAE** (Mean Absolute Error), **$R^2$**, and **Skill Score** ($1 - \frac{MAE_{model}}{MAE_{trend}}$).
 
 ---
@@ -141,7 +141,6 @@ This study employs a two-stage feature engineering pipeline designed to translat
 | Robust Linear (Stage 2) | 64.40 | 0.499 | 4.18 |
 | Statistical Trend | 67.21 | 0.467 | 0.00 |
 | Native Ensemble | 70.30 | 0.372 | -4.59 |
-| Regime Switch V10 | 72.14 | 0.396 | -7.34 |
 
 **Table 2: Recent Volatility (2010-2024) (N=2666)**
 

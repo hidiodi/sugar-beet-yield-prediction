@@ -22,7 +22,7 @@ INPUT_FILENAME = 'super_ensemble_training_data.csv'
 MODEL_FILENAME = 'super_ensemble_meta_learner_TSCV.json'
 LABEL_MAP_FILENAME = 'meta_learner_label_map_TSCV.json'
 
-WALK_FORWARD_START_YEAR = 2015
+WALK_FORWARD_START_YEAR = 2000
 LAST_HISTORICAL_YEAR = 2024
 
 
@@ -33,9 +33,7 @@ def train_classifier():
     logging.info("--- Training Meta-Learner (v4: History-Aware + Cleaned) ---")
     df = pd.read_csv(input_path)
 
-    # --- NEW: CLEANING STEP ---
-    # Remove data points where Oracle Error > 200 (e.g. Aurich 2012)
-    # These are likely data collection errors that confuse the classifier
+    # --- CLEANING STEP ---
     if 'Is_Garbage_Data' in df.columns:
         n_garbage = df['Is_Garbage_Data'].sum()
         if n_garbage > 0:
@@ -49,36 +47,36 @@ def train_classifier():
         'Is_Garbage_Data', 'Raw_Bias', 'Regret_Weight', 'Median_Error'
     ]
     pred_cols = [c for c in df.columns if c.endswith('_pred') and c != 'Statistical_Trend_pred']
-
     feature_cols = [c for c in df.columns if c not in exclude_cols + pred_cols]
 
     logging.info(f"Features: {feature_cols}")
-    if 'District_Historical_Bias' in feature_cols:
-        logging.info("✓ 'District_Historical_Bias' active. Model knows which districts usually fail.")
 
-    # Target
-    le = LabelEncoder()
-    df['Target_Encoded'] = le.fit_transform(df['Best_Model'])
-    label_map = dict(zip(le.classes_, le.transform(le.classes_)))
-    label_map_json = {k: int(v) for k, v in label_map.items()}
-
-    # Walk-Forward
+    # Walk-Forward Setup
     results = []
     final_model = None
+    final_label_map = {}
 
+    # Iterate through years
     for year in range(WALK_FORWARD_START_YEAR, LAST_HISTORICAL_YEAR + 1):
-        train = df[df['year'] < year]
+        train = df[df['year'] < year].copy()
         test = df[df['year'] == year].copy()
 
         if train.empty or test.empty: continue
 
+        # --- FIX: Encode labels LOCALLY for this specific time slice ---
+        # This ensures labels are always 0..N-1 with no gaps for the specific training set
+        le = LabelEncoder()
+        y_train = le.fit_transform(train['Best_Model'])
+
         X_train = train[feature_cols]
-        y_train = train['Target_Encoded']
         X_test = test[feature_cols]
+
+        # Dynamic num_class based on what has been seen so far
+        num_classes_now = len(le.classes_)
 
         clf = XGBClassifier(
             objective='multi:softmax',
-            num_class=len(label_map),
+            num_class=num_classes_now,  # Update dynamically
             n_estimators=200,
             max_depth=4,
             learning_rate=0.03,
@@ -91,7 +89,11 @@ def train_classifier():
 
         clf.fit(X_train, y_train)
 
+        # Predict and map back to String immediately
         pred_encoded = clf.predict(X_test)
+
+        # Handle edge case: Model predicts a class, mapped back to string
+        # Note: If test set has a 'Best_Model' never seen in train, we can't predict it anyway.
         pred_labels = le.inverse_transform(pred_encoded)
         test['Predicted_Model'] = pred_labels
 
@@ -101,8 +103,12 @@ def train_classifier():
         test['Switch_Prediction'] = test.apply(get_pred_value, axis=1)
         results.append(test)
 
+        # Save the model and map from the FINAL iteration (which has the most complete history)
         if year == LAST_HISTORICAL_YEAR:
             final_model = clf
+            # Create the map based on the final encoder
+            label_map = dict(zip(le.classes_, le.transform(le.classes_)))
+            final_label_map = {k: int(v) for k, v in label_map.items()}
 
     df_res = pd.concat(results)
     mae_switch = mean_absolute_error(df_res['kreisYield'], df_res['Switch_Prediction'])
@@ -117,8 +123,8 @@ def train_classifier():
     if final_model:
         final_model.save_model(OUTPUT_DIR / MODEL_FILENAME)
         with open(OUTPUT_DIR / LABEL_MAP_FILENAME, 'w') as f:
-            json.dump(label_map_json, f, indent=4)
-
+            json.dump(final_label_map, f, indent=4)
+        logging.info(f"✓ Model and Label Map saved to {OUTPUT_DIR}")
 
 if __name__ == '__main__':
     train_classifier()
