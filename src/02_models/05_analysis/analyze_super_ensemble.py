@@ -9,18 +9,20 @@ import seaborn as sns
 # --- Project Setup ---
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+analysis_config = importlib.import_module("src.03_analysis.config")
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 # --- DYNAMIC CONFIGURATION (Fixed Path Mismatch) ---
 # We use the same config dictionary that the data prep scripts used
-MODEL_CONFIG = config.MODEL_COMPARISON_CONFIG
+MODEL_CONFIG = analysis_config.MODEL_COMPARISON_CONFIG
 INPUT_DIR = Path(MODEL_CONFIG['OUTPUT_DIR'])
 
 TRAINING_DATA_PATH = INPUT_DIR / 'super_ensemble_training_data.csv'
 FORECAST_PATH = INPUT_DIR / 'super_ensemble_final_forecast_TSCV.csv'
-OUTPUT_REPORT_DIR = config.BASE_DIR / 'reports/super_analysis'
+OUTPUT_REPORT_DIR = global_config.BASE_DIR / 'reports/super_analysis'
 OUTPUT_REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 

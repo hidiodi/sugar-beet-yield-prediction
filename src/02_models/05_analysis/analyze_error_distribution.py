@@ -9,14 +9,16 @@ from sklearn.metrics import confusion_matrix, classification_report
 # --- Project Setup ---
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+analysis_config = importlib.import_module("src.03_analysis.config")
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 # PATHS
-FORECAST_FILE = Path(config.MODEL_COMPARISON_CONFIG['OUTPUT_DIR']) / 'super_ensemble_final_forecast_TSCV.csv'
-TRAINING_FILE = Path(config.MODEL_COMPARISON_CONFIG['OUTPUT_DIR']) / 'super_ensemble_training_data.csv'
-GEO_FILE = config.DATA_DIR / '01_raw/districts_official.geojson'
+FORECAST_FILE = Path(analysis_config.MODEL_COMPARISON_CONFIG['OUTPUT_DIR']) / 'super_ensemble_final_forecast_TSCV.csv'
+TRAINING_FILE = Path(analysis_config.MODEL_COMPARISON_CONFIG['OUTPUT_DIR']) / 'super_ensemble_training_data.csv'
+GEO_FILE = global_config.DATA_DIR / '01_raw/districts_official.geojson'
 
 
 def load_district_names():

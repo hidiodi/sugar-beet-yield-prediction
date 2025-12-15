@@ -8,12 +8,15 @@ from sklearn.metrics import mean_absolute_error
 
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+models_config = importlib.import_module("src.02_models.config")
+analysis_config = importlib.import_module("src.03_analysis.config")
 
 LOG_LEVEL = logging.INFO
-OUTPUT_DIR = config.DATA_DIR / '06_model_output'
+OUTPUT_DIR = global_config.DATA_DIR / '06_model_output'
 MODEL_DIR = Path('src/models/native_physics_comparison')
-DATA_PATH = config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
+DATA_PATH = models_config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
 
 # --- QUANTILE HYPERPARAMETERS ---
 # We use the same parameters for both but change the Quantile Alpha.
@@ -45,7 +48,7 @@ def load_and_engineer_data():
     df = pd.read_csv(DATA_PATH)
 
     if 'final_corrected_forecast' not in df.columns:
-        trend_path = config.MODEL_COMPARISON_CONFIG['STATISTICAL_TREND_FILE']
+        trend_path = analysis_config.MODEL_COMPARISON_CONFIG['STATISTICAL_TREND_FILE']
         trend_df = pd.read_csv(trend_path)[['year', 'district_no', 'final_corrected_forecast']]
         df = pd.merge(df, trend_df, on=['year', 'district_no'], how='left')
 
@@ -178,7 +181,7 @@ def main():
     output_csv = MODEL_DIR / 'native_model_comparison_quantile.csv'
     final.to_csv(output_csv, index=False)
 
-    ens_path = config.DATA_DIR / '06_model_output/native_ensemble_champion/native_ensemble_forecasts.csv'
+    ens_path = global_config.DATA_DIR / '06_model_output/native_ensemble_champion/native_ensemble_forecasts.csv'
     ens_path.parent.mkdir(parents=True, exist_ok=True)
     final[['year', 'district_no', 'Ensemble_Pred']].to_csv(ens_path, index=False)
 

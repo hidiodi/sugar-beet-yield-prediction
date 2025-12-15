@@ -17,6 +17,9 @@ import numpy as np
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 from src import config
+import importlib
+data_config = importlib.import_module("src.01_data.config")
+models_config = importlib.import_module("src.02_models.config")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -61,7 +64,7 @@ def _parameterize_wofost_soil_inputs_v3(row):
     theta_33_t_adj = theta_33_t + (1.283 * theta_33_t ** 2 - 0.374 * theta_33_t - 0.015)
 
     # 3. Porosity and Saturation
-    porosity = 1.0 - (bdod / config.WOFOST_CONFIG['CONSTANTS']['SOIL_PARTICLE_DENSITY'])
+    porosity = 1.0 - (bdod / models_config.WOFOST_CONFIG['CONSTANTS']['SOIL_PARTICLE_DENSITY'])
 
     # Lamda (pore size distribution index)
     lamda = (np.log(1500) - np.log(33)) / (np.log(theta_33_t_adj) - np.log(theta_1500_t_adj))
@@ -112,26 +115,26 @@ def build_static_features_v6():
 
     # --- 1-8. Data Acquisition and Preparation (Identical to previous script) ---
     try:
-        geemap.ee.Initialize(project=config.GEE_PROJECT_ID, opt_url=config.GEE_HIGH_VOLUME_ENDPOINT)
+        geemap.ee.Initialize(project=data_config.GEE_PROJECT_ID, opt_url=data_config.GEE_HIGH_VOLUME_ENDPOINT)
     except Exception as e:
         logging.error(f"FATAL: GEE Init failed: {e}");
         return
-    output_filepath = config.STATIC_FEATURES_OUTPUT_PATH
+    output_filepath = data_config.STATIC_FEATURES_OUTPUT_PATH
     if output_filepath.exists():
         logging.warning(f"Static features file '{output_filepath}' exists. Deleting and regenerating.")
         output_filepath.unlink()
 
-    gdf_districts = gpd.read_file(config.DISTRICTS_GEOJSON_PATH)
+    gdf_districts = gpd.read_file(data_config.DISTRICTS_GEOJSON_PATH)
     gdf_districts.rename(columns={'id': 'district_no'}, inplace=True)
     gdf_districts['district_no'] = gdf_districts['district_no'].astype(str).str.zfill(5)
     districts_ee = geemap.geopandas_to_ee(gdf_districts)
-    farmland_mask_image = ee.Image(config.FARMLAND_MASK_ASSET_ID)
+    farmland_mask_image = ee.Image(data_config.FARMLAND_MASK_ASSET_ID)
 
-    dem_image = ee.Image(config.DEM_IMAGE).select('elevation')
+    dem_image = ee.Image(data_config.DEM_IMAGE).select('elevation')
     slope_image = ee.Terrain.slope(dem_image)
     image_list = [dem_image.rename('avg_elevation'), slope_image.rename('avg_slope')]
-    for prop in config.SOIL_PROPERTIES:
-        for depth in config.SOIL_DEPTHS:
+    for prop in data_config.SOIL_PROPERTIES:
+        for depth in data_config.SOIL_DEPTHS:
             image = ee.Image(f"projects/soilgrids-isric/{prop}_mean").select(f"{prop}_{depth}_mean")
             image_list.append(image.rename(f"{prop}_{depth.replace('-', '_')}"))
     masked_data = ee.Image.cat(image_list).updateMask(farmland_mask_image)
@@ -140,7 +143,7 @@ def build_static_features_v6():
     stats_df = geemap.ee_to_df(stats_ee).drop(columns=['geometry', 'system:index'], errors='ignore').dropna(
         subset=['district_no'])
 
-    for depth in config.SOIL_DEPTHS:
+    for depth in data_config.SOIL_DEPTHS:
         d_str = depth.replace('-', '_')
         if f'bdod_{d_str}' in stats_df.columns: stats_df[f'bdod_{d_str}'] /= 100
         if f'clay_{d_str}' in stats_df.columns: stats_df[f'clay_{d_str}'] /= 10
@@ -150,10 +153,10 @@ def build_static_features_v6():
             stats_df[f'som_{d_str}'] = (stats_df[f'soc_{d_str}'] / 100) * 1.724
             stats_df.drop(columns=[f'soc_{d_str}'], inplace=True)
 
-    total_thickness_100 = sum(config.LAYER_THICKNESS[d] for d in config.ROOTZONE_LAYERS)
+    total_thickness_100 = sum(data_config.LAYER_THICKNESS[d] for d in data_config.ROOTZONE_LAYERS)
     for prop in ['bdod', 'clay', 'sand', 'som', 'phh2o']:
         weighted_sum = sum(
-            stats_df[f'{prop}_{d.replace("-", "_")}'] * config.LAYER_THICKNESS[d] for d in config.ROOTZONE_LAYERS)
+            stats_df[f'{prop}_{d.replace("-", "_")}'] * data_config.LAYER_THICKNESS[d] for d in data_config.ROOTZONE_LAYERS)
         stats_df[f'avg_{prop}_0_100cm'] = weighted_sum / total_thickness_100
 
     # --- 9. APPLY THE NEW, CORRECTED PTF ---

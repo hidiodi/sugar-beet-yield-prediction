@@ -11,7 +11,9 @@ import sys
 # --- Setup ---
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+models_config = importlib.import_module("src.02_models.config")
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
@@ -68,10 +70,10 @@ def analyze_model(model_path, model_name):
 
 def main():
     # 1. Analyze Hybrid Model
-    analyze_model(config.XGBOOST_TRAINING_CONFIG['MEDIAN_MODEL_PATH'], "Hybrid Model")
+    analyze_model(models_config.XGBOOST_TRAINING_CONFIG['MEDIAN_MODEL_PATH'], "Hybrid Model")
 
     # 2. Analyze Standalone Model
-    analyze_model(config.STANDALONE_XGB_CONFIG['MEDIAN_MODEL_PATH'], "Standalone Model")
+    analyze_model(models_config.STANDALONE_XGB_CONFIG['MEDIAN_MODEL_PATH'], "Standalone Model")
 
 
 if __name__ == "__main__":

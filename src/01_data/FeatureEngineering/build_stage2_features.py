@@ -7,14 +7,17 @@ from tqdm import tqdm
 
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+data_config = importlib.import_module("src.01_data.config")
+models_config = importlib.import_module("src.02_models.config")
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
-STAGE1_PATH = config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
-DAILY_WEATHER_DIR = config.FEATURE_ENGINEERING_CONFIG['FILE_PATHS']['DAILY_WEATHER_DIR']
-OUTPUT_PATH = config.DATA_DIR / '05_model_input/stage2_refined_features.csv'
+STAGE1_PATH = models_config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
+DAILY_WEATHER_DIR = data_config.FEATURE_ENGINEERING_CONFIG['FILE_PATHS']['DAILY_WEATHER_DIR']
+OUTPUT_PATH = global_config.DATA_DIR / '05_model_input/stage2_refined_features.csv'
 
 
 def calculate_weather_proxies(df_stage1):

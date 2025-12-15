@@ -7,10 +7,13 @@ import geopandas as gpd
 
 project_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+analysis_config = importlib.import_module("src.03_analysis.config")
+models_config = importlib.import_module("src.02_models.config")
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
-CONFIG = config.MODEL_COMPARISON_CONFIG
+CONFIG = analysis_config.MODEL_COMPARISON_CONFIG
 OUTPUT_DIR = Path(CONFIG['OUTPUT_DIR'])
 OUTPUT_FILENAME = 'super_ensemble_training_data.csv'
 
@@ -18,10 +21,10 @@ OUTPUT_FILENAME = 'super_ensemble_training_data.csv'
 NATIVE_ENSEMBLE_PATH = project_root / 'src/models/native_ensemble_champion/native_ensemble_forecasts.csv'
 STATISTICAL_TREND_PATH = Path(CONFIG['STATISTICAL_TREND_FILE'])
 HYBRID_XGB_PATH = Path(CONFIG['HYBRID_XGB_PREDICTIONS_FILE'])
-V31_SOLAR_PATH = config.DATA_DIR / '06_model_output' / 'v31_solar_gated_forecast.csv'
-ROBUST_LINEAR_PATH = config.DATA_DIR / '06_model_output' / 'recovery_models' / 'stage2_forecasts.csv'
-STAGE1_FEATURES_PATH = config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
-GEO_FILE = config.DATA_DIR / '01_raw/districts_official.geojson'
+V31_SOLAR_PATH = global_config.DATA_DIR / '06_model_output' / 'v31_solar_gated_forecast.csv'
+ROBUST_LINEAR_PATH = global_config.DATA_DIR / '06_model_output' / 'recovery_models' / 'stage2_forecasts.csv'
+STAGE1_FEATURES_PATH = models_config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
+GEO_FILE = global_config.DATA_DIR / '01_raw/districts_official.geojson'
 
 ANALYSIS_START_YEAR = 2000
 ANALYSIS_END_YEAR = 2024

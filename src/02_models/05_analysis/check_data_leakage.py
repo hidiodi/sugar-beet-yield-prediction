@@ -9,10 +9,12 @@ from sklearn.preprocessing import LabelEncoder  # <--- Added
 
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+analysis_config = importlib.import_module("src.03_analysis.config")
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
-OUTPUT_DIR = Path(config.MODEL_COMPARISON_CONFIG['OUTPUT_DIR'])
+OUTPUT_DIR = Path(analysis_config.MODEL_COMPARISON_CONFIG['OUTPUT_DIR'])
 DATA_FILE = OUTPUT_DIR / 'super_ensemble_training_data.csv'
 
 

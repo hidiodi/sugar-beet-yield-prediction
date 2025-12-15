@@ -14,9 +14,11 @@ from tqdm import tqdm
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 from src import config
+import importlib
+data_config = importlib.import_module("src.01_data.config")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-CONFIG = config.FEATURE_ENGINEERING_CONFIG
+CONFIG = data_config.FEATURE_ENGINEERING_CONFIG
 
 
 def calculate_z_score(series):

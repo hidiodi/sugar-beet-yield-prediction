@@ -13,10 +13,12 @@ from tqdm import tqdm
 # Ensure project root is in path
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+data_config = importlib.import_module("src.01_data.config")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-CONFIG = config.FEATURE_ENGINEERING_CONFIG
+CONFIG = data_config.FEATURE_ENGINEERING_CONFIG
 
 
 def calculate_z_score(series):
@@ -210,7 +212,7 @@ def probability_to_days(df):
     # heuristic_days = heuristic_days.clip(lower=0.0, upper=40.0)
 
     # 1. Load & Merge CSV
-    signal_path = config.BASE_DIR / 'data/processed/heat_signal_multivariate_moderate.csv'
+    signal_path = global_config.BASE_DIR / 'data/processed/heat_signal_multivariate_moderate.csv'
 
     if signal_path.exists():
         try:
@@ -346,7 +348,7 @@ def main():
                 df
             )
 
-            validate_heat_forecast(df, config.BASE_DIR / 'reports/figures')
+            validate_heat_forecast(df, global_config.BASE_DIR / 'reports/figures')
             logging.info("Applied probability-to-days conversion.")
 
     df_recharge = create_winter_recharge_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)

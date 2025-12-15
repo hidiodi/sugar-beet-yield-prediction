@@ -10,13 +10,16 @@ from sklearn.metrics import mean_absolute_error, r2_score
 # --- Project Setup ---
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+models_config = importlib.import_module("src.02_models.config")
+analysis_config = importlib.import_module("src.03_analysis.config")
 
 # --- Configuration ---
 LOG_LEVEL = logging.INFO
-OUTPUT_DIR = config.DATA_DIR / '06_model_output'
+OUTPUT_DIR = global_config.DATA_DIR / '06_model_output'
 MODEL_DIR = Path('src/models/native_ensemble_champion')
-DATA_PATH = config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
+DATA_PATH = models_config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
 
 # --- PARAMS ---
 # V2: Safety (Deep trees to find the specific crash conditions)
@@ -42,7 +45,7 @@ def load_data_with_smart_risk():
 
     # 1. Trend Anchor
     if 'final_corrected_forecast' not in df.columns:
-        trend_path = config.MODEL_COMPARISON_CONFIG['STATISTICAL_TREND_FILE']
+        trend_path = analysis_config.MODEL_COMPARISON_CONFIG['STATISTICAL_TREND_FILE']
         trend_df = pd.read_csv(trend_path)[['year', 'district_no', 'final_corrected_forecast']]
         df = pd.merge(df, trend_df, on=['year', 'district_no'], how='left')
 

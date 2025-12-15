@@ -22,13 +22,15 @@ from joblib import Parallel, delayed
 # --- Setup ---
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
-from src import config
+from src import config as global_config
+import importlib
+models_config = importlib.import_module("src.02_models.config")
 
 print("\n>>> LOADED V22.1 (PHYSICS UPDATED) <<<\n")
 
 # --- Configuration ---
-CONFIG = config.WOFOST_CONFIG
-PROCESSED_DATA_DIR = config.PROCESSED_DATA_DIR
+CONFIG = models_config.WOFOST_CONFIG
+PROCESSED_DATA_DIR = global_config.PROCESSED_DATA_DIR
 FORECAST_PARTS_DIR = PROCESSED_DATA_DIR / 'forecast_weather_parts'
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(filename)s] - %(message)s',
@@ -324,7 +326,7 @@ def main():
                        **cp_base['Varieties']['Sugarbeet_601']}
 
         # Optional: Load Genetic Gain Factors if they exist
-        gg_path = config.PROCESSED_DATA_DIR / 'GeneticGainFactors.json'
+        gg_path = global_config.PROCESSED_DATA_DIR / 'GeneticGainFactors.json'
         if gg_path.exists():
             with open(gg_path, 'r') as f:
                 genetic_factors = json.load(f)
