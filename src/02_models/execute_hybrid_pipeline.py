@@ -1,22 +1,52 @@
 import sys
 import os
+from pathlib import Path
 
 # Ensure the project root is in the Python path
-script_path = os.path.abspath(__file__)
-script_dir = os.path.dirname(script_path)
-project_root = os.path.dirname(os.path.dirname(script_dir))
-sys.path.insert(0, project_root)
+project_root = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(project_root))
 
 from src.utils.pipeline_runner import run_pipeline
-from src import config as global_config
+
+# Define the pipeline sequence
+SCRIPTS = [
+    # --- 1. Simulation Prep & Execution (WOFOST) ---
+    "src/02_models/01_simulation/Wofost7.1/prepare_genetic_parameters.py",
+    "src/02_models/01_simulation/Wofost7.1/prepare_site_data.py",
+    "src/02_models/01_simulation/Wofost7.1/prepare_forecast_weather.py",
+    "src/02_models/01_simulation/Wofost7.1/prepare_initial_conditions.py",
+    "src/02_models/01_simulation/Wofost7.1/execute_wofost_simulation.py",
+
+    # --- 2. Feature Engineering & Trend ---
+    "src/02_models/03_components/statistical/estimate_yield_trend.py",
+    "src/02_models/02_features/generate_stage1_features.py",
+    "src/02_models/02_features/generate_stage2_features.py",
+
+    # --- 3. Component Models ---
+    "src/02_models/03_components/native_ensemble/train_physics_informed_model.py",
+    "src/02_models/03_components/native_ensemble/train_physics_ensemble.py",
+    "src/02_models/03_components/hybrid_xgb/train_yield_ratio_xgb.py",
+    "src/02_models/03_components/hybrid_xgb/backtest_yield_ratio_xgb.py",
+    "src/02_models/03_components/robust_linear/train_robust_integrator.py",
+
+    # --- 4. Super Ensemble ---
+    "src/02_models/04_super_ensemble/prepare_ensemble_data.py",
+    "src/02_models/04_super_ensemble/train_meta_regressor.py",
+    "src/02_models/04_super_ensemble/execute_ensemble_forecast.py",
+
+    # --- 5. Analysis & Diagnostics ---
+    "src/02_models/05_analysis/check_data_leakage.py",
+    "src/02_models/05_analysis/analyze_error_distribution.py",
+    "src/02_models/05_analysis/analyze_super_ensemble.py"
+]
+
+PIPELINE_NAME = "Hybrid Model Execution Pipeline"
 
 def main():
     """
-    Defines and executes the main data processing pipeline.
-    This script now sources its configuration from the central config file.
+    Executes the comprehensive hybrid model pipeline.
     """
-    # Execute the pipeline using settings from the config file
-    run_pipeline(pipeline_name=global_config.PIPELINE_NAME, script_paths=global_config.SCRIPTS_TO_RUN)
+    run_pipeline(pipeline_name=PIPELINE_NAME, script_paths=SCRIPTS)
 
 if __name__ == "__main__":
     main()
