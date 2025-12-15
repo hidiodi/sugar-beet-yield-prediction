@@ -1,4 +1,4 @@
-## Comprehensive Outline for Hybrid Yield Forecasting Model Paper
+## Comprehensive Draft for Hybrid Yield Forecasting Model Paper 
 
 ### Abstract
 
@@ -11,7 +11,7 @@
 ### 1. Introduction
 
 * **Context (ML in Agronomy):** As climate change increases the frequency of extreme weather events, traditional statistical models (which rely on interpolation) and pure process-based models (which suffer from calibration issues) both face limitations. **This challenge is severely amplified when forecasts must be delivered pre-season, specifically on March 1st, when the vast majority of the growing season's critical weather signals are unknown, leading to highly volatile early predictions.**
-* **Problem Statement:** The core challenge is the "Interpolation vs. Extrapolation" dilemma, compounded by the **early-season information deficit**. Statistical models fail when conditions deviate from historical norms (extrapolation) and are unstable without observed growing season data. Process-based models capture the mechanism but often lack the precision of ML and are highly sensitive to initial weather forecast errors.
+* **Problem Statement:** The core challenge is the "Interpolation vs. Extrapolation" dilemma, compounded by the **early-season information deficit** and the difficulty in perfectly knowing the necessary starting conditions. Statistical models fail when conditions deviate from historical norms (extrapolation) and are unstable without observed growing season data. Process-based models capture the mechanism but often lack the precision of ML and are highly sensitive to initial weather forecast errors **and unobserved factors like specific crop variety (gene variant) characteristics or localized soil-microbial interactions.**
 * **Objectives:**
     1.  **Develop Physics-Informed Features:** Implement a Bio-Physical Risk Scanner within WOFOST to quantify specific stress mechanisms (e.g., oxygen stress).
     2.  **Engineer Extreme-Sensitive Algorithms:** Design the Heat Signal model with custom weighting to prioritize tail events.
@@ -105,8 +105,8 @@ This study employs a two-stage feature engineering pipeline designed to translat
     *   **Algorithm:** **HuberRegressor** ($\epsilon=1.35$). This linear model is robust to outliers and is used to predict the *residual* (`Actual - Trend`).
     *   **Inputs:** `wofost_residual`, `VegetationVigorIndex`, `RootZoneDepletion`, and Stage 2 pest/disease features.
 
-* **Super Ensemble Architecture and Meta-Learner Introduction:** The final forecast system is a **Super Ensemble** driven by a Meta-Learner (XGBoost Classifier). The primary role of the Meta-Learner is to overcome the structural bias of individual component models by acting as a dynamic "switch". It achieves this by predicting which specialized component model (e.g., Physics-Informed, Hybrid XGB) is likely to have the **lowest error** for a specific district and year, based on the emerging bio-physical context. The Meta-Learner uses high-level, interpreted features (including ensemble statistics and district-specific biases, such as `District_Historical_Bias`) to make this optimal selection. The overall architecture allows the Super Ensemble to achieve a higher skill, exemplified by a reduction in MAE from $81.80 \text{ dt/ha}$ (Trend) to $78.80 \text{ dt/ha}$ (Hard Switch) in validation. 
-
+* **Super Ensemble Architecture and Meta-Learner Introduction:** The final forecast system is a **Super Ensemble** driven by a Meta-Learner (XGBoost Classifier). The primary role of the Meta-Learner is to overcome the structural bias of individual component models by acting as a dynamic "switch". It achieves this by predicting which specialized component model (e.g., Physics-Informed, Hybrid XGB) is likely to have the **lowest error** for a specific district and year, based on the emerging bio-physical context. The Meta-Learner uses high-level, interpreted features (including ensemble statistics and district-specific biases, such as `District_Historical_Bias`) to make this optimal selection.
+The overall architecture allows the Super Ensemble to achieve superior skill, exemplified by a substantial reduction in MAE from $67.21 \text{ dt/ha}$ (Statistical Trend Baseline) to $56.28 \text{ dt/ha}$ (Final Super Ensemble) over the full 2000-2024 validation period.
 * **Super Ensemble (`train_meta_regressor.py`, `execute_ensemble_forecast.py`):**
     * **Data Preparation (Oracle and Error):** The Super Ensemble meta-learner requires a single optimal model label for each training row.
         * **Oracle Error:** This is the *minimum absolute error* achievable by any component model for a given district-year observation. It is calculated as $\min_k(|\text{Actual Yield} - \hat{y}_k|)$ for all component models $k$.
@@ -124,7 +124,7 @@ This study employs a two-stage feature engineering pipeline designed to translat
       
 #### 2.5 Evaluation and Validation Strategy
 
-Strategy: Strict Time-Dependent Walk-Forward Validation (Backtesting). The model is trained on years $1...t$ and predicts $t+1$, expanding the window annually. This mirrors the operational forecasting constraint. Note: While component models and the trend are validated starting from 2000, the Meta-Learner is trained and validated only for the period 2015-2024 to ensure a sufficiently large feature space for the Meta-Learner's classification task.
+Strategy: Strict Time-Dependent Walk-Forward Validation (Backtesting). The model is trained on years $1...t$ and predicts $t+1$, expanding the window annually. This mirrors the operational forecasting constraint. The entire ensemble system, including the Meta-Learner, is validated across the full period of available component model predictions (2000-2024).
 *   **Metrics:** **MAE** (Mean Absolute Error), **$R^2$**, and **Skill Score** ($1 - \frac{MAE_{model}}{MAE_{trend}}$).
 
 ---
@@ -144,11 +144,12 @@ Strategy: Strict Time-Dependent Walk-Forward Validation (Backtesting). The model
 
 **Table 2: Recent Volatility (2010-2024) (N=2666)**
 
-| Model | MAE (dt/ha) | $R^2$ | Skill (%) |
-| :--- | :--- | :--- | :--- |
-| **Super Ensemble** | **65.98** | **0.434** | **18.25** |
+| Model | MAE (dt/ha) | $R^2$     | Skill (%) |
+| :--- |:------------|:----------| :--- |
+| **Super Ensemble** | **65.98**   | **0.434** | **18.25** |
 | Robust Linear (Stage 2) | 77.91 | 0.239 | 3.47 |
 | Statistical Trend | 80.71 | 0.192 | 0.00 |
+| Native Ensemble | 80.97 | 0.189 | -0.3142 |
 
 * **Anomaly Forensics (Black Swan Events):**
     * **2003 (Historic Heat/Drought):** Actual 516.9 dt/ha.
