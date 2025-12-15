@@ -30,7 +30,7 @@
     * **Weather:** Daily Tmin, Tmax, Precip from interpolated weather grids.
     * **Static:** Soil properties (sand/clay fractions, pH, bulk density) from SoilGrids, and district centroids (Lat/Lon).
     * **Remote Sensing:** MODIS/Sentinel NDVI anomalies.
-    * 
+
 ### 2.2 The Statistical Trend Baseline (GAM + ARIMA)
 
 The **Statistical Trend Baseline** model, against which all advanced component models are measured, is not a simple linear fit but a robust, hybrid time-series forecasting pipeline executed via strict **Walk-Forward Validation** (`estimate_yield_trend.py`). This sophisticated baseline accounts for both long-term non-linear technological progress and short-term inter-annual fluctuations.
@@ -107,20 +107,23 @@ This study employs a two-stage feature engineering pipeline designed to translat
 
 * **Super Ensemble Architecture and Meta-Learner Introduction:** The final forecast system is a **Super Ensemble** driven by a Meta-Learner (XGBoost Classifier). The primary role of the Meta-Learner is to overcome the structural bias of individual component models by acting as a dynamic "switch". It achieves this by predicting which specialized component model (e.g., Physics-Informed, Hybrid XGB) is likely to have the **lowest error** for a specific district and year, based on the emerging bio-physical context. The Meta-Learner uses high-level, interpreted features (including ensemble statistics and district-specific biases, such as `District_Historical_Bias`) to make this optimal selection.
 The overall architecture allows the Super Ensemble to achieve superior skill, exemplified by a substantial reduction in MAE from $67.21 \text{ dt/ha}$ (Statistical Trend Baseline) to $56.28 \text{ dt/ha}$ (Final Super Ensemble) over the full 2000-2024 validation period.
+
+*Super Ensemble Architecture and Flow:** The system's strength lies in its hierarchical structure, combining the output of process-based simulations (WOFOST) and specialized machine learning models into a single, cohesive forecast. This flow—from raw data ingestion to feature engineering, component modeling, and final decision-making—is highly complex and summarized visually below. ![System Architecture Flowchart](super_ensemble_flowchart.png)
+
 * **Super Ensemble (`train_meta_regressor.py`, `execute_ensemble_forecast.py`):**
-    * **Data Preparation (Oracle and Error):** The Super Ensemble meta-learner requires a single optimal model label for each training row.
-        * **Oracle Error:** This is the *minimum absolute error* achievable by any component model for a given district-year observation. It is calculated as $\min_k(|\text{Actual Yield} - \hat{y}_k|)$ for all component models $k$.
-        * **Best\_Model (Target):** The component model that achieved the Oracle Error for that specific observation is assigned as the classification target (the `Best_Model`).
-    * **Garbage Filter (Data Quality):** A critical preprocessing step where rows are removed from the training data if their **Oracle\_Error > 200 dt/ha**. This threshold identifies extreme observations (such as a likely data entry error in Aurich, 2012) where even the *best* possible component model is wildly inaccurate. Removing these likely data errors prevents the Meta-Learner from overfitting to noise. The process removed 67 'Garbage' rows during training.
-    * **Meta-Learner:** An **XGBoost Classifier** (`objective='multi:softmax'`).
-        * **Task:** Predicts the `Best_Model` (the model with the lowest absolute error) for a given district/year context based on bio-physical features. The Meta-Learner was trained using uniform sample weights.
-    * **Inference (Soft Voting):**
-        * The classifier outputs probabilities $P(M_k)$ for each component model $k$.
-        * The final forecast is a weighted average of all component model predictions, utilizing the probabilities as dynamic weights:
-        $$
-        \hat{y}_{\text{final}} = \sum_{k} \hat{y}_k \times P(M_k)
-        $$
-        * **(Note on Diagnostics):** While the final production forecast uses this Soft Voting mechanism, internal diagnostic metrics logged during the Meta-Learner's training also calculate the performance of a "Hard Switch" logic (selecting the single highest-probability model) for comparative analysis.
+   * **Data Preparation (Oracle and Error):** The Super Ensemble meta-learner requires a single optimal model label for each training row.
+       * **Oracle Error:** This is the *minimum absolute error* achievable by any component model for a given district-year observation. It is calculated as $\min_k(|\text{Actual Yield} - \hat{y}_k|)$ for all component models $k$.
+       * **Best\_Model (Target):** The component model that achieved the Oracle Error for that specific observation is assigned as the classification target (the `Best_Model`).
+   * **Garbage Filter (Data Quality):** A critical preprocessing step where rows are removed from the training data if their **Oracle\_Error > 200 dt/ha**. This threshold identifies extreme observations (such as a likely data entry error in Aurich, 2012) where even the *best* possible component model is wildly inaccurate. Removing these likely data errors prevents the Meta-Learner from overfitting to noise. The process removed 67 'Garbage' rows during training.
+   * **Meta-Learner:** An **XGBoost Classifier** (`objective='multi:softmax'`).
+       * **Task:** Predicts the `Best_Model` (the model with the lowest absolute error) for a given district/year context based on bio-physical features. The Meta-Learner was trained using uniform sample weights.
+   * **Inference (Soft Voting):**
+       * The classifier outputs probabilities $P(M_k)$ for each component model $k$.
+       * The final forecast is a weighted average of all component model predictions, utilizing the probabilities as dynamic weights:
+       $$
+       \hat{y}_{\text{final}} = \sum_{k} \hat{y}_k \times P(M_k)
+       $$
+       * **(Note on Diagnostics):** While the final production forecast uses this Soft Voting mechanism, internal diagnostic metrics logged during the Meta-Learner's training also calculate the performance of a "Hard Switch" logic (selecting the single highest-probability model) for comparative analysis.
       
 #### 2.5 Evaluation and Validation Strategy
 
@@ -177,3 +180,25 @@ Strategy: Strict Time-Dependent Walk-Forward Validation (Backtesting). The model
 
 *   **Final Takeaways:** The developed Super Ensemble Hybrid Model, utilizing a Meta-Learner with Soft Voting, represents a robust solution for crop yield forecasting. It successfully integrates process-based simulation (WOFOST 7.2) with robust machine learning (XGBoost/Huber).
 *   **Significance:** This approach offers significant value for agricultural decision-making by providing reliable forecasts even under increasingly volatile climate conditions, solving the "Interpolation vs. Extrapolation" problem by dynamically selecting the best tool for the current context.
+
+
+
+### 6. TODO
+### 6.1. Data Provenance & Specifics
+*   **Issue**: The references "interpolated weather grids" and "SoilGrids".
+    *   Specify the exact source of the weather grids (e.g., DWD HYRAS, generic interpolation, etc.).
+    *   Specify the resolution and version of SoilGrids used.
+    *   Specify the exact product names for MODIS/Sentinel NDVI data.
+### 6.2. Hyperparameter Completeness
+*   **Issue**: Some hyperparameters are listed (XGBoost), others are missing.
+*   **Finding**:
+    *   **ARIMA Order**: The report mentions ARIMA but not the order. `src/02_models/config.py` defines it as `(1, 0, 0)`.
+    *   **GAM Splines**: `src/02_models/config.py` defines `GAM_SPLINES = 10`. Add these specific values to the "Statistical Trend Baseline" section for reproducibility.
+### 6.3. Feature Dictionary
+*   **Issue**: The report mentions "Stage 1" and "Stage 2" features but only details a few (Scorch, Anoxia).
+*   * A supplementary table or appendix should list *all* engineered features used in the final models, including but not all:
+    *   `z_rain`, `z_sow`, `Index_Bumper`, `drown`, `late_start`.
+    *   `VegetationVigorIndex` formula (verified as `NDVI_Anomaly + 0.5 * Spring_Precip_Anomaly`).
+    *   `RootZoneDepletion` formula (verified as `(HeatDays + 1) / (EffectiveWinterWater)`).
+
+
