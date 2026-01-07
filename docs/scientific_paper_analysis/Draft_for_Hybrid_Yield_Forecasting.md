@@ -108,7 +108,8 @@ This study employs a two-stage feature engineering pipeline designed to translat
 * **Super Ensemble Architecture and Meta-Learner Introduction:** The final forecast system is a **Super Ensemble** driven by a Meta-Learner (XGBoost Classifier). The primary role of the Meta-Learner is to overcome the structural bias of individual component models by acting as a dynamic "switch". It achieves this by predicting which specialized component model (e.g., Physics-Informed, Hybrid XGB) is likely to have the **lowest error** for a specific district and year, based on the emerging bio-physical context. The Meta-Learner uses high-level, interpreted features (including ensemble statistics and district-specific biases, such as `District_Historical_Bias`) to make this optimal selection.
 The overall architecture allows the Super Ensemble to achieve superior skill, exemplified by a substantial reduction in MAE from $67.21 \text{ dt/ha}$ (Statistical Trend Baseline) to $56.28 \text{ dt/ha}$ (Final Super Ensemble) over the full 2000-2024 validation period.
 
-*Super Ensemble Architecture and Flow:** The system's strength lies in its hierarchical structure, combining the output of process-based simulations (WOFOST) and specialized machine learning models into a single, cohesive forecast. This flow—from raw data ingestion to feature engineering, component modeling, and final decision-making—is highly complex and summarized visually below. ![System Architecture Flowchart](super_ensemble_flowchart.png)
+*Super Ensemble Architecture and Flow:**
+![System Architecture Flowchart](super_ensemble_flowchart.png)
 
 * **Super Ensemble (`train_meta_regressor.py`, `execute_ensemble_forecast.py`):**
    * **Data Preparation (Oracle and Error):** The Super Ensemble meta-learner requires a single optimal model label for each training row.
