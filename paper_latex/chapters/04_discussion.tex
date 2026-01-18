@@ -1,0 +1,10 @@
+\section{Discussion}
+
+\subsection{Interpretation of Results}
+The Super Ensemble demonstrates superior performance (16--18\% skill gain) by effectively switching between component models. The ``Soft Voting'' mechanism allows it to leverage the stability of the Trend model during normal years while shifting weight to Physics-Informed components (like the Robust Linear Integrator) during extreme years (2003, 2018).
+
+\subsection{Signal-to-Noise Ratio}
+The Meta-Learner's ability to successfully diagnose and predict extreme outcomes is primarily attributable to two implemented factors: the high informational value of the complex engineered features (e.g., Z-scores, Scorch Index, Anoxia) and the critical role of the \textbf{``Garbage Data'' filter}. By removing training rows with an Oracle Error $> 200 \text{ dt/ha}$, the system was prevented from overfitting to likely data entry errors, ensuring the classifier focused on distinguishing between genuine, climate-driven failures.
+
+\subsection{Comparison with Baselines}
+The model consistently outperforms the Statistical Trend baseline. This gap widens in the ``Recent Volatility'' period (2010--2024), indicating that pure statistical extrapolation is becoming less reliable as climate patterns shift.

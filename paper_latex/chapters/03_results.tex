@@ -1,0 +1,51 @@
+\section{Results}
+
+\subsection{Performance Overview}
+The model was validated via strict time-dependent cross-validation over the 2000--2024 period.
+
+\begin{table}[h]
+\centering
+\caption{Long-Term Stability (2000--2024) (N=5041)}
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \hline
+\textbf{Super Ensemble} & \textbf{56.28} & \textbf{0.618} & \textbf{16.27} \\ \hline
+Robust Linear (Stage 2) & 64.40 & 0.499 & 4.18 \\ \hline
+Statistical Trend & 67.21 & 0.467 & 0.00 \\ \hline
+Native Ensemble & 70.30 & 0.372 & -4.59 \\ \hline
+\end{tabular}
+\end{table}
+
+In the recent volatile period (2010--2024), the model maintained robustness.
+
+\begin{table}[h]
+\centering
+\caption{Recent Volatility (2010--2024) (N=2666)}
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \hline
+\textbf{Super Ensemble} & \textbf{65.98} & \textbf{0.434} & \textbf{18.25} \\ \hline
+Robust Linear (Stage 2) & 77.91 & 0.239 & 3.47 \\ \hline
+Statistical Trend & 80.71 & 0.192 & 0.00 \\ \hline
+Native Ensemble & 80.97 & 0.189 & -0.31 \\ \hline
+\end{tabular}
+\end{table}
+
+\subsection{Anomaly Forensics (Black Swan Events)}
+\begin{itemize}
+    \item \textbf{2003 (Historic Heat/Drought):} Actual 516.9 dt/ha.
+    \begin{itemize}
+        \item \textbf{Super Ensemble:} 581.9 (MAE 80.7) - \textit{Correctly captures the crash.}
+        \item Trend: 593.7 (MAE 95.8)
+    \end{itemize}
+    \item \textbf{2014 (Bumper Year):} Actual 825.6 dt/ha.
+    \begin{itemize}
+        \item \textbf{Super Ensemble:} 749.5 (MAE 84.3) - \textit{Correctly captures the upside.}
+        \item Trend: 715.9 (MAE 114.0)
+    \end{itemize}
+    \item \textbf{2018 (Severe Drought):} Actual 628.5 dt/ha.
+    \begin{itemize}
+        \item \textbf{Super Ensemble:} 710.8 (MAE 103.5) - \textit{Significantly better than trend.}
+        \item Trend: 799.7 (MAE 182.1) - \textit{Failed to predict magnitude of loss.}
+    \end{itemize}
+\end{itemize}

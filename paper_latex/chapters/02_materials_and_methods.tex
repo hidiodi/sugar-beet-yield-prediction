@@ -1,0 +1,73 @@
+\section{Materials and Methods}
+
+\subsection{Study Area and Datasets}
+The study covers sugarbeet cultivation districts in Germany. The datasets used include:
+\begin{itemize}
+    \item \textbf{Yield:} Historical district-level yield from 1981--2024.
+    \item \textbf{Weather:} Daily Tmin, Tmax, Precip from interpolated weather grids.
+    \item \textbf{Static:} Soil properties (sand/clay fractions, pH, bulk density) from SoilGrids \cite{hengl2017soilgrids250m}, and district centroids.
+    \item \textbf{Remote Sensing:} MODIS/Sentinel NDVI anomalies.
+\end{itemize}
+
+\subsection{The Statistical Trend Baseline (GAM + ARIMA)}
+The Statistical Trend Baseline model is a robust, hybrid time-series forecasting pipeline executed via strict Walk-Forward Validation.
+The forecasting process for any target year $t$ involves two steps:
+
+\begin{enumerate}
+    \item \textbf{Trend Component (Long-Term):} The core long-term trend is modeled using a Generalized Additive Model (GAM) with a smoothing spline function (10 splines). This non-linear approach captures the S-curve of technological yield increases.
+    \[ \hat{y}_{\text{trend}}(t) = \text{GAM}(\text{year}_t) \]
+
+    \item \textbf{Residual Component (Short-Term):} The historical residuals are modeled using an ARIMA(1, 0, 0) model. This step captures short-term, year-to-year autocorrelation.
+    \[ \hat{y}_{\text{residual}}(t) = \text{ARIMA}(\text{Historical Residuals}) \]
+\end{enumerate}
+
+The final trend forecast is the sum of these two components:
+\[ \hat{y}_{\text{final}} = \hat{y}_{\text{trend}} + \hat{y}_{\text{residual}} \]
+
+\subsection{Feature Selection and Engineering}
+This study employs a two-stage feature engineering pipeline.
+
+\subsubsection{Bio-Physical Risk Scanner (Mechanism-Informed)}
+Implemented within the WOFOST simulation \cite{boogaard1998wofost}, this module calculates risks based on daily weather and soil state:
+\begin{itemize}
+    \item \textbf{Oxygen Stress (Anoxia):} Count of days in June, July, and August where simulated Soil Moisture $\ge$ Field Capacity.
+    \item \textbf{Harvest Respiration:} Accumulated Growing Degree Days (GDD) above 10$^\circ$C during the harvest window.
+\end{itemize}
+
+\subsubsection{Stage 1 Features}
+Physics Z-Scores are calculated using an expanding window (min\_periods=2) to prevent data leakage. Features include $Z_{heat}$ (Observed Heat Days $> 30^\circ$C), $Z_{bal}$ (Water Balance), $Z_{tank}$ (Winter Recharge), and $Z_{anoxia}$.
+The \textbf{Compound Failure Index} includes a Scorch component:
+\[ \text{Scorch} = \max\left(Z_{heat} \times \max(0, -Z_{bal}), \left(Z_{heat} - 1.5\right)^+\times 2.0\right) \]
+
+\subsubsection{Stage 2 Features}
+\begin{itemize}
+    \item \textbf{Pest/Disease Proxies:} Includes `mild\_winter\_days` ($T_{min} > 0^\circ$C in Jan/Feb) and `fungal\_risk\_days` ($T_{max} > 15^\circ$C and Precip $> 1$ mm in May/June).
+    \item \textbf{Root Zone Depletion:}
+    \[ \text{RootZoneDepletion} = \frac{\text{Demand} (\text{Summer Heat Days})}{\text{Supply} (\text{Effective Winter Water})} \]
+\end{itemize}
+
+\subsection{Predictive Algorithms}
+
+\subsubsection{Multivariate Heat Signal}
+Designed to address the early season information deficit, this model combines historical and static signals to predict long-term heat exposure (Days $> 25^\circ$C). It uses an XGBoost Regressor ($n\_estimators=800$, $learning\_rate=0.015$) with cubic weighting to prioritize tail events.
+
+\subsubsection{Physics-Informed Ensemble}
+Trains two XGBoost models ($n\_estimators=2000$, $learning\_rate=0.01$):
+\begin{itemize}
+    \item \textbf{Native\_V2:} Targets the 0.20 quantile (Pessimistic Floor).
+    \item \textbf{Native\_V8:} Targets the 0.80 quantile (Optimistic Ceiling).
+\end{itemize}
+It uses a ``Safe Ensemble'' logic blending the Trend with the Quantile model based on the WOFOST ratio.
+
+\subsubsection{Hybrid XGBoost}
+Targets the `yield\_ratio` (Actual Yield / Trend Forecast). Explicitly drops the first 7 years of data (Burn-In).
+
+\subsubsection{Robust Linear Integrator}
+Uses a HuberRegressor ($\epsilon=1.35$) to predict the residual (`Actual - Trend`) using inputs like `wofost\_residual`, `VegetationVigorIndex`, and `RootZoneDepletion`.
+
+\subsection{Super Ensemble Architecture}
+The final forecast system is a Super Ensemble driven by a Meta-Learner (XGBoost Classifier). The Meta-Learner acts as a dynamic ``switch'', predicting which component model is likely to have the lowest error for a specific district and year.
+\begin{itemize}
+    \item \textbf{Garbage Filter:} Rows with Oracle Error $> 200$ dt/ha are removed from training.
+    \item \textbf{Inference:} The final forecast is a weighted average using the classifier's predicted probabilities as weights (Soft Voting).
+\end{itemize}
