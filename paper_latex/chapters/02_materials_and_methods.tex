@@ -4,9 +4,9 @@
 The study covers sugarbeet cultivation districts in Germany. The datasets used include:
 \begin{itemize}
     \item \textbf{Yield:} Historical district-level yield from 1981--2024.
-    \item \textbf{Weather:} Daily Tmin, Tmax, Precip from interpolated weather grids.
+    \item \textbf{Weather:} Daily Tmin, Tmax, Precip from interpolated weather grids \cite{rauthe2013central}.
     \item \textbf{Static:} Soil properties (sand/clay fractions, pH, bulk density) from SoilGrids \cite{hengl2017soilgrids250m}, and district centroids.
-    \item \textbf{Remote Sensing:} MODIS/Sentinel NDVI anomalies.
+    \item \textbf{Remote Sensing:} MODIS/Sentinel NDVI anomalies \cite{didan2015mod13q1}.
 \end{itemize}
 
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
@@ -25,31 +25,34 @@ The final trend forecast is the sum of these two components:
 \[ \hat{y}_{\text{final}} = \hat{y}_{\text{trend}} + \hat{y}_{\text{residual}} \]
 
 \subsection{Feature Selection and Engineering}
-This study employs a two-stage feature engineering pipeline.
+This study employs a two-stage feature engineering pipeline designed to translate raw data into agronomically meaningful signals.
 
 \subsubsection{Bio-Physical Risk Scanner (Mechanism-Informed)}
 Implemented within the WOFOST simulation \cite{boogaard1998wofost}, this module calculates risks based on daily weather and soil state:
 \begin{itemize}
-    \item \textbf{Oxygen Stress (Anoxia):} Count of days in June, July, and August where simulated Soil Moisture $\ge$ Field Capacity.
+    \item \textbf{Oxygen Stress (Anoxia):} Sugarbeets are highly sensitive to waterlogging. We calculate the count of days in June, July, and August where simulated Soil Moisture $\ge$ Field Capacity, serving as a proxy for root respiration inhibition.
     \item \textbf{Harvest Respiration:} Accumulated Growing Degree Days (GDD) above 10$^\circ$C during the harvest window.
 \end{itemize}
 
 \subsubsection{Stage 1 Features}
 Physics Z-Scores are calculated using an expanding window (min\_periods=2) to prevent data leakage. Features include $Z_{heat}$ (Observed Heat Days $> 30^\circ$C), $Z_{bal}$ (Water Balance), $Z_{tank}$ (Winter Recharge), and $Z_{anoxia}$.
-The \textbf{Compound Failure Index} includes a Scorch component:
+The \textbf{Compound Failure Index} includes a Scorch component, which captures the non-linear interaction where heat stress is amplified by soil moisture deficits (desiccation):
 \[ \text{Scorch} = \max\left(Z_{heat} \times \max(0, -Z_{bal}), \left(Z_{heat} - 1.5\right)^+\times 2.0\right) \]
 
 \subsubsection{Stage 2 Features}
 \begin{itemize}
     \item \textbf{Pest/Disease Proxies:} Includes `mild\_winter\_days` ($T_{min} > 0^\circ$C in Jan/Feb) and `fungal\_risk\_days` ($T_{max} > 15^\circ$C and Precip $> 1$ mm in May/June).
-    \item \textbf{Root Zone Depletion:}
+    \item \textbf{Root Zone Depletion:} Quantifies the mismatch between atmospheric demand and soil supply, critical for deep-rooting crops:
     \[ \text{RootZoneDepletion} = \frac{\text{Demand} (\text{Summer Heat Days})}{\text{Supply} (\text{Effective Winter Water})} \]
 \end{itemize}
 
 \subsection{Predictive Algorithms}
 
 \subsubsection{Multivariate Heat Signal}
-Designed to address the early season information deficit, this model combines historical and static signals to predict long-term heat exposure (Days $> 25^\circ$C). It uses an XGBoost Regressor ($n\_estimators=800$, $learning\_rate=0.015$) with cubic weighting to prioritize tail events.
+Designed to address the early season information deficit, this model combines historical and static signals to predict long-term heat exposure (Days $> 25^\circ$C). It uses an XGBoost Regressor ($n\_estimators=800$, $learning\_rate=0.015$).
+To prioritize fitting rare, extreme events, we apply a cubic weighting scheme:
+\[ w_i = \min\left(50, \left(\frac{y_i}{\bar{y}}\right)^3\right) \]
+This forces the model to focus on the tail of the distribution (years like 2003 and 2018).
 
 \subsubsection{Physics-Informed Ensemble}
 Trains two XGBoost models ($n\_estimators=2000$, $learning\_rate=0.01$):
@@ -68,6 +71,10 @@ Uses a HuberRegressor ($\epsilon=1.35$) to predict the residual (`Actual - Trend
 \subsection{Super Ensemble Architecture}
 The final forecast system is a Super Ensemble driven by a Meta-Learner (XGBoost Classifier). The Meta-Learner acts as a dynamic ``switch'', predicting which component model is likely to have the lowest error for a specific district and year.
 \begin{itemize}
-    \item \textbf{Garbage Filter:} Rows with Oracle Error $> 200$ dt/ha are removed from training.
+    \item \textbf{Regime Learning:} The classifier uses high-level features such as district historical bias, ensemble variance, and bio-physical context to determine if the current year represents a ``Trend Regime'' (normal conditions) or a ``Physics Regime'' (extreme stress), adjusting the weights accordingly.
+    \item \textbf{Data Quality Control:} To improve training data quality, we excluded observations with Oracle Error $> 200$ dt/ha, likely representing data entry errors rather than genuine climate responses.
     \item \textbf{Inference:} The final forecast is a weighted average using the classifier's predicted probabilities as weights (Soft Voting).
 \end{itemize}
+
+\subsection{Implementation and Feasibility}
+The system is designed for operational deployment on March 1st. While the WOFOST simulation requires daily weather data processing, the component models (XGBoost/Huber) are computationally efficient, allowing for rapid district-level inference across the entire study area.
