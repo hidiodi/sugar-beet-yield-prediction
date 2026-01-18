@@ -1,0 +1,13 @@
+\section{Introduction}
+
+As climate change increases the frequency of extreme weather events, traditional statistical models (which rely on interpolation) and pure process-based models (which suffer from calibration issues) both face limitations. This challenge is severely amplified when forecasts must be delivered pre-season, specifically on March 1st, when the vast majority of the growing season's critical weather signals are unknown, leading to highly volatile early predictions.
+
+The core challenge is the ``Interpolation vs. Extrapolation'' dilemma, compounded by the early-season information deficit and the difficulty in perfectly knowing the necessary starting conditions. Statistical models fail when conditions deviate from historical norms (extrapolation) and are unstable without observed growing season data. Process-based models capture the mechanism but often lack the precision of Machine Learning (ML) and are highly sensitive to initial weather forecast errors and unobserved factors like specific crop variety (gene variant) characteristics or localized soil-microbial interactions.
+
+This study aims to:
+\begin{enumerate}
+    \item \textbf{Develop Physics-Informed Features:} Implement a Bio-Physical Risk Scanner within WOFOST to quantify specific stress mechanisms (e.g., oxygen stress).
+    \item \textbf{Engineer Extreme-Sensitive Algorithms:} Design the Heat Signal model with custom weighting to prioritize tail events.
+    \item \textbf{Construct a Super Ensemble:} Use a Meta-Learner to learn the optimal ``Switching'' logic between statistical trend and physics-based corrections.
+    \item \textbf{Validate Robustness:} Use strict walk-forward validation to ensure no data leakage.
+\end{enumerate}
