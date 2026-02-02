@@ -5,7 +5,6 @@ This document lists the files and directories identified for removal or archivin
 ## Delete
 These directories contain deprecated or experimental models that are no longer needed.
 - `src/06deprecated_models/`
-- `src/02_models/03_components/v31_solar/`
 
 ## Archive
 These scripts are either unused, redundant, or not part of the core pipeline. They will be moved to the `archive/` directory.
@@ -21,4 +20,4 @@ These scripts are either unused, redundant, or not part of the core pipeline. Th
 ## Notes
 - `src/02_models/01_simulation/Wofost7.2/` is the active WOFOST directory (docs mention 7.1, but files match).
 - `src/02_models/04_super_ensemble/` files are all core.
-- `src/02_models/03_components/` subdirectories (hybrid_xgb, native_ensemble, robust_linear, statistical) contain core files.
+- `src/02_models/03_components/` subdirectories (hybrid_xgb, native_ensemble, robust_linear, statistical, v31_solar) contain core files. `v31_solar` was initially marked for deletion but is required for the ensemble.

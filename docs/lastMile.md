@@ -109,5 +109,6 @@ These files are explicitly called in `src/02_models/execute_hybrid_pipeline.py` 
 ### 5.2 Cleanup Status
 
 The repository has been cleaned.
-*   **Deprecated Models:** Removed `src/02_models/06deprecated_models/` and `src/02_models/03_components/v31_solar/`.
+*   **Deprecated Models:** Removed `src/02_models/06deprecated_models/`.
 *   **Archived Scripts:** Unused analysis scripts and experimental components have been moved to `archive/`.
+*   **Retained Components:** `src/02_models/03_components/v31_solar/` has been retained and integrated into the pipeline as it is a core component of the Super Ensemble.

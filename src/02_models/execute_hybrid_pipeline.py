@@ -31,6 +31,7 @@ SCRIPTS = [
     "src/02_models/03_components/hybrid_xgb/train_yield_ratio_xgb.py",
     "src/02_models/03_components/hybrid_xgb/backtest_yield_ratio_xgb.py" ,
     "src/02_models/03_components/robust_linear/train_robust_integrator.py",
+    "src/02_models/03_components/v31_solar/run_solar_gate.py",
 
     # --- 4. Super Ensemble ---
     "src/02_models/04_super_ensemble/prepare_ensemble_data.py",
