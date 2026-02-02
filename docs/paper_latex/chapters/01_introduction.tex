@@ -6,6 +6,14 @@ The core challenge is the ``Interpolation vs. Extrapolation'' dilemma, compounde
 
 Recent studies have begun to explore hybrid approaches. For instance, \citet{paudel2021machine} demonstrated that machine learning baselines can rival operational systems like MCYFS for large-scale crop yield forecasting in Europe. However, predicting extreme volatility remains a persistent challenge.
 
+\subsection{Research Gap: The Regime Switching Hypothesis}
+Most existing approaches treat crop yield distributions as continuous and unimodal. We hypothesize that yield formation follows a "Regime Switching" process:
+\begin{itemize}
+    \item \textbf{Regime A (Normal):} Yields are driven by gradual technological trends and minor weather fluctuations. Statistical extrapolation works well.
+    \item \textbf{Regime B (Extreme Stress):} Yields are limited by distinct physiological bottlenecks (e.g., stomatal closure, root anoxia) that act as "kill switches." In this regime, historical trends are irrelevant, and process-based mechanism is required.
+\end{itemize}
+Our novel contribution is a Meta-Learner that explicitly detects the active regime and switches the forecasting strategy accordingly.
+
 This study aims to:
 \begin{enumerate}
     \item \textbf{Develop Physics-Informed Features:} Implement a Bio-Physical Risk Scanner within WOFOST to quantify specific stress mechanisms (e.g., oxygen stress).

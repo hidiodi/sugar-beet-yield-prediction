@@ -9,6 +9,9 @@ The study covers sugarbeet cultivation districts in Germany. The datasets used i
     \item \textbf{Remote Sensing:} MODIS MOD13Q1 / Sentinel NDVI anomalies \cite{didan2015mod13q1}.
 \end{itemize}
 
+\subsubsection{Data Quality Control}
+To ensure the system learns from climatic signals rather than data errors, we applied a rigorous outlier detection step. Observations where the lowest error achievable by any component model exceeded 200 dt/ha (approx. 30\% of mean yield) were flagged as "Oracle Errors" and excluded from the study. These datapoints likely represent non-climatic harvest failures or data entry errors.
+
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
 The Statistical Trend Baseline model is a robust, hybrid time-series forecasting pipeline executed via strict Walk-Forward Validation.
 The forecasting process for any target year $t$ involves two steps:
@@ -88,11 +91,18 @@ Uses a HuberRegressor ($\epsilon=1.35$) to predict the residual (`Actual - Trend
 
 \subsection{Super Ensemble Architecture}
 The final forecast system is a Super Ensemble driven by a Meta-Learner (XGBoost Classifier). The Meta-Learner acts as a dynamic ``switch'', predicting which component model is likely to have the lowest error for a specific district and year.
-\begin{itemize}
-    \item \textbf{Regime Learning:} The classifier uses high-level features such as district historical bias, ensemble variance, and bio-physical context to determine if the current year represents a ``Trend Regime'' (normal conditions) or a ``Physics Regime'' (extreme stress), adjusting the weights accordingly.
-    \item \textbf{Data Quality Control:} To improve training data quality, we excluded observations with Oracle Error $> 200$ dt/ha, likely representing data entry errors rather than genuine climate responses.
-    \item \textbf{Inference:} The final forecast is a weighted average using the classifier's predicted probabilities as weights (Soft Voting).
-\end{itemize}
+
+\subsubsection{Meta-Learner Inputs}
+The Meta-Learner is trained on four categories of features:
+\begin{enumerate}
+    \item \textbf{Ensemble Statistics:} Variance across component models (proxy for uncertainty).
+    \item \textbf{Historical Bias:} The district-specific historical error bias of the trend model.
+    \item \textbf{Bio-Physical Context:} Stage 1 features ($Z_{heat}$, $Z_{anoxia}$, $Z_{bal}$) providing environmental context.
+    \item \textbf{Trend Deviation:} The magnitude of the current Trend forecast relative to the long-term average.
+\end{enumerate}
+
+\subsubsection{Inference Strategy}
+The classifier determines if the current year represents a ``Trend Regime'' (normal conditions) or a ``Physics Regime'' (extreme stress). The final forecast is a weighted average using the classifier's predicted probabilities as weights (Soft Voting).
 
 \subsection{Implementation and Feasibility}
 The system is designed for operational deployment on March 1st. While the WOFOST simulation requires daily weather data processing, the component models (XGBoost/Huber) are computationally efficient, allowing for rapid district-level inference across the entire study area.
