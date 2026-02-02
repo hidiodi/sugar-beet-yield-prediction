@@ -12,9 +12,9 @@ The study covers sugarbeet cultivation districts in Germany. To address the chal
 
     \item \textbf{Teleconnections (Climate Indices):} To capture large-scale atmospheric variability affecting European weather patterns, we included the North Atlantic Oscillation (\textbf{NAO}), the Scandinavia Pattern (\textbf{SCAND}), and the Multivariate ENSO Index (\textbf{MEI}). These indices were retrieved from \textbf{NASA/NOAA} repositories.
 
-    \item \textbf{Soil \& Land Surface:} Monthly soil moisture dynamics and land surface temperature were derived from \textbf{ERA5-Land} reanalysis data \cite{era5land}, providing a dynamic view of root-zone conditions beyond static soil maps.
+    \item \textbf{Soil \& Land Surface:} Monthly soil moisture dynamics and land surface temperature were derived from \textbf{ERA5-Land} reanalysis data \cite{era5land}, providing a dynamic view of root-zone conditions beyond static soil maps. Static soil properties were sourced from SoilGrids 250m v2.0 \cite{hengl2017soilgrids250m}.
 
-    \item \textbf{Crop Distribution:} Spatial masking for sugarbeet cultivation areas was performed using the \textbf{DLR CropMap} (Deutsches Zentrum für Luft- und Raumfahrt) \cite{dlr_cropmap}, ensuring climate signals are only aggregated from relevant agricultural pixels.
+    \item \textbf{Crop Distribution:} Spatial masking for sugarbeet cultivation areas was performed using the \textbf{DLR CropMap} (Deutsches Zentrum für Luft- und Raumfahrt) \cite{dlr_cropmap}, ensuring climate signals are only aggregated from relevant agricultural pixels. Remote sensing anomalies were derived from MODIS MOD13Q1 \cite{didan2015mod13q1}.
 
     \item \textbf{Crop Simulation Parameters:} Crop-specific physiological parameters for sugarbeets were sourced from the official \textbf{WOFOST} distribution (Wageningen University), calibrated for Central European varieties.
 
@@ -25,8 +25,7 @@ The study covers sugarbeet cultivation districts in Germany. To address the chal
 To ensure the system learns from climatic signals rather than data errors, we applied a rigorous outlier detection step. Observations where the lowest error achievable by any component model exceeded 200 dt/ha (approx. 30\% of mean yield) were flagged as "Oracle Errors" and excluded. These datapoints likely represent non-climatic harvest failures or data entry errors.
 
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
-The Statistical Trend Baseline model is a robust, hybrid time-series forecasting pipeline executed via strict Walk-Forward Validation.
-The forecasting process for any target year $t$ involves two steps:
+The Statistical Trend Baseline model is a robust, hybrid time-series forecasting pipeline executed via strict Walk-Forward Validation. The forecasting process for any target year $t$ involves two steps:
 
 \begin{enumerate}
     \item \textbf{Trend Component (Long-Term):} The core long-term trend is modeled using a Generalized Additive Model (GAM) with a smoothing spline function (10 splines). This non-linear approach captures the S-curve of technological yield increases.
@@ -52,8 +51,7 @@ Implemented within the WOFOST simulation \cite{boogaard1998wofost}, this module 
 \end{itemize}
 
 \subsubsection{Stage 1 Features (Climate Indices)}
-To capture the magnitude of extreme events without introducing data sparsity—a limitation of simple threshold-counting features identified by \citet{paudel2022field}—we adopted a rigorous Z-score normalization approach.
-Physics Z-Scores are calculated using an expanding window (min\_periods=2) to strictly prevent data leakage, ensuring that the model perceives the magnitude of an event (e.g., the 2003 heatwave) relative only to the history known at that time.
+To capture the magnitude of extreme events without introducing data sparsity—a limitation of simple threshold-counting features identified by \citet{paudel2022field}—we adopted a rigorous Z-score normalization approach. Physics Z-Scores are calculated using an expanding window (min\_periods=2) to strictly prevent data leakage, ensuring that the model perceives the magnitude of an event (e.g., the 2003 heatwave) relative only to the history known at that time.
 \[ Z_t = \frac{x_t - \mu_{1...t-1}}{\sigma_{1...t-1}} \]
 Key inputs normalized via this method include:
 \begin{itemize}
@@ -81,21 +79,20 @@ Conversely, the \textbf{Index\_Bumper} identifies ideal conditions:
 \end{itemize}
 
 \subsection{Predictive Algorithms}
+We implemented all machine learning components using the Scikit-Learn \cite{scikitlearn} and XGBoost \cite{chen2016xgboost} libraries.
 
 \subsubsection{Multivariate Heat Signal}
-Designed to address the early season information deficit, this model combines historical and static signals to predict long-term heat exposure (Days $> 25^\circ$C). It uses an XGBoost Regressor ($n\_estimators=800$, $learning\_rate=0.015$).
-To prioritize fitting rare, extreme events, we apply a cubic weighting scheme:
+Designed to address the early season information deficit, this model combines historical and static signals to predict long-term heat exposure (Days $> 25^\circ$C). It uses an XGBoost Regressor \cite{chen2016xgboost} ($n\_estimators=800$, $learning\_rate=0.015$). To prioritize fitting rare, extreme events, we apply a cubic weighting scheme:
 \[ w_i = \min\left(50, \left(\frac{y_i}{\bar{y}}\right)^3\right) \]
 This forces the model to focus on the tail of the distribution (years like 2003 and 2018).
 
 \subsubsection{Physics-Informed Ensemble}
-Trains two XGBoost models ($n\_estimators=2000$, $learning\_rate=0.01$):
+Trains two Gradient Boosting models \cite{friedman2001} using the XGBoost framework ($n\_estimators=2000$, $learning\_rate=0.01$):
 \begin{itemize}
     \item \textbf{Native\_V2:} Targets the 0.20 quantile (Pessimistic Floor).
     \item \textbf{Native\_V8:} Targets the 0.80 quantile (Optimistic Ceiling).
 \end{itemize}
 It uses a ``Safe Ensemble'' logic blending the Trend with the Quantile model based on the WOFOST ratio.
-
 
 \subsubsection{Hybrid XGBoost}
 Following the ``Process-Guided'' paradigm established by \citet{shahhosseini2021coupling}, we utilize WOFOST output not as a final predictor, but as a feature. This model targets the \texttt{yield\_ratio} (Actual / Trend). To capture the full range of uncertainty, we train distinct models for the 0.025, 0.50, and 0.975 quantiles. It explicitly drops the first 7 years of data (Burn-In) to allow the expanding window features to stabilize.
@@ -122,9 +119,12 @@ The Meta-Learner is trained on four categories of features:
     \item \textbf{Trend Deviation:} The magnitude of the current Trend forecast relative to the long-term average.
 \end{enumerate}
 
+\subsubsection{Inference Strategy (Soft Voting)}
+The classifier outputs a probability distribution over the available regimes $R = \{\text{Trend}, \text{Physics}\}$. The final yield forecast $\hat{y}_{\text{final}}$ for a district $d$ in year $t$ is calculated as the probability-weighted sum of the component predictions:
 
-\subsubsection{Inference Strategy}
-The classifier determines if the current year represents a ``Trend Regime'' (normal conditions) or a ``Physics Regime'' (extreme stress). The final forecast is a weighted average using the classifier's predicted probabilities as weights (Soft Voting).
+\[ \hat{y}_{\text{final}}(d,t) = \sum_{k=1}^{K} P(M_k | \mathbf{x}_{d,t}) \cdot \hat{y}_k(d,t) \]
+
+Where $P(M_k | \mathbf{x}_{d,t})$ is the probability assigned by the Meta-Learner to component model $M_k$ given the feature vector $\mathbf{x}_{d,t}$. This allows for a continuous transition between regimes rather than a hard binary switch.
 
 \subsection{Implementation and Feasibility}
 The system is designed for operational deployment on March 1st. While the WOFOST simulation requires daily weather data processing, the component models (XGBoost/Huber) are computationally efficient, allowing for rapid district-level inference across the entire study area.

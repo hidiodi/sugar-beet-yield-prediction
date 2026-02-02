@@ -2,4 +2,12 @@
 
 The developed Super Ensemble Hybrid Model, utilizing a Meta-Learner with Soft Voting, represents a robust solution for crop yield forecasting. It successfully integrates process-based simulation (WOFOST 7.2) with robust machine learning (XGBoost/Huber).
 
-This approach offers significant value for agricultural decision-making by providing reliable forecasts even under increasingly volatile climate conditions, solving the ``Interpolation vs. Extrapolation'' problem by dynamically selecting the best tool for the current context. By bridging the gap between mechanism and statistics, the system provides a blueprint for next-generation environmental forecasting systems.
+This approach offers significant value for agricultural decision-making by providing reliable forecasts even under increasingly volatile climate conditions, \textbf{addressing} the ``Interpolation vs. Extrapolation'' problem by dynamically selecting the best tool for the current context. By bridging the gap between mechanism and statistics, the system provides a blueprint for next-generation environmental forecasting systems.
+
+\subsection{Future Work}
+Future iterations will focus on three key areas:
+\begin{enumerate}
+    \item \textbf{Scalability:} Extending the "Bio-Physical Scanner" to other tuber crops (e.g., potatoes) and cereals to validate the generalizability of the regime-switching hypothesis.
+    \item \textbf{Probabilistic Outputs:} Moving from quantile regression to full conformal prediction to provide rigorous coverage guarantees for risk managers.
+    \item \textbf{Operational Latency:} Optimizing the WOFOST simulation pipeline to allow for real-time inference on cloud infrastructure, reducing the computational lag for large-scale deployments.
+\end{enumerate}

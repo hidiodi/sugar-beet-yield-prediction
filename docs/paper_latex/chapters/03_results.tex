@@ -3,7 +3,6 @@
 \subsection{Performance Overview}
 The model was validated via strict time-dependent cross-validation over the 2000--2024 period ($N=5041$). Crucially, all results presented below represent \textbf{Operational Hindcasts} utilizing SEAS5 weather forecasts for the growing season, not observed weather.
 
-
 \begin{table}[h]
 \centering
 \caption{Long-Term Stability (2000--2024) ($N=5041$)}
@@ -44,8 +43,8 @@ In the recent volatile period (2010--2024), comprising $N=2666$ district-year ob
 \begin{itemize}
     \item \textbf{2003 (Historic Heat/Drought):} Actual 516.9 dt/ha.
     \begin{itemize}
-        \item \textbf{Super Ensemble:} 581.9 (MAE 80.7) - \textit{Correctly captures the crash.}
-        \item Trend: 593.7 (MAE 95.8)
+        \item \textbf{Super Ensemble (SEAS5):} 581.9 (MAE 80.7). Even with forecast uncertainty, the Bio-Physical Scanner successfully identified the heat stress signal in the SEAS5 ensemble members.
+        \item Trend: 593.7 (MAE 95.8).
     \end{itemize}
     \item \textbf{2014 (Bumper Year):} Actual 825.6 dt/ha.
     \begin{itemize}
