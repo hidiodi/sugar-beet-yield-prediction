@@ -90,7 +90,14 @@ Targets the `yield\_ratio` (Actual Yield / Trend Forecast). Explicitly drops the
 Uses a HuberRegressor ($\epsilon=1.35$) to predict the residual (`Actual - Trend`) using inputs like `wofost\_residual`, `VegetationVigorIndex`, and `RootZoneDepletion`.
 
 \subsection{Super Ensemble Architecture}
-The final forecast system is a Super Ensemble driven by a Meta-Learner (XGBoost Classifier). The Meta-Learner acts as a dynamic ``switch'', predicting which component model is likely to have the lowest error for a specific district and year.
+The final forecast system is a Super Ensemble driven by a Meta-Learner (XGBoost Classifier). The Meta-Learner acts as a dynamic ``switch'', predicting which component model is likely to have the lowest error for a specific district and year. This architecture is visualized in Figure \ref{fig:flowchart}.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{super_ensemble_flowchart.png}
+    \caption{Super Ensemble Architecture Flowchart. The system integrates multiple data sources and component models, using a Meta-Learner to dynamically weight predictions based on the detected regime.}
+    \label{fig:flowchart}
+\end{figure}
 
 \subsubsection{Meta-Learner Inputs}
 The Meta-Learner is trained on four categories of features:
