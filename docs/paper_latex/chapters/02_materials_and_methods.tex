@@ -112,6 +112,19 @@ The final forecast system is a Super Ensemble driven by a Meta-Learner (XGBoost 
     \label{fig:flowchart}
 \end{figure}
 
+\subsection{Evaluation Strategy}
+\subsubsection{Operational Hindcast Protocol (Strict Non-Leakage)}
+To directly address the ``Interpolation vs. Extrapolation'' dilemma, we implemented a strict \textbf{Operational Hindcast} validation scheme. For every test year $t$ in the 2000--2024 period, the model is initialized on March 1st.
+\begin{itemize}
+    \item \textbf{Training Data ($1981 \dots t-1$):} Trained on observed weather (AgERA5) and final yields.
+    \item \textbf{Inference Inputs ($t$):}
+    \begin{itemize}
+        \item \textit{Pre-Season (Jan--Feb):} Observed weather (AgERA5).
+        \item \textit{Growing Season (Mar--Oct):} \textbf{ECMWF SEAS5 Seasonal Forecasts}.
+    \end{itemize}
+\end{itemize}
+This ensures that the reported metrics reflect genuine operational skill, incorporating the uncertainty of seasonal weather forecasting. Note: While individual components (like the Heat Signal) were calibrated using observed weather to establish mechanism, all system-level validation reported in Section 3 utilizes SEAS5 forecasts.
+
 \subsubsection{Meta-Learner Inputs}
 The Meta-Learner is trained on four categories of features:
 \begin{enumerate}
