@@ -1,10 +1,8 @@
 \section{Introduction}
 
-As climate change increases the frequency of extreme weather events, traditional statistical models (which rely on interpolation) and pure process-based models (which suffer from calibration issues) both face limitations. This challenge is severely amplified when forecasts must be delivered pre-season, specifically on March 1st, when the vast majority of the growing season's critical weather signals are unknown, leading to highly volatile early predictions.
-
-The core challenge is the ``Interpolation vs. Extrapolation'' dilemma, compounded by the early-season information deficit and the difficulty in perfectly knowing the necessary starting conditions. Statistical models fail when conditions deviate from historical norms (extrapolation) and are unstable without observed growing season data. Process-based models capture the mechanism but often lack the precision of Machine Learning (ML) and are highly sensitive to initial weather forecast errors and unobserved factors like specific crop variety (gene variant) characteristics or localized soil-microbial interactions.
-
-Recent studies have begun to explore hybrid approaches. For instance, \citet{paudel2021machine} demonstrated that machine learning baselines can rival operational systems like MCYFS for large-scale crop yield forecasting in Europe. However, predicting extreme volatility remains a persistent challenge.
+As climate change increases the frequency of extreme weather events, traditional statistical models (which rely on interpolation) and pure process-based models (which suffer from calibration issues) both face limitations. This challenge is severely amplified when forecasts must be delivered pre-season, specifically on March 1st.
+The core challenge is the ``Interpolation vs. Extrapolation'' dilemma. Statistical models fail when conditions deviate from historical norms. The necessity of this regime-switching approach was starkly illustrated during the 2018 European drought, where standard forecasting models failed to capture simultaneous compound failures across Northern Europe \citep{ceglar2020impact}.
+Recent studies have begun to explore hybrid approaches. For instance, \citet{paudel2021machine} demonstrated that machine learning baselines can rival operational systems like MCYFS. However, predicting extreme volatility remains a persistent challenge.
 
 \subsection{Research Gap: The Regime Switching Hypothesis}
 Most existing approaches treat crop yield distributions as continuous and unimodal. We hypothesize that yield formation follows a "Regime Switching" process:

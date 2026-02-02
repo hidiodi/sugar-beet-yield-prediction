@@ -96,14 +96,15 @@ Trains two XGBoost models ($n\_estimators=2000$, $learning\_rate=0.01$):
 \end{itemize}
 It uses a ``Safe Ensemble'' logic blending the Trend with the Quantile model based on the WOFOST ratio.
 
+
 \subsubsection{Hybrid XGBoost}
-Targets the `yield\_ratio` (Actual Yield / Trend Forecast). Explicitly drops the first 7 years of data (Burn-In).
+Following the ``Process-Guided'' paradigm established by \citet{shahhosseini2021coupling}, we utilize WOFOST output not as a final predictor, but as a feature. This model targets the \texttt{yield\_ratio} (Actual / Trend). To capture the full range of uncertainty, we train distinct models for the 0.025, 0.50, and 0.975 quantiles. It explicitly drops the first 7 years of data (Burn-In) to allow the expanding window features to stabilize.
 
 \subsubsection{Robust Linear Integrator}
-Uses a HuberRegressor ($\epsilon=1.35$) to predict the residual (`Actual - Trend`) using inputs like `wofost\_residual`, `VegetationVigorIndex`, and `RootZoneDepletion`.
+Uses a HuberRegressor ($\epsilon=1.35$) to predict the yield residual. Crucially, this component calculates its own internal linear trend (via first-degree polynomial fitting) rather than using the global GAM baseline. This ensures the component remains statistically independent of the main trend model. Inputs include \texttt{wofost\_residual}, \texttt{RootZoneDepletion}, and the biological risk proxies \texttt{mild\_winter\_days} and \texttt{fungal\_risk\_days}.
 
 \subsection{Super Ensemble Architecture}
-The final forecast system is a Super Ensemble driven by a Meta-Learner (XGBoost Classifier). The Meta-Learner acts as a dynamic ``switch'', predicting which component model is likely to have the lowest error for a specific district and year. This architecture is visualized in Figure \ref{fig:flowchart}.
+The final forecast system is a Super Ensemble driven by a Meta-Learner (XGBoost Classifier). The Meta-Learner functions as a dynamic gating network, similar to the Mixture of Experts architecture proposed by \citet{li2025dynamic}, assigning weights to specialized sub-models based on the detected climatic regime.
 
 \begin{figure}[h]
     \centering
@@ -111,19 +112,6 @@ The final forecast system is a Super Ensemble driven by a Meta-Learner (XGBoost 
     \caption{Super Ensemble Architecture Flowchart. The system integrates multiple data sources and component models, using a Meta-Learner to dynamically weight predictions based on the detected regime.}
     \label{fig:flowchart}
 \end{figure}
-
-\subsection{Evaluation Strategy}
-\subsubsection{Operational Hindcast Protocol (Strict Non-Leakage)}
-To directly address the ``Interpolation vs. Extrapolation'' dilemma, we implemented a strict \textbf{Operational Hindcast} validation scheme. For every test year $t$ in the 2000--2024 period, the model is initialized on March 1st.
-\begin{itemize}
-    \item \textbf{Training Data ($1981 \dots t-1$):} Trained on observed weather (AgERA5) and final yields.
-    \item \textbf{Inference Inputs ($t$):}
-    \begin{itemize}
-        \item \textit{Pre-Season (Jan--Feb):} Observed weather (AgERA5).
-        \item \textit{Growing Season (Mar--Oct):} \textbf{ECMWF SEAS5 Seasonal Forecasts}.
-    \end{itemize}
-\end{itemize}
-This ensures that the reported metrics reflect genuine operational skill, incorporating the uncertainty of seasonal weather forecasting. Note: While individual components (like the Heat Signal) were calibrated using observed weather to establish mechanism, all system-level validation reported in Section 3 utilizes SEAS5 forecasts.
 
 \subsubsection{Meta-Learner Inputs}
 The Meta-Learner is trained on four categories of features:
@@ -133,6 +121,7 @@ The Meta-Learner is trained on four categories of features:
     \item \textbf{Bio-Physical Context:} Stage 1 features ($Z_{heat}$, $Z_{anoxia}$, $Z_{bal}$) providing environmental context.
     \item \textbf{Trend Deviation:} The magnitude of the current Trend forecast relative to the long-term average.
 \end{enumerate}
+
 
 \subsubsection{Inference Strategy}
 The classifier determines if the current year represents a ``Trend Regime'' (normal conditions) or a ``Physics Regime'' (extreme stress). The final forecast is a weighted average using the classifier's predicted probabilities as weights (Soft Voting).
