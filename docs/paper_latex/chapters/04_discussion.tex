@@ -6,17 +6,17 @@ The Super Ensemble demonstrates superior performance (16--18\% skill gain) by ef
 \subsection{Signal-to-Noise Ratio}
 The Meta-Learner's ability to successfully diagnose and predict extreme outcomes is primarily attributable to two implemented factors: the high informational value of the complex engineered features (e.g., Z-scores, Scorch Index, Anoxia) and the critical role of the \textbf{Data Quality Control} filter. By removing training rows with an Oracle Error $> 200 \text{ dt/ha}$, the system was prevented from overfitting to likely data entry errors, ensuring the classifier focused on distinguishing between genuine, climate-driven failures.
 
-
 \subsection{Comparison with Baselines and Literature}
-Our results align with and extend recent findings in the field. \citet{paudel2022field} demonstrated that machine learning approaches significantly outperform linear trends at the regional level in Europe. However, they noted that standard ML models often struggle to capture ``Extreme Harvests,'' tending to be conservative.
+Our results align with and extend recent findings in the field. \citet{paudel2022field} demonstrated that machine learning approaches significantly outperform linear trends at the regional level in Europe. However, they also noted that standard ML models often struggle to capture ``Extreme Harvests,'' tending to be conservative.
 
-Our model compares favorably to the operational standard. \citet{vandervelde2019mars} reported that the MCYFS exhibits a systematic bias in sugar beet forecasts, with median RMSE values reaching 4.89 dt/ha. Our Super Ensemble reduces this error by leveraging the ``Regime Switching'' logic, effectively uncapping the model's ability to predict deviations from the mean during events like 2018.
+Comparisons with operational standards like the European Commission's MCYFS \citep{vandervelde2019mars} require nuance regarding timing. MCYFS generates monthly updated forecasts throughout the growing season, relying on observed satellite and weather data as it becomes available. In contrast, our Super Ensemble targets the \textbf{pre-season (March 1st) window}—traditionally the blind spot of operational forecasting where no crop data exists. While \citet{vandervelde2019mars} note that operational systems can struggle with systematic bias in sugar beet forecasts due to the crop's subterranean development, a direct accuracy comparison is confounded by these differing horizons. However, the fact that our system retains a 16.27\% skill score using only seasonal forecasts \textit{before planting} positions it as a meaningful complement to monitoring-based systems, providing critical early-warning signals before the first MCYFS bulletins are issued.
 
 \subsection{Uncertainty Quantification}
 While the primary output of the Super Ensemble is a point forecast, the underlying Physics-Informed Ensemble generates quantile predictions (0.20 and 0.80). These quantiles provide a valuable probabilistic envelope, defining the ``Pessimistic Floor'' and ``Optimistic Ceiling'' for the yield. For agricultural stakeholders, this uncertainty range is as critical as the mean forecast, allowing for risk-based decision making (e.g., hedging against the 0.20 quantile outcome).
 
 \subsection{Limitations}
 Despite the promising results, this study faces several limitations. First, the reliance on interpolated weather grids \cite{rauthe2013central} introduces uncertainty, particularly for precipitation-driven features like Anoxia. Anoxia is often driven by intense, short-duration thunderstorms. Interpolated grids tend to smooth these localized extremes over space and time, potentially under-representing the true intensity of waterlogging events in specific fields.
+
 Second, aggregating data to the district level may mask significant within-district variability in soil types and management practices. Finally, while the Meta-Learner effectively handles known stress patterns, its ability to generalize to completely unprecedented compound extremes (e.g., a new pest outbreak combined with heat) remains an open challenge.
 
 \subsection{Forecast vs. Mechanism}
