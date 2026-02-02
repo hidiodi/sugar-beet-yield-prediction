@@ -4,9 +4,9 @@
 The study covers sugarbeet cultivation districts in Germany. The datasets used include:
 \begin{itemize}
     \item \textbf{Yield:} Historical district-level yield from 1981--2024.
-    \item \textbf{Weather:} Daily Tmin, Tmax, Precip from interpolated weather grids \cite{rauthe2013central}.
-    \item \textbf{Static:} Soil properties (sand/clay fractions, pH, bulk density) from SoilGrids \cite{hengl2017soilgrids250m}, and district centroids.
-    \item \textbf{Remote Sensing:} MODIS/Sentinel NDVI anomalies \cite{didan2015mod13q1}.
+    \item \textbf{Weather:} Daily Tmin, Tmax, Precip from DWD HYRAS 2.0 interpolated weather grids \cite{rauthe2013central}.
+    \item \textbf{Static:} Soil properties (sand/clay fractions, pH, bulk density) from SoilGrids 250m v2.0 \cite{hengl2017soilgrids250m}, and district centroids.
+    \item \textbf{Remote Sensing:} MODIS MOD13Q1 / Sentinel NDVI anomalies \cite{didan2015mod13q1}.
 \end{itemize}
 
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
@@ -35,9 +35,27 @@ Implemented within the WOFOST simulation \cite{boogaard1998wofost}, this module 
 \end{itemize}
 
 \subsubsection{Stage 1 Features}
-Physics Z-Scores are calculated using an expanding window (min\_periods=2) to prevent data leakage. Features include $Z_{heat}$ (Observed Heat Days $> 30^\circ$C), $Z_{bal}$ (Water Balance), $Z_{tank}$ (Winter Recharge), and $Z_{anoxia}$.
-The \textbf{Compound Failure Index} includes a Scorch component, which captures the non-linear interaction where heat stress is amplified by soil moisture deficits (desiccation):
-\[ \text{Scorch} = \max\left(Z_{heat} \times \max(0, -Z_{bal}), \left(Z_{heat} - 1.5\right)^+\times 2.0\right) \]
+Physics Z-Scores are calculated using an expanding window (min\_periods=2) to prevent data leakage. All $Z$ scores are computed as $Z = (x - \mu_{\text{hist}}) / \sigma_{\text{hist}}$.
+Key inputs include:
+\begin{itemize}
+    \item $Z_{heat}$: Observed Heat Days $> 30^\circ$C.
+    \item $Z_{bal}$: Summer Water Balance (Precipitation - Evaporation).
+    \item $Z_{tank}$: Effective Winter Recharge (Winter Precipitation * Root Depth Factor).
+    \item $Z_{rain}$: Summer Precipitation Anomaly.
+    \item $Z_{sow}$: Sowing Date Anomaly (Day of Year).
+    \item $Z_{anoxia}$: Anoxia Events (Days where Soil Moisture $>$ Field Capacity).
+\end{itemize}
+
+The \textbf{Compound Failure Index} aggregates multiple stress vectors:
+\[ \text{Scorch} = \max\left(Z_{heat} \times (-Z_{bal})^+ , \left(Z_{heat} - 1.5\right)^+\times 2.0\right) \]
+\[ \text{Drown} = (Z_{anoxia} - 0.8)^+ \times 2.0 \]
+\[ \text{LateStart} = (Z_{sow} - 1.5)^+ \times 2.0 \]
+\[ \text{Index\_Failure} = \max(\text{Scorch}, \text{Drown}, \text{LateStart}) \]
+
+Conversely, the \textbf{Index\_Bumper} identifies ideal conditions:
+\[ \text{WaterSupply} = ((Z_{tank})^+ + (Z_{rain})^+) / 2.0 \]
+\[ \text{Coolness} = (-Z_{heat})^+ \]
+\[ \text{Index\_Bumper} = \text{WaterSupply} \times \text{Coolness} \]
 
 \subsubsection{Stage 2 Features}
 \begin{itemize}
