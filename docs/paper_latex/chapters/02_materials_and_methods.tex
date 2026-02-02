@@ -1,16 +1,28 @@
 \section{Materials and Methods}
 
 \subsection{Study Area and Datasets}
-The study covers sugarbeet cultivation districts in Germany. The datasets used include:
+The study covers sugarbeet cultivation districts in Germany. To address the challenge of data availability and scale, we integrated a multi-source dataset spanning 1981--2024:
+
 \begin{itemize}
-    \item \textbf{Yield:} Historical district-level yield from 1981--2024.
-    \item \textbf{Weather:} Daily Tmin, Tmax, Precip from DWD HYRAS 2.0 interpolated weather grids \cite{rauthe2013central}.
-    \item \textbf{Static:} Soil properties (sand/clay fractions, pH, bulk density) from SoilGrids 250m v2.0 \cite{hengl2017soilgrids250m}, and district centroids.
-    \item \textbf{Remote Sensing:} MODIS MOD13Q1 / Sentinel NDVI anomalies \cite{didan2015mod13q1}.
+    \item \textbf{Yield Data:} A composite dataset constructed from two primary sources to ensure long-term consistency. Historical records were sourced from the \textbf{Thuringian State Institute} archives, while modern district-level yields (post-reunification and recent) were retrieved from the \textbf{Federal Statistical Office (Destatis)} via the Regional- and Bundesdatenbank \cite{destatis2024}.
+
+    \item \textbf{Meteorological Forcing (Observed):} We utilized \textbf{AgERA5} \cite{agera5}, the agricultural subset of the ECMWF ERA5 reanalysis. This provides daily, bias-corrected surface meteorological data (Temperature, Precipitation, Solar Radiation) at 0.1$^\circ$ resolution, serving as the "Ground Truth" for model training and WOFOST simulation.
+
+    \item \textbf{Meteorological Forcing (Forecast):} For the March 1st inference mode, we integrated seasonal forecasts from \textbf{ECMWF SEAS5} (System 5) \cite{ecmwf_seas5}.
+
+    \item \textbf{Teleconnections (Climate Indices):} To capture large-scale atmospheric variability affecting European weather patterns, we included the North Atlantic Oscillation (\textbf{NAO}), the Scandinavia Pattern (\textbf{SCAND}), and the Multivariate ENSO Index (\textbf{MEI}). These indices were retrieved from \textbf{NASA/NOAA} repositories.
+
+    \item \textbf{Soil \& Land Surface:} Monthly soil moisture dynamics and land surface temperature were derived from \textbf{ERA5-Land} reanalysis data \cite{era5land}, providing a dynamic view of root-zone conditions beyond static soil maps.
+
+    \item \textbf{Crop Distribution:} Spatial masking for sugarbeet cultivation areas was performed using the \textbf{DLR CropMap} (Deutsches Zentrum für Luft- und Raumfahrt) \cite{dlr_cropmap}, ensuring climate signals are only aggregated from relevant agricultural pixels.
+
+    \item \textbf{Crop Simulation Parameters:} Crop-specific physiological parameters for sugarbeets were sourced from the official \textbf{WOFOST} distribution (Wageningen University), calibrated for Central European varieties.
+
+    \item \textbf{Economic Data:} Input costs (seeds, fertilizer, energy) and producer prices were sourced from \textbf{Destatis} (GENESIS-Online) to support the economic feature engineering.
 \end{itemize}
 
 \subsubsection{Data Quality Control}
-To ensure the system learns from climatic signals rather than data errors, we applied a rigorous outlier detection step. Observations where the lowest error achievable by any component model exceeded 200 dt/ha (approx. 30\% of mean yield) were flagged as "Oracle Errors" and excluded from the study. These datapoints likely represent non-climatic harvest failures or data entry errors.
+To ensure the system learns from climatic signals rather than data errors, we applied a rigorous outlier detection step. Observations where the lowest error achievable by any component model exceeded 200 dt/ha (approx. 30\% of mean yield) were flagged as "Oracle Errors" and excluded. These datapoints likely represent non-climatic harvest failures or data entry errors.
 
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
 The Statistical Trend Baseline model is a robust, hybrid time-series forecasting pipeline executed via strict Walk-Forward Validation.
@@ -27,6 +39,8 @@ The forecasting process for any target year $t$ involves two steps:
 The final trend forecast is the sum of these two components:
 \[ \hat{y}_{\text{final}} = \hat{y}_{\text{trend}} + \hat{y}_{\text{residual}} \]
 
+Following the recommendation of \citet{paudel2022field}, we employed a time-based expanding window for training and validation. This avoids the ``future leakage'' inherent in random k-fold cross-validation and better simulates the operational reality of forecasting systems like MCYFS.
+
 \subsection{Feature Selection and Engineering}
 This study employs a two-stage feature engineering pipeline designed to translate raw data into agronomically meaningful signals.
 
@@ -37,16 +51,15 @@ Implemented within the WOFOST simulation \cite{boogaard1998wofost}, this module 
     \item \textbf{Harvest Respiration:} Accumulated Growing Degree Days (GDD) above 10$^\circ$C during the harvest window.
 \end{itemize}
 
-\subsubsection{Stage 1 Features}
-Physics Z-Scores are calculated using an expanding window (min\_periods=2) to prevent data leakage. All $Z$ scores are computed as $Z = (x - \mu_{\text{hist}}) / \sigma_{\text{hist}}$.
-Key inputs include:
+\subsubsection{Stage 1 Features (Climate Indices)}
+To capture the magnitude of extreme events without introducing data sparsity—a limitation of simple threshold-counting features identified by \citet{paudel2022field}—we adopted a rigorous Z-score normalization approach.
+Physics Z-Scores are calculated using an expanding window (min\_periods=2) to strictly prevent data leakage, ensuring that the model perceives the magnitude of an event (e.g., the 2003 heatwave) relative only to the history known at that time.
+\[ Z_t = \frac{x_t - \mu_{1...t-1}}{\sigma_{1...t-1}} \]
+Key inputs normalized via this method include:
 \begin{itemize}
     \item $Z_{heat}$: Observed Heat Days $> 30^\circ$C.
     \item $Z_{bal}$: Summer Water Balance (Precipitation - Evaporation).
-    \item $Z_{tank}$: Effective Winter Recharge (Winter Precipitation * Root Depth Factor).
-    \item $Z_{rain}$: Summer Precipitation Anomaly.
-    \item $Z_{sow}$: Sowing Date Anomaly (Day of Year).
-    \item $Z_{anoxia}$: Anoxia Events (Days where Soil Moisture $>$ Field Capacity).
+    \item $Z_{tank}$: Effective Winter Recharge.
 \end{itemize}
 
 The \textbf{Compound Failure Index} aggregates multiple stress vectors:
