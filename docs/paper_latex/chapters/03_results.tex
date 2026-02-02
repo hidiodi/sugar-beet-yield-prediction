@@ -52,13 +52,35 @@ Native Ensemble & 80.97 & 0.189 & -0.31 \\ \hline
 
 \begin{figure}[h]
     \centering
-    % Placeholder for time series plot
-    \fbox{\begin{minipage}{\linewidth}
-        \centering
-        \vspace{2cm}
-        \textbf{[Figure 2: Time Series of Actual vs. Predicted Yields (2000--2024)]}
-        \vspace{2cm}
-    \end{minipage}}
+    \includegraphics[width=\linewidth]{fig2_time_series.png}
     \caption{National average sugarbeet yield: Actual observations vs. Super Ensemble forecasts and Statistical Trend baseline. Note the superior tracking of the 2003 and 2018 drought events.}
     \label{fig:timeseries}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{fig3_parity_plot.png}
+    \caption{Parity plot showing Actual vs Predicted yields, colored by the model selected by the Meta-Learner. Note how physics-informed models (Hybrid XGB, V31 Solar) are selected for extreme yield values, while the Statistical Trend is preferred for normal years.}
+    \label{fig:parity}
+\end{figure}
+
+\subsection{Regime Switching Dynamics}
+The core strength of the Super Ensemble is its ability to switch strategies. Figure \ref{fig:regime_maps} illustrates this spatial decision-making process for two contrasting years.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.48\linewidth]{fig1_regime_map_2014.png}
+    \includegraphics[width=0.48\linewidth]{fig1_regime_map_2018.png}
+    \caption{Model Selection Maps. Left: 2014 (Bumper Year). Right: 2018 (Drought). In 2018, the model shifts significantly towards physics-informed components (Hybrid XGB/V31 Solar) to capture the stress.}
+    \label{fig:regime_maps}
+\end{figure}
+
+\subsection{Ablation Study}
+To quantify the contribution of specific components, we performed an ablation study (Figure \ref{fig:ablation}).
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{fig3_ablation_results.png}
+    \caption{Ablation Study Results. Removing stress signals (Scorch/Anoxia) or the Meta-Learner (using Equal Weight instead) results in higher error, particularly in drought years like 2018.}
+    \label{fig:ablation}
 \end{figure}
