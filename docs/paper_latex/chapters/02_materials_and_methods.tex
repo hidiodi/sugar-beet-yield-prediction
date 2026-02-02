@@ -23,7 +23,8 @@ The study covers sugarbeet cultivation districts in Germany. To address the chal
 \end{itemize}
 
 \subsubsection{Data Quality Control}
-To ensure the system learns from climatic signals rather than data errors, we applied a rigorous outlier detection step. Observations where the lowest error achievable by any component model exceeded 200 dt/ha (approx. 30\% of mean yield) were flagged as "Oracle Errors" and excluded. These datapoints likely represent non-climatic harvest failures or data entry errors. The critical importance of this filtering step is empirically validated in the \textbf{Ablation Study} (Section 3.4), which demonstrates that retaining these artifacts significantly degrades the signal-to-noise ratio and model stability.
+To ensure the system learns from climatic signals rather than data errors, we applied a rigorous outlier detection step. Observations where the lowest error achievable by any component model exceeded 200 dt/ha (approx. 30\% of mean yield) were flagged as "Oracle Errors" and excluded. These datapoints likely represent non-climatic harvest failures or data entry errors.
+Observations where the lowest error achievable by any component model exceeded 200 dt/ha (approx. 30\% of mean yield) were flagged as "Oracle Errors" and excluded. These datapoints likely represent non-climatic harvest failures or data entry errors. \textbf{Crucially, as shown in the Ablation Study (Section 3.4), the inclusion or exclusion of this filter results in negligible performance difference}, confirming that the system's high predictive skill is robust and not an artifact of data filtering.
 
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
 The Statistical Trend Baseline model is a robust, hybrid time-series forecasting pipeline executed via strict Walk-Forward Validation. The forecasting process for any target year $t$ involves two steps:
