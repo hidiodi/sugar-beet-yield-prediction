@@ -67,15 +67,15 @@ To ensure the repository is clean and only contains necessary files for reproduc
 
 These files are explicitly called in `src/02_models/execute_hybrid_pipeline.py` or are dependencies.
 **Simulation Prep & Execution (WOFOST):**
-*    `src/02_models/01_simulation/Wofost7.1/prepare_genetic_parameters.py`,
-*    `src/02_models/01_simulation/Wofost7.1/prepare_site_data.py`,
-*    `src/02_models/01_simulation/Wofost7.1/prepare_forecast_weather.py`,
-*    `src/02_models/01_simulation/Wofost7.1/prepare_initial_conditions.py`,
-*    `src/02_models/01_simulation/Wofost7.1/execute_wofost_simulation.py`,
+*    `src/02_models/01_simulation/Wofost7.2/prepare_genetic_parameters.py`,
+*    `src/02_models/01_simulation/Wofost7.2/prepare_site_data.py`,
+*    `src/02_models/01_simulation/Wofost7.2/prepare_forecast_weather.py`,
+*    `src/02_models/01_simulation/Wofost7.2/prepare_initial_conditions.py`,
+*    `src/02_models/01_simulation/Wofost7.2/execute_wofost_simulation.py`,
 
 
 **Simulation & Heat Signal:**
-*   `src/02_models/01_simulation/Wofost7.1/*.py` (Prepare & Execute scripts)
+*   `src/02_models/01_simulation/Wofost7.2/*.py` (Prepare & Execute scripts)
 *   `src/02_models/01_simulation/multivariate_heat_signal.py`
 
 **Feature Engineering:**
@@ -106,11 +106,8 @@ These files are explicitly called in `src/02_models/execute_hybrid_pipeline.py` 
 *   `src/02_models/execute_hybrid_pipeline.py`
 *   `src/utils/pipeline_runner.py`
 
-### 5.2 Cleanup Candidates
+### 5.2 Cleanup Status
 
-The following directories or files are likely candidates for removal or moving to an `archive/` folder:
-
-*   **Deprecated Models:** `src/02_models/06deprecated_models/`
-*   **Experimental Components:** `src/02_models/03_components/v31_solar/`
-*   **Notebooks:** `notebooks/` (Unless converted to scripts for the paper's appendix)
-*   **Unused Analysis Scripts:** Any script in `src/02_models/02_features/` or `src/02_models/05_analysis/` not listed in the pipeline (e.g., `analyze_stage1_features.py`).
+The repository has been cleaned.
+*   **Deprecated Models:** Removed `src/02_models/06deprecated_models/` and `src/02_models/03_components/v31_solar/`.
+*   **Archived Scripts:** Unused analysis scripts and experimental components have been moved to `archive/`.
