@@ -8,8 +8,7 @@ The study covers sugarbeet cultivation districts in Germany. To address the chal
 
     \item \textbf{Meteorological Forcing (Observed):} We utilized \textbf{AgERA5} \cite{agera5}, the agricultural subset of the ECMWF ERA5 reanalysis. This provides daily, bias-corrected surface meteorological data (Temperature, Precipitation, Solar Radiation) at 0.1$^\circ$ resolution, serving as the "Ground Truth" for model training and WOFOST simulation.
 
-    \item \textbf{Meteorological Forcing (Forecast):} For the March 1st inference mode, we integrated seasonal forecasts from \textbf{ECMWF SEAS5} (System 5) \cite{ecmwf_seas5}. To mitigate the coarse resolution and bias of raw seasonal forecasts, we utilized an \textbf{Analog Ensemble} approach for the WOFOST simulation. The SEAS5 anomalies were used to select similar historical weather years (Analogs) from the AgERA5 record, which were then used to drive the simulation. This ensures the crop model always receives physically consistent, bias-corrected daily weather patterns.
-
+    \item \textbf{Meteorological Forcing (Forecast):} For the March 1st inference mode, we integrated seasonal forecasts from \textbf{ECMWF SEAS5} (System 5) \cite{ecmwf_seas5}. To mitigate the coarse resolution and bias of raw seasonal forecasts, we utilized an \textbf{Analog Ensemble} approach for the WOFOST simulation. The SEAS5 anomalies were used to select similar historical weather years (Analogs) from the AgERA5 record, which were then used to drive the simulation.
 
     \item \textbf{Teleconnections (Climate Indices):} To capture large-scale atmospheric variability affecting European weather patterns, we included the North Atlantic Oscillation (\textbf{NAO}), the Scandinavia Pattern (\textbf{SCAND}), and the Multivariate ENSO Index (\textbf{MEI}). These indices were retrieved from \textbf{NASA/NOAA} repositories.
 
@@ -18,13 +17,10 @@ The study covers sugarbeet cultivation districts in Germany. To address the chal
     \item \textbf{Crop Distribution:} Spatial masking for sugarbeet cultivation areas was performed using the \textbf{DLR CropMap} (Deutsches Zentrum für Luft- und Raumfahrt) \cite{dlr_cropmap}, ensuring climate signals are only aggregated from relevant agricultural pixels. Remote sensing anomalies were derived from MODIS MOD13Q1 \cite{didan2015mod13q1}.
 
     \item \textbf{Crop Simulation Parameters:} Crop-specific physiological parameters for sugarbeets were sourced from the official \textbf{WOFOST} distribution (Wageningen University), calibrated for Central European varieties.
-
-    \item \textbf{Economic Data:} Input costs (seeds, fertilizer, energy) and producer prices were sourced from \textbf{Destatis} (GENESIS-Online) to support the economic feature engineering.
 \end{itemize}
 
 \subsubsection{Data Quality Control}
-To ensure the system learns from climatic signals rather than data errors, we applied a rigorous outlier detection step. Observations where the lowest error achievable by any component model exceeded 200 dt/ha (approx. 30\% of mean yield) were flagged as "Oracle Errors" and excluded. These datapoints likely represent non-climatic harvest failures or data entry errors.
-Observations where the lowest error achievable by any component model exceeded 200 dt/ha (approx. 30\% of mean yield) were flagged as "Oracle Errors" and excluded. These datapoints likely represent non-climatic harvest failures or data entry errors. \textbf{Crucially, as shown in the Ablation Study (Section 3.4), the inclusion or exclusion of this filter results in negligible performance difference}, confirming that the system's high predictive skill is robust and not an artifact of data filtering.
+To ensure the system learns from climatic signals rather than data errors, we applied a rigorous outlier detection step. Observations where the lowest error achievable by any component model exceeded 200 dt/ha (approx. 30\% of mean yield) were flagged as "Oracle Errors" and excluded. These datapoints likely represent non-climatic harvest failures or data entry errors. \textbf{Crucially, as shown in the Ablation Study (Section 3.4), the inclusion or exclusion of this filter results in negligible performance difference}, confirming that the system's high predictive skill is robust and not an artifact of data filtering.
 
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
 The Statistical Trend Baseline model is a robust, hybrid time-series forecasting pipeline executed via strict Walk-Forward Validation. The forecasting process for any target year $t$ involves two steps:
@@ -89,7 +85,7 @@ Designed to address the early season information deficit, this model combines hi
 Where $h_i$ represents the observed heat days for the target year and $\bar{h}$ is the long-term average. This weighting ensures the model prioritizes years with extreme high-temperature signals (e.g., 2003) rather than average conditions.
 
 \subsubsection{Physics-Informed Ensemble}
-Trains two Gradient Boosting models \cite{friedman2001} using the XGBoost framework ($n\_estimators=2000$, $learning\_rate=0.01$):
+Trains two Gradient Boosting models \cite{chen2016xgboost} using the XGBoost framework ($n\_estimators=2000$, $learning\_rate=0.01$):
 \begin{itemize}
     \item \textbf{Native\_V2:} Targets the 0.20 quantile (Pessimistic Floor).
     \item \textbf{Native\_V8:} Targets the 0.80 quantile (Optimistic Ceiling).
@@ -121,7 +117,7 @@ The Meta-Learner is trained on four categories of features:
     \item \textbf{Trend Deviation:} The magnitude of the current Trend forecast relative to the long-term average.
 \end{enumerate}
 
-\textbf{Ground Truth Definition:} The Meta-Learner was trained as a multi-class classifier. The ground truth label for each training instance was defined as the component model that achieved the minimum Absolute Error for that specific district-year.
+\textbf{Ground Truth Definition:} The Meta-Learner was trained as a multi-class classifier. The ground truth label for each training instance was defined as the component model that achieved the minimum Absolute Error for that specific district-year. We acknowledge that this constitutes training on an ``Oracle'' selector; however, the model's ability to generalize to unseen test years (as shown in the Results) validates that the classifier successfully learns the precursor signals of model reliability rather than just memorizing noise.
 
 \subsubsection{Inference Strategy (Soft Voting)}
 The classifier outputs a probability distribution over the available regimes $R = \{\text{Trend}, \text{Physics}\}$. The final yield forecast $\hat{y}_{\text{final}}$ for a district $d$ in year $t$ is calculated as the probability-weighted sum of the component predictions:

@@ -5,20 +5,12 @@ As climate change increases the frequency of extreme weather events, traditional
 The core challenge is the ``Interpolation vs. Extrapolation'' dilemma. Statistical models fail when conditions deviate from historical norms. The necessity of this regime-switching approach was starkly illustrated during the 2018 European drought, where the unprecedented magnitude of yield anomalies across Northern Europe exposed the limitations of standard forecasting models in capturing compound extremes \citep{beillouin2020impact}.
 
 \subsection{Contextualizing Hybrid Approaches}
-Recent literature has sought to bridge this gap through "Process-Guided Machine Learning" (PGML). \citet{shahhosseini2021coupling} demonstrated that using crop simulation outputs as features in Random Forests could reduce error by 8--20\% compared to pure weather-based models. Similarly, \citet{paudel2021machine} established that while ML models can rival operational systems like MCYFS, they often remain conservative in extreme years. Our work extends this lineage by moving beyond static feature integration to a \textbf{dynamic ensemble} approach. Unlike static hybrids, our system explicitly acknowledges non-stationarity, switching its structural reliance from statistical trends to physiological limits when "Black Swan" precursors are detected.
+Recent literature has sought to bridge this gap through ``Process-Guided Machine Learning'' (PGML). \citet{shahhosseini2021coupling} demonstrated that using crop simulation outputs as features in Random Forests could reduce error by 8--20\% compared to pure weather-based models. Similarly, \citet{paudel2021machine} established that while ML models can rival operational systems like MCYFS, they often remain conservative in extreme years. Our work extends this lineage by moving beyond static feature integration to a \textbf{dynamic ensemble} approach. Unlike static hybrids, our system explicitly acknowledges non-stationarity, switching its structural reliance from statistical trends to physiological limits when ``Black Swan'' precursors are detected.
 
 \subsection{Research Gap: The Regime Switching Hypothesis}
-Most existing approaches treat crop yield distributions as continuous and unimodal. We hypothesize that yield formation follows a "Regime Switching" process:
+Most existing approaches treat crop yield distributions as continuous and unimodal. We hypothesize that yield formation follows a ``Regime Switching'' process:
 \begin{itemize}
     \item \textbf{Regime A (Normal):} Yields are driven by gradual technological trends and minor weather fluctuations. Statistical extrapolation works well.
-    \item \textbf{Regime B (Extreme Stress):} Yields are limited by distinct physiological bottlenecks (e.g., stomatal closure, root anoxia) that act as "kill switches." In this regime, historical trends are irrelevant, and process-based mechanism is required.
+    \item \textbf{Regime B (Extreme Stress):} Yields are limited by distinct physiological bottlenecks (e.g., stomatal closure, root anoxia) that act as ``kill switches.'' In this regime, historical trends are irrelevant, and process-based mechanism is required.
 \end{itemize}
-Our novel contribution is a Meta-Learner that explicitly detects the active regime and switches the forecasting strategy accordingly.
-
-This study aims to:
-\begin{enumerate}
-    \item \textbf{Develop Physics-Informed Features:} Implement a Bio-Physical Risk Scanner within WOFOST to quantify specific stress mechanisms (e.g., oxygen stress).
-    \item \textbf{Engineer Extreme-Sensitive Algorithms:} Design the Heat Signal model with custom weighting to prioritize tail events.
-    \item \textbf{Construct a Super Ensemble:} Use a Meta-Learner to learn the optimal ``Switching'' logic between statistical trend and physics-based corrections.
-    \item \textbf{Validate Robustness:} Use strict walk-forward validation to ensure no data leakage.
-\end{enumerate}
+Our novel contribution is a Meta-Learner that explicitly detects the active regime and switches the forecasting strategy accordingly. The study focuses on verifying this hypothesis by engineering extreme-sensitive algorithms (e.g., the Heat Signal model). We further validate the ``Switching'' logic via strict walk-forward validation to ensure robustness.
