@@ -7,7 +7,7 @@
 
 \graphicspath{{figures/}}
 
-\title{Hybrid Yield Forecasting: Bridging Process-Based Simulation and Machine Learning}
+\title{Hybrid Yield Forecasting: Bridging Process-Based Simulation and Machine Learning for Pre-Season Risk Assessment}
 \author{Tim Schweitzer}
 \date{\today}
 
@@ -17,7 +17,7 @@
   \begin{@twocolumnfalse}
     \maketitle
     \begin{abstract}
-      In an era of increasing climate volatility, early-season crop yield forecasting faces a critical dilemma: statistical models often fail to extrapolate to unprecedented weather events, while process-based models struggle with calibration and initial condition uncertainty. This challenge is particularly acute for forecasts issued on March 1st, before the growing season commences. To address this, we developed a hybrid forecasting system for sugarbeet yields in Germany that bridges the gap between process-based simulation and machine learning. The system integrates physics-informed components, including the WOFOST 7.2 simulation and a specialized Multivariate Heat Signal model, within a Super Ensemble architecture. A Meta-Learner dynamically assigns probability-based weights to these components via soft voting, effectively switching between \textbf{``Normal Regimes''} and \textbf{``Extreme Stress Regimes''} based on the emerging bio-physical context. Validated via strict time-dependent cross-validation over the 2000-2024 period ($N=5041$), the Super Ensemble achieved a Mean Absolute Error (MAE) of 56.28 dt/ha, representing a 16.27\% improvement in skill over a robust statistical trend baseline. \textbf{Crucially, during the severe 2018 drought, the system reduced error by 42.5\% compared to the statistical baseline, effectively mitigating the catastrophic failure mode of standard linear extrapolation.}
+      In an era of increasing climate volatility, early-season crop yield forecasting faces a critical dilemma: statistical models often fail to extrapolate to unprecedented weather events, while process-based models struggle with calibration and initial condition uncertainty. This challenge is particularly acute for forecasts issued on March 1st, before the growing season commences. To address this, we developed a hybrid forecasting system for sugarbeet yields in Germany that bridges the gap between process-based simulation and machine learning. The system integrates physics-informed components, including the WOFOST 7.2 simulation and a specialized Multivariate Heat Signal model ($r=0.63$), within a Super Ensemble architecture. A Meta-Learner, trained via a novel Regret-Weighted scheme, dynamically assigns probability-based weights to these components via soft voting, effectively switching between \textbf{``Normal Regimes''} and \textbf{``Extreme Stress Regimes''} based on emerging bio-physical markers such as root-zone water exhaustion (CASDI) and metabolic heat stress (NMSD). Validated via strict time-dependent cross-validation over the 2000--2024 period ($N=5041$), the Super Ensemble achieved a Mean Absolute Error (MAE) of 56.35 dt/ha, representing a 16.16\% improvement in skill over a robust statistical trend baseline. Notably, in the recent volatile period (2010--2024), the relative skill gain increased to 18.07\%. \textbf{Crucially, the system demonstrated a 43.1\% reduction in absolute error during the catastrophic 2018 drought}, providing actionable risk signals 90 days before satellite-based monitoring indices become viable.
       \vspace{1cm}
     \end{abstract}
   \end{@twocolumnfalse}
