@@ -44,4 +44,11 @@ The final yield forecast $\hat{Y}_{d,t}$ is the probability-weighted sum:
 \begin{equation}
     \hat{Y}_{d,t} = \sum_{k=1}^{K} P(M_k | \mathbf{x}_{d,t}) \cdot \hat{y}_k(d,t)
 \end{equation}
-where $P(M_k | \mathbf{x}_{d,t})$ is the probability assigned to sub-model $M_k$ given the input vector $\mathbf{x}_{d,t}$.
+where $P(M_k|\mathbf{x}_{d,t})$ is the probability assigned to sub-model $M_k$ given the input vector $\mathbf{x}_{d,t}$. The complete system architecture is illustrated in Figure~\ref{fig:flowchart}.
+
+\begin{figure*}[!t]
+    \centering
+    \includegraphics[width=0.85\textwidth]{super_ensemble_flowchart.png}
+    \caption{Architecture of the Super Ensemble forecasting system. Data sources (AgERA5, SEAS5, SoilGrids, MODIS) flow through feature engineering and WOFOST 7.2 simulation to generate bio-physical markers (CASDI, NMSD, OSAW) and statistical Z-scores. These features feed four specialized sub-models ($M_1$--$M_4$), whose predictions are combined by an XGBoost Meta-Learner that assigns probability weights via soft voting based on ensemble variance, historical bias, and bio-physical context.}
+    \label{fig:flowchart}
+\end{figure*}
