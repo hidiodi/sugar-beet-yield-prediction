@@ -1,0 +1,136 @@
+\documentclass[11pt]{article}
+
+% --- Essential Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{verbatim}
+\usepackage{natbib}
+
+% --- SI Specific Counters and Formatting ---
+\renewcommand{\thetable}{S\arabic{table}}
+\renewcommand{\thefigure}{S\arabic{figure}}
+\renewcommand{\theequation}{S\arabic{equation}}
+\renewcommand{\thesection}{S\arabic{section}}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=black
+}
+
+% --- Title Information ---
+\title{Supplementary Information for:\\ \textbf{Hybrid Yield Forecasting: Bridging Process-Based Simulation and Machine Learning for Pre-Season Risk Assessment}}
+\author{Tim Schweitzer}
+\date{February 13, 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+    This document provides technical details, comprehensive data specifications, model hyperparameters, and regional forensic analyses supporting the main text. This material ensures the reproducibility of the Super Ensemble pipeline and provides evidence for the regime-switching hypothesis.
+\end{abstract}
+
+\newpage
+\tableofcontents
+\newpage
+
+% Reset counters
+\setcounter{table}{0}
+\setcounter{figure}{0}
+\setcounter{equation}{0}
+\setcounter{section}{0}
+
+% ==========================================
+% S1. MASTER DATA TABLE
+% ==========================================
+\section{Master Data Table}
+The operational forecasting pipeline integrates 11 distinct data streams to bridge the gap between seasonal climate precursors and field-level physiological responses.
+
+\begin{table}[h]
+\centering
+\caption{Comprehensive Data Sources and Specifications}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{|l|l|l|l|}
+\hline
+\textbf{Dataset} & \textbf{Source} & \textbf{Resolution} & \textbf{Role} \\ \hline
+Yield Data & Thuringian State Inst. / Destatis \citep{destatis2024} & District (Annual) & Target Variable \\ \hline
+AgERA5 & ECMWF / Copernicus \citep{agera5} & 0.1$^\circ$ (Daily) & Historical Weather \\ \hline
+SEAS5 & ECMWF \citep{ecmwf_seas5} & 1.0$^\circ$ (Monthly) & Seasonal Forecast \\ \hline
+ERA5-Land & ECMWF \citep{era5land} & 0.1$^\circ$ (Monthly) & Soil Moisture / Temp \\ \hline
+SoilGrids & ISRIC \citep{hengl2017soilgrids250m} & 250m & Static Soil Properties \\ \hline
+CropMap & DLR \citep{dlr_cropmap} & 10m & Spatial Mask \\ \hline
+MOD13Q1 & NASA LP DAAC \citep{didan2015mod13q1} & 250m (16-day) & Vegetation Anomalies \\ \hline
+\end{tabular}%
+}
+\label{tab:datasources_si}
+\end{table}
+
+% ==========================================
+% S2. EXTENDED MECHANISTIC FORMULAS
+% ==========================================
+\section{Extended Mechanistic Formulas}
+The \textbf{Compound Failure Index} identifies yield crashes by aggregating stress vectors derived from WOFOST internal moisture balances \citep{boogaard1998wofost} and SEAS5 anomalies.
+
+\textbf{Scorch Index} (Heat + Drought interaction):
+\begin{equation}
+    \text{Scorch} = \max\left(Z_{\text{heat}} \times (-Z_{\text{bal}})^+ , \left(Z_{\text{heat}} - 1.5\right)^+ \times 2.0\right)
+\end{equation}
+
+\textbf{Drown Index} (Anoxia/Waterlogging):
+\begin{equation}
+    \text{Drown} = (Z_{\text{anoxia}} - 0.8)^+ \times 2.0
+\end{equation}
+
+\textbf{Late Start Index} (Sowing delay):
+\begin{equation}
+    \text{LateStart} = (Z_{\text{sow}} - 1.5)^+ \times 2.0
+\end{equation}
+
+% ==========================================
+% S3. COMPREHENSIVE HYPERPARAMETERS
+% ==========================================
+\section{Comprehensive Hyperparameters}
+Hyperparameters for the Meta-Learner were configured following best practices for robust generalization in high-noise agricultural environments \citep{paudel2022field}.
+
+\begin{table}[h]
+\centering
+\caption{Hyperparameters for Sub-Models and Meta-Learner}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Model} & \textbf{Configuration} \\ \hline
+$M_1$ Trend & LinearGAM ($n\_splines=10$), ARIMA($1,0,0$) \\ \hline
+$M_2$ Physics V2 & XGBoost: $n\_est=2000, lr=0.01, max\_depth=7$ \\ \hline
+$M_3$ Hybrid & XGBoost: $n\_est=1242, lr=0.057, max\_depth=3$ \citep{shahhosseini2021coupling} \\ \hline
+$M_4$ Robust & HuberRegressor: $\epsilon=1.35, max\_iter=200$ \\ \hline
+Meta-Learner & XGBoost: $n\_est=200, lr=0.03, max\_depth=4$ \\ \hline
+\end{tabular}%
+}
+\end{table}
+
+% ==========================================
+% S5. IMPLEMENTATION SNIPPETS
+% ==========================================
+\section{Implementation Details}
+As discussed in Section 2.6 of the main text, the $M_3$ component targets the yield-to-trend ratio rather than absolute yield to improve local optimization convergence[cite: 421, 422].
+
+\textbf{Yield-to-Ratio Scaling ($M_3$):}
+\begin{verbatim}
+# Predicting the Ratio between observed yield and WOFOST simulation
+df['yield_ratio'] = df['actual_yield'] / df['stage1_forecast']
+df['yield_ratio'] = df['yield_ratio'].clip(0.5, 1.5)
+\end{verbatim}
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}
