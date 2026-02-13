@@ -1,7 +1,7 @@
 \section{Results}
 
 \subsection{Performance Overview}
-The model was validated via strict time-dependent cross-validation over the 2000--2024 period ($N=5041$). All results presented hereafter represent \textbf{Operational Hindcasts} utilizing SEAS5 weather forecasts issued on March 1st for the upcoming growing season, rather than observed weather.
+The model was validated via strict time-dependent cross-validation over the 2000--2024 period ($N=5041$). All results presented hereafter represent \textbf{Operational Hindcasts} utilizing SEAS5 weather forecasts issued on March 1st for the upcoming growing season, rather than observed meteorological data.
 
 \begin{table}[h]
 \centering
@@ -19,7 +19,7 @@ The model was validated via strict time-dependent cross-validation over the 2000
 }
 \end{table}
 
-In the recent volatile period (2010--2024), comprising $N=2666$ district-year observations, the model's relative advantage improved (Table 2). While the absolute predictive power ($R^2$) declines for all models due to increased climatic stochasticity, the Super Ensemble's Skill Score rose to 18.07\% over the Statistical Trend. This confirms that as climate noise increases, the value of physics-informed gating grows significantly.
+In the recent volatile period (2010--2024), comprising $N=2666$ district-year observations, the model maintained robustness despite increased climatic instability (Table 2). While the absolute predictive power ($R^2$) declines for all models during this period—reflecting increased stochasticity in weather patterns—the Super Ensemble's relative advantage (Skill Score) rose to 18.07\%. This demonstrates that as climatic noise increases, the value of physics-informed gating grows significantly.
 
 \begin{table}[h]
 \centering
@@ -38,9 +38,9 @@ In the recent volatile period (2010--2024), comprising $N=2666$ district-year ob
 \end{table}
 
 \subsection{Anomaly Forensics}
-The model's resilience is most evident during extreme anomalies where statistical extrapolation typically fails. In the 2003 heatwave (actual yield 516.9 dt/ha), the Super Ensemble identified the stress regime via the Multivariate Heat Signal ($M_1$), which achieved an operational correlation of \textbf{$r=0.63$} between the March 1st forecast and observed August heat days (Fig \ref{fig:heat_calibration}). This directional signal allowed the model to predict 581.8 dt/ha (MAE 80.7), significantly outperforming the Statistical Trend (MAE 95.8).
+The model's resilience is particularly evident during extreme anomalies where standard statistical extrapolation fails. In the historic heatwave of 2003 (actual yield 516.9 dt/ha), the Super Ensemble successfully identified the stress regime via the Multivariate Heat Signal ($M_1$), which achieved an operational correlation of \textbf{$r=0.63$} between the March 1st forecast and observed August heat days (Fig \ref{fig:heat_calibration}). This directional signal allowed the model to predict 581.8 dt/ha (MAE 80.7), significantly outperforming the Statistical Trend (MAE 95.8).
 
-The system's most significant impact occurred during the 2018 drought (actual 628.5 dt/ha). While the Statistical Trend over-predicted yield at 799.7 dt/ha (MAE 182.1), the Super Ensemble pivoted to physics-informed components, predicting 710.3 dt/ha. This represents a \textbf{43.1\% reduction in absolute error}. Conversely, in the 2014 bumper year (actual 825.6 dt/ha), the system successfully signaled a directional shift toward a high-yield regime by predicting 748.6 dt/ha. While this remains an under-prediction of the absolute peak yield—consistent with the inherent conservatism of ensemble-based machine learning—it represents a meaningful improvement over the Statistical Trend forecast of 715.9 dt/ha.
+The system's most critical impact occurred during the 2018 drought (actual 628.5 dt/ha). While the Statistical Trend over-predicted yield at 799.7 dt/ha (MAE 182.1), the Super Ensemble pivoted to physics-informed components, predicting 710.3 dt/ha. This represents a \textbf{43.1\% reduction in absolute error} during the decade's most severe climatic failure. Conversely, in the 2014 bumper year (actual 825.6 dt/ha), the system successfully signaled a directional shift toward a high-yield regime by predicting 748.6 dt/ha. While this remains an under-prediction of the absolute peak yield—consistent with the inherent conservatism of ensemble-based machine learning—it represents a meaningful improvement over the Statistical Trend forecast of 715.9 dt/ha, which remained anchored to the long-term average.
 
 \begin{figure}[h]
     \centering
@@ -50,14 +50,14 @@ The system's most significant impact occurred during the 2018 drought (actual 62
 \end{figure}
 
 \subsection{Regime Switching Dynamics}
-The Meta-Learner successfully differentiated between climate states, achieving \textbf{483 hits on True Crash} regimes. The Regret-Weighted training prioritized these extremes: the probability weight assigned to physics-informed sub-models ($M_1, M_3$) in 2018 was significantly higher ($>0.75$) than in the stable 2010--2013 period ($<0.15$), where the Statistical Trend was preferred.
+The core strength of the Super Ensemble is its ability to differentiate between climate states, achieving \textbf{483 hits on True Crash} regimes. The Regret-Weighted training prioritized these extremes: the probability weight assigned to physics-informed sub-models ($M_1, M_3$) in 2018 was significantly higher ($>0.75$) than in the stable 2010--2013 period ($<0.15$), where the Statistical Trend was preferred.
 
 \subsection{Ablation Study}
-Ablation results (Fig \ref{fig:ablation}) confirm that the removal of bio-physical stress signals (CASDI, NMSD, OSAW) causes the sharpest decline in skill, increasing 2018 error by over 15\%. Notably, the exclusion of the noise filter resulted in a negligible performance change ($<0.5\%$ skill), proving that results are driven by the architectural integration of physical mechanisms rather than data selection.
+Ablation results (Fig \ref{fig:ablation}) confirm that the removal of bio-physical stress signals (CASDI, NMSD, OSAW) causes the sharpest performance decline during extreme years, increasing 2018 error by over 15\%. Notably, the exclusion of the noise filter resulted in a negligible performance change ($<0.5\%$ skill), proving that the results are driven by the architectural integration of physical mechanisms rather than data selection.
 
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{fig3_ablation_results.png}
-    \caption{Ablation Study Results. Removal of stress signals results in higher error in drought years. The Non-Climatic Noise Filter has minimal impact on aggregate metrics, validating model robustness.}
+    \caption{Ablation Study Results. Removal of stress signals results in higher error in drought years. The Non-Climatic Outlier Detection filter has minimal impact on aggregate metrics, validating model robustness.}
     \label{fig:ablation}
 \end{figure}
