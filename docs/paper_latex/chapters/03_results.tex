@@ -37,10 +37,11 @@ In the recent volatile period (2010--2024), comprising $N=2666$ district-year ob
 }
 \end{table}
 
-\subsection{Anomaly Forensics}
-The model's resilience is most evident during extreme anomalies where the \textbf{Statistical Trend} baseline typically fails due to regime blindness. In the historic heatwave of 2003 (actual yield 516.9 dt/ha), the Super Ensemble successfully identified the stress regime via the Multivariate Heat Signal ($M_1$), which achieved an operational correlation of \textbf{$r=0.63$} between the March 1st forecast and observed August heat days (Fig \ref{fig:heat_calibration}). This directional signal allowed the model to predict 581.8 dt/ha (MAE 80.7), significantly outperforming the \textbf{Statistical Trend} (MAE 95.8).
 
-The system's most critical impact occurred during the 2018 drought (actual 628.5 dt/ha). While the \textbf{Statistical Trend} over-predicted yield at 799.7 dt/ha (MAE 182.1), the Super Ensemble pivoted to physics-informed components, predicting 710.3 dt/ha. This represents a \textbf{43.1\% reduction in absolute error}. Conversely, in the 2014 bumper year (actual 825.6 dt/ha), the system successfully signaled a directional shift toward a high-yield regime by predicting 748.6 dt/ha. While this remains an under-prediction of the absolute peak yield—consistent with the inherent conservatism of ensemble-based machine learning—it represents a meaningful improvement over the \textbf{Statistical Trend} forecast of 715.9 dt/ha, which remained stagnant at the long-term average.
+\subsection{Anomaly Forensics}
+The model's resilience is most evident during extreme anomalies where the \textbf{Statistical Trend} baseline typically fails due to regime blindness. In the historic heatwave of 2003 (actual yield 516.9 dt/ha), the Super Ensemble successfully identified the stress regime via the Multivariate Heat Signal ($M_1$), which achieved an operational correlation of $r=0.63$ between the March 1st forecast and observed August heat days. This directional signal allowed the model to predict 581.8 dt/ha (MAE 80.7), significantly outperforming the \textbf{Statistical Trend} (MAE 95.8).
+
+The system's most critical impact occurred during the 2018 drought (actual 628.5 dt/ha). While the \textbf{Statistical Trend} over-predicted yield at 799.7 dt/ha (MAE 182.1), the Super Ensemble pivoted to physics-informed components, predicting 710.3 dt/ha. This represents a 43.1\% reduction in absolute error. Conversely, in the 2014 bumper year (actual 825.6 dt/ha), the system successfully signaled a directional shift toward a high-yield regime by predicting 748.6 dt/ha. While this remains an under-prediction of the absolute peak yield—consistent with the inherent conservatism of ensemble-based machine learning—it represents a meaningful improvement over the \textbf{Statistical Trend} forecast of 715.9 dt/ha, which remained stagnant at the long-term average.
 
 \begin{figure}[h]
     \centering
