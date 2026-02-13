@@ -3,6 +3,14 @@
 \subsection{Study Area and Datasets}
 The study covers sugarbeet cultivation districts in Germany, utilizing a multi-source dataset spanning 1981--2024. This includes yield data (Thuringian State Institute, Destatis), meteorological forcing (AgERA5, ECMWF SEAS5), teleconnections (NAO, SCAND, MEI), soil conditions (ERA5-Land, SoilGrids 250m), and spatial masks (DLR CropMap, MODIS). Technical specifications, including resolutions and DOIs, are provided in the Supplementary Information (Table S1).
 
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{1a_geospatial_feature_maps.png}
+    \caption{Geospatial feature distribution across German sugarbeet districts. (Left) Soil texture (Sand vs Clay) and (Right) Elevation.
+    These static features are critical for the process based Model.}
+    \label{fig:geospatial_features}
+\end{figure}
+
 \subsection{Non-Climatic Outlier Detection}
 
 \textbf{Note on Methodological Limitation:} An initial data quality filter was implemented to identify non-climatic yield anomalies (e.g., administrative reporting errors, localized pest outbreaks) by flagging district-years where the minimum error across all component models exceeded 200~dt/ha. However, this approach introduces circularity, as model performance is used to filter training data.
@@ -28,12 +36,36 @@ Following the recommendation of \citet{paudel2022field}, we employed a time-base
 \subsection{Feature Engineering}
 Our two-stage pipeline translates raw data into agronomic signals. First, a \textbf{Bio-Physical Risk Scanner} within WOFOST \cite{boogaard1998wofost} calculates specific risks like Oxygen Stress (Anoxia) and Harvest Respiration. Second, we compute rigorous Z-scores ($Z_t$) using an expanding window to normalize extreme events relative only to known history \cite{paudel2022field}. Key indices include $Z_{heat}$ (heat stress), $Z_{bal}$ (water balance), and $Z_{tank}$ (winter recharge), which are aggregated into compound indices (Scorch, Drown, LateStart) detailed in the Supplementary Information. Additional predictors include pest proxies and \textbf{Root Zone Depletion} ($RZD = \text{Demand}_{\text{heat}} / \text{Supply}_{\text{water}}$).
 
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}[b]{0.48\linewidth}
+        \includegraphics[width=\linewidth]{physics_1_sowing_date_dist.png}
+        \caption{Sowing Date Distribution}
+        \label{fig:sowing_dist}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\linewidth}
+        \includegraphics[width=\linewidth]{physics_2_sowing_vs_yield.png}
+        \caption{Sowing Date vs Yield}
+        \label{fig:sowing_yield}
+    \end{subfigure}
+    \caption{Mechanistic justification for the March 1st forecast lead-time. (a) The majority of modeled sowing dates occur before DOY 90 (March 1st), confirming the availability of these predictors. (b) Delayed sowing (LateStart Index) shows a clear negative correlation with final yield.}
+    \label{fig:sowing_mechanistics}
+\end{figure}
+
 \subsection{Predictive Algorithms}
 Machine learning components use Scikit-Learn \cite{scikitlearn} and XGBoost \cite{chen2016xgboost}. The \textbf{Multivariate Heat Signal} uses a cubic-weighted XGBoost regressor to predict early-season heat exposure. The \textbf{Physics-Informed Ensemble} trains two quantile-targeted models (V2 for 0.20, V8 for 0.80) to bracket yield potential. The \textbf{Hybrid XGBoost} predicts the yield ratio (Actual/Trend) utilizing WOFOST outputs as features \cite{shahhosseini2021coupling}, training distinct models for the 0.025, 0.50, and 0.975 quantiles. Finally, the \textbf{Robust Linear Integrator} uses a HuberRegressor ($\epsilon=1.35$) to predict residuals from the statistical trend, ensuring robustness against outliers.
 
 \subsection{Super Ensemble Architecture}
 
 The system integrates four specialized component models through an XGBoost-based Meta-Learner that dynamically selects the optimal forecasting strategy for each district-year context.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{fig2_error_butterfly.png}
+    \caption{Error Butterfly Plot: Comparison of component model errors across yield regimes. The Super Ensemble (Meta-Learner) dynamically minimizes error by selecting the optimal sub-model (Trend, Physics, Hybrid, Robust) depending on the context.}
+    \label{fig:error_butterfly}
+\end{figure}
 
 \subsubsection{Component Models}
 
