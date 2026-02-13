@@ -101,11 +101,11 @@ To prioritize the mitigation of extreme errors, training samples are weighted by
 \end{equation}
 This weighting forces the Meta-Learner to focus on "Black Swan" events where a specific sub-model significantly outperformed the consensus, thereby directly addressing regime blindness.
 
-\subsubsection{Inference via Soft Voting}
+\subsubsection{Inference via Hard Switch}
 
-The final yield forecast $\hat{Y}_{d,t}$ is the probability-weighted sum:
+The final yield forecast $\hat{Y}_{d,t}$ is a discrete selection (Hard Switch) where the Meta-Learner selects the single most appropriate sub-model $M_{k^*}$ for each district-year context based on the highest predicted probability:
 \begin{equation}
-    \hat{Y}_{d,t} = \sum_{k=1}^{K} P(M_k | \mathbf{x}_{d,t}) \cdot \hat{y}_k(d,t)
+    \hat{Y}_{d,t} = \hat{y}_{k^*}(d,t) \quad \text{where} \quad k^* = \operatorname{argmax}_k P(M_k | \mathbf{x}_{d,t})
 \end{equation}
 where $P(M_k|\mathbf{x}_{d,t})$ is the probability assigned to sub-model $M_k$ given the input vector $\mathbf{x}_{d,t}$. The complete system architecture is illustrated in Figure~\ref{fig:flowchart}.
 
@@ -118,7 +118,7 @@ where $P(M_k|\mathbf{x}_{d,t})$ is the probability assigned to sub-model $M_k$ g
 
 \subsection{Uncertainty Quantification}
 
-While the Super Ensemble produces point forecasts via soft voting, component-level uncertainty is captured through quantile regression. The Hybrid XGBoost (M$_3$) is trained separately for the 0.025, 0.50, and 0.975 quantiles using the quantile loss objective (\texttt{reg:quantileerror}), providing a 95\% predictive interval for physics-informed forecasts. Additionally, the Meta-Learner's soft voting probabilities indirectly quantify forecast confidence: low-entropy probability distributions (e.g., $P(M_k) > 0.9$ for a single model) indicate high certainty in regime detection, while high-entropy distributions signal ambiguous conditions where multiple models are plausible.
+While the Super Ensemble produces point forecasts via hard switching, component-level uncertainty is captured through quantile regression. The Hybrid XGBoost (M$_3$) is trained separately for the 0.025, 0.50, and 0.975 quantiles using the quantile loss objective (\texttt{reg:quantileerror}), providing a 95\% predictive interval for physics-informed forecasts. Additionally, the Meta-Learner's predicted probabilities indirectly quantify forecast confidence: low-entropy probability distributions (e.g., $P(M_k) > 0.9$ for a single model) indicate high certainty in regime detection, while high-entropy distributions signal ambiguous conditions where multiple models are plausible.
 
 \subsection{Implementation and Feasibility}
 The system is designed for operational deployment on March 1st. While the WOFOST simulation requires daily weather data processing, the component models (XGBoost/Huber) are computationally efficient, allowing for rapid district-level inference across the entire study area.
