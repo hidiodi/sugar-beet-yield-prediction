@@ -1,56 +1,46 @@
 \section{Materials and Methods}
 
-\subsection{Study Area and Datasets}
-The study covers sugarbeet cultivation districts in Germany, integrating a multi-source dataset spanning the period 1981--2024. To address the challenge of early-season data availability, we harmonized agronomic records with meteorological reanalysis and seasonal forecasts.
+\subsection{Study Area and Data Integration}
+The study area encompasses all sugarbeet-cultivating districts in Germany ($d \in D$) for the harvest years $t \in T$ (1981--2024). Yield data ($Y_{d,t}$), measured in decitonnes per hectare (dt/ha), was harmonized from the Thuringian State Institute archives and modern Federal Statistical Office (Destatis) records. To isolate climatic signals from noise introduced by administrative or land-use changes, we applied spatial masking via the DLR CropMap \citep{dlr_cropmap}, aggregating meteorological variables strictly from relevant agricultural pixels.
 
-\textbf{Agronomic Data.} Yield data ($Y_{d,t}$) was constructed from the Thuringian State Institute archives and the Federal Statistical Office (Destatis). Spatial masking was performed using the DLR CropMap \citep{dlr_cropmap} to ensure climate signals were aggregated strictly from relevant agricultural pixels.
+Meteorological forcing for model training was derived from the AgERA5 reanalysis \citep{agera5}. For the operational hindcasts targeted for the pre-season window of March 1st, we integrated ECMWF SEAS5 seasonal forecasts \citep{ecmwf_seas5}. To bridge the resolution gap between raw seasonal forecasts and field-level requirements, we employed an Analog Ensemble approach. In this framework, SEAS5 anomalies are used to select historical AgERA5 years with similar synoptic precursors to drive the process-based simulations. This is supplemented by dynamic soil moisture and land surface temperature data from ERA5-Land \citep{era5land} and static soil properties from SoilGrids 250m \citep{hengl2017soilgrids250m}.
 
-\textbf{Meteorological Forcing.} We utilized AgERA5 \citep{agera5} for observed daily surface meteorology. For operational inference (March 1st), we integrated ECMWF SEAS5 seasonal forecasts \citep{ecmwf_seas5}. To mitigate the coarse resolution of seasonal forecasts, an Analog Ensemble approach was employed: SEAS5 anomalies selected similar historical AgERA5 years to drive the process-based simulations.
-
-\textbf{Environmental Covariates.} Dynamic soil moisture and land surface temperatures were derived from ERA5-Land \citep{era5land}, supplemented by static soil properties from SoilGrids 250m \citep{hengl2017soilgrids250m}.
-
-\subsubsection{Non-Climatic Noise Filtering}
-To ensure the system learns from climatic signals rather than data artifacts, we applied a noise-reduction filter. Observations where the minimum error achievable by any component model exceeded 200 dt/ha were flagged as likely data entry errors or non-climatic failures (e.g., local pest outbreaks) and excluded from the training set. An ablation study was performed to verify that this filter did not introduce bias into the final skill scores.
+\subsection{Non-Climatic Outlier Detection}
+To ensure the system learns from climatic signals rather than reporting artifacts, we implemented a non-climatic noise filter. Observations were excluded from the training set if the minimum error achievable by any individual sub-model exceeded 200 dt/ha despite benign climatic forcing. These instances identify non-climatic yield shocks, such as localized administrative errors or biotic failures, that fall outside the scope of atmospheric yield modeling. As shown in the ablation study (Section 3.4), the inclusion or exclusion of this filter resulted in a negligible change ($<0.5\%$) in global Skill Score, confirming that the system's predictive power is derived from its architecture rather than data selection.
 
 \subsection{The Statistical Trend Baseline}
-The baseline forecast $\hat{y}_{\text{base}}(t)$ is composed of a long-term trend and a short-term residual correction, executed via strict Walk-Forward Validation. The trend is modeled using a Generalized Additive Model (GAM) with a smoothing spline, while residuals are modeled using an ARIMA(1, 0, 0) process to capture temporal autocorrelation.
+The Statistical Trend baseline forecast, denoted as $\hat{y}_{\text{base}}(t)$, represents the expected yield under average climatic conditions. It is defined as:
+\begin{equation}
+    \hat{y}_{\text{base}}(t) = \alpha + f_s(t) + \epsilon_{\text{ARIMA}}
+\end{equation}
+where $\alpha$ is the intercept, $f_s(t)$ is a cubic smoothing spline of the year $t$ representing gradual technological and genetic trends, and $\epsilon_{\text{ARIMA}}$ is the residual correction from an ARIMA(1,0,0) process.
 
-\subsection{Feature Selection and Engineering}
-We employ a two-stage pipeline designed to translate raw environmental data into agronomically meaningful signals, focusing on physiological stress limits.
+\subsection{Feature Engineering and Variable Definitions}
+We derive normalized Z-scores for primary climatic drivers to prevent look-ahead bias. For a feature $x$ at year $t$, the score $Z_t = (x_t - \mu_{1:t-1}) / \sigma_{1:t-1}$ is calculated. We specifically define $Z_{\text{heat}}$ (derived from days where $T_{\text{max}} > 25^{\circ}\text{C}$), $Z_{\text{bal}}$ (summer water balance), and $Z_{\text{tank}}$ (simulated winter soil water recharge).
 
-\subsubsection{Bio-Physical Stress Markers}
-Beyond standard weather variables, we engineered three markers to detect regime-switching triggers:
-\begin{itemize}
-    \item \textbf{Critical Dryness Index (CASDI):} Monitors root-zone water exhaustion by simulating the interaction between cumulative precipitation deficits and soil water holding capacity.
-    \item \textbf{Night-time Metabolic Stress Detector (NMSD):} Tracks high minimum temperatures during the summer months, which increase dark respiration and deplete accumulated biomass.
-    \item \textbf{Oxygen Stress (OSAW):} Identifies periods of simulated soil saturation exceeding field capacity, inhibiting root respiration (Anoxia).
-\end{itemize}
+These serve as the basis for three physiological stress markers: the \textbf{Critical Dryness Index (CASDI)}, monitoring root-zone water exhaustion; the \textbf{Night-time Metabolic Stress Detector (NMSD)}, tracking biomass depletion via minimum temperatures ($T_{\text{min}} > 16^{\circ}\text{C}$); and \textbf{Oxygen Stress (OSAW)}, identifying root anoxia following soil saturation. Crucially, the March 1st lead-time capability relies on land-surface memory; $Z_{\text{tank}}$ serves as the boundary condition for CASDI, determining the vulnerability of the crop to summer water exhaustion months before planting.
 
-\subsubsection{Climate Indices and Stress Vectors}
-To capture the magnitude of extreme events without data sparsity, we utilize recursive Z-score normalization. For a feature $x$ at year $t$, the Z-score is calculated using only historical stats $\mu_{1:t-1}$ and $\sigma_{1:t-1}$ to prevent data leakage. These are combined into a \textbf{Compound Failure Index} ($I_{\text{fail}}$) aggregating stress vectors for Scorch, Waterlogging, and Late Sowing.
-
-\subsection{Predictive Algorithms}
-We implemented the machine learning components using Scikit-Learn \citep{scikitlearn} and XGBoost \citep{chen2016xgboost}.
-
-\textbf{Multivariate Heat Signal.} This model predicts cumulative heat exposure ($T_{max} > 25^{\circ}C$) using March 1st precursors (e.g., Spring soil temperature and solar radiation). To ensure operational integrity, the model employs \textbf{Operational Scaling}: volatility expansion factors are calculated strictly using the variance of the training set to project conservative raw outputs into a biologically realistic range, avoiding look-ahead bias.
-
-\textbf{Physics-Informed Ensemble.} This component targets the 0.20 and 0.80 quantiles, defining the yield distribution's floor and ceiling. It blends the statistical trend with quantile predictions based on the simulated WOFOST 7.2 biomass ratio.
-
-\textbf{Robust Linear Integrator.} This utilizes a HuberRegressor ($\epsilon=1.35$) to predict yield residuals, maintaining independence from the global baseline. Inputs include WOFOST biomass residuals, root-zone depletion, and biological risk proxies.
+\subsection{Predictive Sub-Models}
+The ensemble integrates four specialized sub-models $M_k$ ($k \in \{1, \dots, 4\}$):
+The first model ($M_1$) is the \textbf{Multivariate Heat Signal}, which predicts $Z_{\text{heat}}$ via Spring precursors using operational scaling to match historical variance. The second ($M_2$) is the \textbf{Physics-Informed Ensemble}, which provides quantile-based yield floors and ceilings. The third ($M_3$) is the \textbf{Hybrid XGBoost}, targeting the yield-to-trend ratio using WOFOST 7.2 simulation outputs. The fourth ($M_4$) is the \textbf{Robust Linear Integrator}, utilizing a HuberRegressor for stable residual prediction.
 
 \subsection{Super Ensemble Architecture}
-The final system is a Super Ensemble driven by a Meta-Learner (XGBoost Classifier) functioning as a dynamic gating network.
+The system utilizes an XGBoost Meta-Learner as a dynamic gating network. The Meta-Learner is trained on a feature vector $\mathbf{x}_{d,t}$ that encodes the bio-physical context, historical bias, and ensemble variance.
 
 \subsubsection{Regret-Weighted Training}
-To prioritize the mitigation of extreme errors, the Meta-Learner employs a \textbf{Regret-Weighted Training} scheme. Training samples are weighted by the 'Regret' ($w_t$), defined as the difference between the median ensemble error and the oracle (best-case) error for that district-year:
+To prioritize the mitigation of extreme errors, training samples are weighted by the $\text{Regret}$ ($w_{d,t}$), where the error $\text{E}$ is defined as the absolute difference between observed and predicted yield, $\text{E} = |Y_{d,t} - \hat{y}_{d,t}|$. The weight is defined as:
 \begin{equation}
-    w_t = \text{Error}_{\text{median}} - \text{Error}_{\text{oracle}}
+    w_{d,t} = \text{E}_{\text{median}} - \text{E}_{\text{oracle}}
 \end{equation}
-This forces the classifier to focus on atmospheric patterns that typically precede catastrophic failures of the statistical trend.
+where $\text{E}_{\text{median}}$ is the median absolute error of the ensemble and $\text{E}_{\text{oracle}}$ is the best-case error achieved by the optimal sub-model $M_k$ for that specific observation:
+\begin{equation}
+    \text{E}_{\text{oracle}}(d,t) = \min_{k \in \{1,\dots,4\}} |Y_{d,t} - \hat{y}_k(d,t)|
+\end{equation}
+This ensures the Meta-Learner prioritizes learning from observations where a clear optimal choice existed to mitigate a potential failure of the Statistical Trend.
 
 \subsubsection{Inference via Soft Voting}
-The classifier outputs a probability distribution over the available sub-models. The final yield forecast $\hat{Y}_{d,t}$ is the probability-weighted sum of the component predictions:
+The final yield forecast $\hat{Y}_{d,t}$ is the probability-weighted sum:
 \begin{equation}
     \hat{Y}_{d,t} = \sum_{k=1}^{K} P(M_k | \mathbf{x}_{d,t}) \cdot \hat{y}_k(d,t)
 \end{equation}
-where $P(M_k | \mathbf{x}_{d,t})$ is the probability assigned to model $M_k$. This allows for continuous transition between the Trend and Physics regimes.
+where $P(M_k | \mathbf{x}_{d,t})$ is the probability assigned to sub-model $M_k$ given the input vector $\mathbf{x}_{d,t}$.
