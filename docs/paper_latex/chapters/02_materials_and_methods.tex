@@ -1,46 +1,42 @@
 \section{Materials and Methods}
 
 \subsection{Study Area and Data Integration}
-The study area encompasses all sugarbeet-cultivating districts in Germany ($d \in D$) for the harvest years $t \in T$ (1981--2024). Yield data ($Y_{d,t}$), measured in decitonnes per hectare (dt/ha), was harmonized from the Thuringian State Institute archives and modern Federal Statistical Office (Destatis) records. To isolate climatic signals from noise introduced by administrative or land-use changes, we applied spatial masking via the DLR CropMap \citep{dlr_cropmap}, aggregating meteorological variables strictly from relevant agricultural pixels.
-
-Meteorological forcing for model training was derived from the AgERA5 reanalysis \citep{agera5}. For the operational hindcasts targeted for the pre-season window of March 1st, we integrated ECMWF SEAS5 seasonal forecasts \citep{ecmwf_seas5}. To bridge the resolution gap between raw seasonal forecasts and field-level requirements, we employed an Analog Ensemble approach. In this framework, SEAS5 anomalies are used to select historical AgERA5 years with similar synoptic precursors to drive the process-based simulations. This is supplemented by dynamic soil moisture and land surface temperature data from ERA5-Land \citep{era5land} and static soil properties from SoilGrids 250m \citep{hengl2017soilgrids250m}.
+The study area encompasses sugarbeet-cultivating districts in Germany ($d \in D$) for the harvest years $t \in T$ (1981--2024). Yield data ($Y_{d,t}$), measured in decitonnes per hectare (dt/ha), was harmonized from regional archives and modern Federal Statistical Office (Destatis) records. To isolate climatic signals from administrative noise, spatial masking was applied via the DLR CropMap \citep{dlr_cropmap}, aggregating meteorological variables strictly from relevant agricultural pixels.
 
 \subsection{Non-Climatic Outlier Detection}
-To ensure the system learns from climatic signals rather than reporting artifacts, we implemented a non-climatic noise filter. Observations were excluded from the training set if the minimum error achievable by any individual sub-model exceeded 200 dt/ha despite benign climatic forcing. These instances identify non-climatic yield shocks, such as localized administrative errors or biotic failures, that fall outside the scope of atmospheric yield modeling. As shown in the ablation study (Section 3.4), the inclusion or exclusion of this filter resulted in a negligible change ($<0.5\%$) in global Skill Score, confirming that the system's predictive power is derived from its architecture rather than data selection.
+To ensure the system learns from climatic signals rather than reporting artifacts, we implemented a non-climatic noise filter. Observations were excluded from the training set if the minimum error achievable by any individual sub-model exceeded 200 dt/ha despite benign climatic forcing. These instances identify non-climatic yield shocks—such as administrative reporting errors or localized biotic failures—that fall outside the scope of atmospheric yield modeling. As shown in the ablation study (Section 3.4), the inclusion of this filter resulted in a negligible change ($<0.5\%$) in global Skill Score, confirming that the system's predictive power is derived from its architecture rather than data selection.
 
 \subsection{The Statistical Trend Baseline}
 The Statistical Trend baseline forecast, denoted as $\hat{y}_{\text{base}}(t)$, represents the expected yield under average climatic conditions. It is defined as:
 \begin{equation}
-    \hat{y}_{\text{base}}(t) = \alpha + f_s(t) + \epsilon_{\text{ARIMA}}
+    \hat{y}_{\text{base}}(t) = \alpha + f_s(t) + \hat{\epsilon}_{t}
 \end{equation}
-where $\alpha$ is the intercept, $f_s(t)$ is a cubic smoothing spline of the year $t$ representing gradual technological and genetic trends, and $\epsilon_{\text{ARIMA}}$ is the residual correction from an ARIMA(1,0,0) process.
+where $\alpha$ is the intercept, $f_s(t)$ is a cubic smoothing spline of the year $t$, and $\hat{\epsilon}_{t}$ is the predicted residual derived from an ARIMA(1,0,0) process.
 
 \subsection{Feature Engineering and Variable Definitions}
 We derive normalized Z-scores for primary climatic drivers to prevent look-ahead bias. For a feature $x$ at year $t$, the score $Z_t = (x_t - \mu_{1:t-1}) / \sigma_{1:t-1}$ is calculated. We specifically define $Z_{\text{heat}}$ (derived from days where $T_{\text{max}} > 25^{\circ}\text{C}$), $Z_{\text{bal}}$ (summer water balance), and $Z_{\text{tank}}$ (simulated winter soil water recharge).
 
-These serve as the basis for three physiological stress markers: the \textbf{Critical Dryness Index (CASDI)}, monitoring root-zone water exhaustion; the \textbf{Night-time Metabolic Stress Detector (NMSD)}, tracking biomass depletion via minimum temperatures ($T_{\text{min}} > 16^{\circ}\text{C}$); and \textbf{Oxygen Stress (OSAW)}, identifying root anoxia following soil saturation. Crucially, the March 1st lead-time capability relies on land-surface memory; $Z_{\text{tank}}$ serves as the boundary condition for CASDI, determining the vulnerability of the crop to summer water exhaustion months before planting.
+These scores inform three cumulative physiological stress markers: the \textbf{Critical Dryness Index (CASDI)}, which counts days of simulated root-zone water exhaustion; the \textbf{Night-time Metabolic Stress Detector (NMSD)}, tracking biomass depletion via high minimum temperatures; and \textbf{Oxygen Stress (OSAW)}, counting days of simulated soil saturation inhibiting root respiration. Crucially, the March 1st lead-time relies on land-surface memory: $Z_{\text{tank}}$ serves as the boundary condition for CASDI, determining the time-to-exhaustion of the soil water reservoir months before planting.
 
 \subsection{Predictive Sub-Models}
-The ensemble integrates four specialized sub-models $M_k$ ($k \in \{1, \dots, 4\}$):
-The first model ($M_1$) is the \textbf{Multivariate Heat Signal}, which predicts $Z_{\text{heat}}$ via Spring precursors using operational scaling to match historical variance. The second ($M_2$) is the \textbf{Physics-Informed Ensemble}, which provides quantile-based yield floors and ceilings. The third ($M_3$) is the \textbf{Hybrid XGBoost}, targeting the yield-to-trend ratio using WOFOST 7.2 simulation outputs. The fourth ($M_4$) is the \textbf{Robust Linear Integrator}, utilizing a HuberRegressor for stable residual prediction.
+The ensemble integrates four specialized sub-models $M_k$ ($k \in \{1, \dots, 4\}$). The first ($M_1$) is the \textbf{Multivariate Heat Signal}, predicting $Z_{\text{heat}}$ via Spring precursors. The second ($M_2$) is the \textbf{Physics-Informed Ensemble}, a gradient-boosting hybrid providing quantile-based yield floors and ceilings. The third ($M_3$) is the \textbf{Hybrid XGBoost}, which utilizes WOFOST simulation outputs to predict yield; if $M_3$ generates a yield-to-trend ratio, it is rescaled by $\hat{y}_{\text{base}}$ to absolute units before ensemble integration. The fourth ($M_4$) is the \textbf{Robust Linear Integrator}, utilizing a HuberRegressor for stable residual prediction.
 
 \subsection{Super Ensemble Architecture}
-The system utilizes an XGBoost Meta-Learner as a dynamic gating network. The Meta-Learner is trained on a feature vector $\mathbf{x}_{d,t}$ that encodes the bio-physical context, historical bias, and ensemble variance.
+The system utilizes an XGBoost Meta-Learner as a dynamic gating network. The Meta-Learner is trained on a feature vector $\mathbf{x}_{d,t}$ encoding bio-physical context, historical bias, and ensemble variance.
 
 \subsubsection{Regret-Weighted Training}
-To prioritize the mitigation of extreme errors, training samples are weighted by the $\text{Regret}$ ($w_{d,t}$), where the error $\text{E}$ is defined as the absolute difference between observed and predicted yield, $\text{E} = |Y_{d,t} - \hat{y}_{d,t}|$. The weight is defined as:
+To prioritize the mitigation of extreme errors, training samples are weighted by the $\text{Regret}$ ($w_{d,t}$). Let $\text{E}_{d,t}$ be the absolute error of a prediction. The weight is defined as:
 \begin{equation}
-    w_{d,t} = \text{E}_{\text{median}} - \text{E}_{\text{oracle}}
+    w_{d,t} = \text{E}_{\text{median}}(d,t) - \text{E}_{\text{oracle}}(d,t)
 \end{equation}
-where $\text{E}_{\text{median}}$ is the median absolute error of the ensemble and $\text{E}_{\text{oracle}}$ is the best-case error achieved by the optimal sub-model $M_k$ for that specific observation:
+where $\text{E}_{\text{median}}$ is the median absolute error of the four sub-models and $\text{E}_{\text{oracle}}$ is the best-case error achieved by the optimal model:
 \begin{equation}
     \text{E}_{\text{oracle}}(d,t) = \min_{k \in \{1,\dots,4\}} |Y_{d,t} - \hat{y}_k(d,t)|
 \end{equation}
-This ensures the Meta-Learner prioritizes learning from observations where a clear optimal choice existed to mitigate a potential failure of the Statistical Trend.
+This ensures the Meta-Learner prioritizes learning from observations where a clear optimal choice existed to mitigate a failure of the Statistical Trend.
 
 \subsubsection{Inference via Soft Voting}
 The final yield forecast $\hat{Y}_{d,t}$ is the probability-weighted sum:
 \begin{equation}
     \hat{Y}_{d,t} = \sum_{k=1}^{K} P(M_k | \mathbf{x}_{d,t}) \cdot \hat{y}_k(d,t)
 \end{equation}
-where $P(M_k | \mathbf{x}_{d,t})$ is the probability assigned to sub-model $M_k$ given the input vector $\mathbf{x}_{d,t}$.
