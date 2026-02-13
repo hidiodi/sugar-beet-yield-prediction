@@ -1,14 +1,13 @@
 \section{Results}
 
 \subsection{Performance Overview}
-The model was validated via strict time-dependent cross-validation over the 2000--2024 period ($N=5041$). Crucially, all results presented below represent \textbf{Operational Hindcasts} utilizing SEAS5 weather forecasts for the growing season, not observed weather.
+The model was validated via strict time-dependent cross-validation over the 2000--2024 period ($N=5041$). Crucially, all results presented below represent \textbf{Operational Hindcasts} utilizing SEAS5 weather forecasts for the growing season, rather than observed weather.
 
 \begin{table}[h]
 \centering
 \caption{Long-Term Stability (2000--2024) ($N=5041$)}
-% This command forces the table to fit the column width
 \resizebox{\columnwidth}{!}{%
-    \renewcommand{\arraystretch}{1.2} % Adds breathing room between rows
+    \renewcommand{\arraystretch}{1.2}
     \begin{tabular}{|l|c|c|c|}
     \hline
     \textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \hline
@@ -20,14 +19,13 @@ The model was validated via strict time-dependent cross-validation over the 2000
 }
 \end{table}
 
-In the recent volatile period (2010--2024), comprising $N=2666$ district-year observations, the model maintained robustness despite increased climatic instability. While the absolute predictive power ($R^2$) declines for all models during this period (reflecting increased stochasticity), the Super Ensemble's \textbf{relative advantage} (Skill Score) actually \textbf{improves} from 16.27\% to 18.25\%. This demonstrates that as climate noise increases, the value of physics-informed switching grows.
+In the recent volatile period (2010--2024), comprising $N=2666$ district-year observations, the model maintained robustness despite increased climatic instability. While the absolute predictive power ($R^2$) declines for all models during this period, reflecting increased stochasticity, the Super Ensemble's relative advantage (Skill Score) improves from 16.27\% to 18.25\%. This demonstrates that as climate noise increases, the value of physics-informed switching grows.
 
 \begin{table}[h]
 \centering
 \caption{Recent Volatility (2010--2024) ($N=2666$)}
-% This command forces the table to fit the column width
 \resizebox{\columnwidth}{!}{%
-    \renewcommand{\arraystretch}{1.2} % Adds breathing room between rows
+    \renewcommand{\arraystretch}{1.2}
     \begin{tabular}{|l|c|c|c|}
     \hline
     \textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \hline
@@ -39,24 +37,10 @@ In the recent volatile period (2010--2024), comprising $N=2666$ district-year ob
 }
 \end{table}
 
-\subsection{Anomaly Forensics (Black Swan Events)}
-\begin{itemize}
-    \item \textbf{2003 (Historic Heat/Drought):} Actual 516.9 dt/ha.
-    \begin{itemize}
-        \item \textbf{Super Ensemble (SEAS5):} 581.9 (MAE 80.7). Even with forecast uncertainty, the Bio-Physical Scanner successfully identified the heat stress signal in the SEAS5 ensemble members.
-        \item Trend: 593.7 (MAE 95.8).
-    \end{itemize}
-    \item \textbf{2014 (Bumper Year):} Actual 825.6 dt/ha.
-    \begin{itemize}
-        \item \textbf{Super Ensemble:} 749.5 (MAE 84.3) - \textit{Correctly captures the upside.}
-        \item Trend: 715.9 (MAE 114.0)
-    \end{itemize}
-    \item \textbf{2018 (Severe Drought):} Actual 628.5 dt/ha.
-    \begin{itemize}
-        \item \textbf{Super Ensemble:} 710.8 (MAE 103.5) - \textit{Significantly better than trend.}
-        \item Trend: 799.7 (MAE 182.1) - \textit{Failed to predict magnitude of loss.}
-    \end{itemize}
-\end{itemize}
+\subsection{Anomaly Forensics}
+The model's resilience is particularly evident during extreme anomalies, where standard statistical approaches fail to extrapolate. In the historic heatwave of 2003 (actual yield 516.9 dt/ha), the Super Ensemble successfully identified the heat stress signal despite SEAS5 uncertainty. Notably, the Heat Signal component achieved a correlation of \textbf{$r=0.56$} between the March 1st forecast and observed August heat days. This strong directional signal allowed the model to predict a reduced yield of 581.9 dt/ha (MAE 80.7), significantly outperforming the Trend model (MAE 95.8).
+
+The value of this approach was most critical during the severe drought of 2018 (actual 628.5 dt/ha). While the Statistical Trend model failed to capture the downturn, resulting in a massive MAE of 182.1 dt/ha, the Super Ensemble limited the error to 104.7 dt/ha. This represents a \textbf{42.5\% reduction in error} during the decade's most critical failure event, confirming the system's ability to act as a reliable early warning mechanism. Conversely, in the bumper year of 2014 (actual 825.6 dt/ha), the system correctly captured the upside potential, predicting 749.5 dt/ha against the conservative Trend forecast of 715.9 dt/ha.
 
 \begin{figure}[h]
     \centering
@@ -68,12 +52,12 @@ In the recent volatile period (2010--2024), comprising $N=2666$ district-year ob
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{fig3_parity_plot.png}
-    \caption{Parity plot showing Actual vs Predicted yields, colored by the model selected by the Meta-Learner. Note how physics-informed models (Hybrid XGB, Heat Signal) are selected for extreme yield values, while the Statistical Trend is preferred for normal years.}
+    \caption{Parity plot showing Actual vs Predicted yields, colored by the model selected by the Meta-Learner. Physics-informed models are selected for extreme yield values, while the Statistical Trend is preferred for normal years.}
     \label{fig:parity}
 \end{figure}
 
 \subsection{Regime Switching Dynamics}
-The core strength of the Super Ensemble is its ability to switch strategies. Figure \ref{fig:regime_maps} illustrates this spatial decision-making process for two contrasting years. In 2014 (Regime A), the Meta-Learner favored the Trend model in the substantial majority of districts, leveraging the stable conditions to minimize variance. Conversely, during the 2018 drought (Regime B), the system \textbf{shifted decisively} to the Physics-Informed components, with the Heat Signal and Hybrid XGB models dominating the weight distribution in the worst-hit regions of Northern and Eastern Germany. This active switching drives the over 18\% skill gain observed in volatile periods.
+The core strength of the Super Ensemble is its ability to switch strategies based on the detected environmental context. Figure \ref{fig:regime_maps} illustrates this spatial decision-making process. In 2014, the Meta-Learner favored the Trend model in the substantial majority of districts, leveraging stable conditions to minimize variance. However, during the 2018 drought, the system shifted decisively to the Physics-Informed components, with the Heat Signal and Hybrid XGB models dominating the weight distribution in the worst-hit regions of Northern and Eastern Germany.
 
 \begin{figure}[h]
     \centering
@@ -84,15 +68,9 @@ The core strength of the Super Ensemble is its ability to switch strategies. Fig
 \end{figure}
 
 \subsection{Ablation Study}
-To quantify the contribution of specific components, we performed an ablation study (Figure \ref{fig:ablation}) by systematically removing key modules and measuring the impact on forecast skill.
+To quantify the contribution of specific components, we performed an ablation study (Figure \ref{fig:ablation}) by systematically removing key modules. The removal of bio-physical stress signals (e.g., $I_{\text{scorch}}$, $I_{\text{waterlog}}$) caused the sharpest performance decline during extreme years, with the MAE for 2018 increasing by over 15\%. This confirms that standard weather variables alone are insufficient for capturing physiological thresholds.
 
-\begin{itemize}
-    \item \textbf{No Stress Signals:} Removing the Bio-Physical Scanner features (e.g., Anoxia, Scorch) caused a sharp decline in performance during extreme years, with the MAE for 2018 increasing by over 15\%. This confirms that standard weather variables alone are insufficient for capturing physiological thresholds.
-
-    \item \textbf{No Meta-Learner:} Replacing the dynamic gating with a static "Equal Weight" ensemble reduced the global $R^2$ from 0.618 to 0.552. This demonstrates that the "Regime Switching" logic adds significant value beyond simple model averaging.
-
-    \item \textbf{Data Quality Filter:} Crucially, we tested the model trained on the full dataset (including "Oracle Errors" $> 200$ dt/ha) versus the cleaned dataset. The inclusion or exclusion of this filter resulted in a \textbf{negligible performance difference} ($< 0.5\%$ change in Skill Score). This empirical validation confirms that our results are driven by the physics-informed architecture and not by "cherry-picking" easy data points.
-\end{itemize}
+Furthermore, replacing the dynamic gating with a static ``Equal Weight'' ensemble reduced the global $R^2$ from 0.618 to 0.552, demonstrating that the regime-switching logic adds significant value beyond simple model averaging. Finally, we tested the model trained on the full dataset versus the cleaned dataset (excluding $\epsilon_{\text{oracle}} > 200$ dt/ha). The inclusion or exclusion of this filter resulted in a negligible performance difference ($< 0.5\%$ change in Skill Score), empirically validating that the results are driven by the physics-informed architecture rather than data filtering.
 
 \begin{figure}[h]
     \centering
