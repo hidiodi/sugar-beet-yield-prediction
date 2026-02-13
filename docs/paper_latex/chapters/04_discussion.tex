@@ -1,7 +1,7 @@
 \section{Discussion}
 
-\subsection{Interpretation and Efficiency}
-The Super Ensemble achieves a 16.16\% skill gain by effectively switching strategies. Analysis reveals that 71.6\% of residual error is systemic (Component Gap), while only 28.4\% is due to incorrect model selection (Fig.~\ref{fig:switching}). This validates the Meta-Learner's efficiency and directs future research toward improving sub-model physics.
+\subsection{Regime Selection Efficiency}
+The Super Ensemble achieves a 16.24\% skill gain by employing a discrete Hard Switch strategy. Analysis reveals that the Hard Switch minimizes selection error, which now accounts for only 28.4\% of the total residual error, while 71.6\% remains systemic (Component Gap) (Fig.~\ref{fig:switching}). This confirms that the Meta-Learner effectively maps specific bio-physical precursors to specialized model regimes, leaving the majority of remaining error to the limitations of the sub-models themselves.
 
 \begin{figure}[h]
     \centering
@@ -11,14 +11,14 @@ The Super Ensemble achieves a 16.16\% skill gain by effectively switching strate
 \end{figure}
 
 \subsection{Uncertainty and Drivers}
-The system's diagnostic capability is driven by bio-physical stress signals (Fig.~\ref{fig:importance}). Regret Weight and compound indices (Scorch, Anoxia) dominate the hierarchy, confirming that switching is physically grounded rather than statistical noise.
-
-\begin{figure}[h]
+\begin{figure}[ht!]
     \centering
     \includegraphics[width=\linewidth]{feature_importance_native.png}
-    \caption{Feature Importance Hierarchy. Mechanism-informed features (Regret Weight, Heat Signal, Bio-Physical Scanner) significantly outrank raw weather variables, confirming the value of the feature engineering pipeline.}
+    \caption{Feature Importance Hierarchy. Mechanism-informed features (Heat Signal, Bio-Physical Scanner) significantly outrank raw weather variables, confirming the value of the feature engineering pipeline.}
     \label{fig:importance}
 \end{figure}
+
+The system's diagnostic capability is driven by mechanism-informed features (Fig.~\ref{fig:importance}). It is crucial to clarify that the \textbf{Regret\_Weight} is utilized strictly as a \textbf{training-time sample importance weight} to address regime blindness, forcing the model to prioritize rare events. The actual inference-time drivers are the mechanism-informed signals, specifically the V31 Solar Signal, Hybrid XGB Signal, and Water Balance anomalies. These compound indices dominate the hierarchy, confirming that switching is physically grounded rather than statistical noise.
 
 Unlike monitoring-based systems like MCYFS that rely on in-season data \citep{vandervelde2019mars}, our use of SEAS5 on March 1st provides a critical 90-day window for economic hedging. While quantile predictions ($M_2$) offer a probabilistic envelope, the primary value lies in the early detection of yield crashes.
 

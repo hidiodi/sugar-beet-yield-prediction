@@ -1,5 +1,5 @@
 \section{Results}
-Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms the Super Ensemble's superiority. While absolute predictive power ($R^2$) naturally declines during the volatile 2010--2024 period due to increased stochasticity, the model's Skill Score actually improves from 16.16\% to 18.25\%, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
+Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms the Super Ensemble's superiority. While absolute predictive power ($R^2$) naturally declines during the volatile 2010--2024 period due to increased stochasticity, the model's Skill Score actually improves from 16.24\% to 18.14\%, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
 
 \begin{table}[h]
 \centering
@@ -9,7 +9,7 @@ Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms t
     \begin{tabular}{|l|c|c|c|}
     \hline
     \textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \hline
-    \textbf{Super Ensemble} & \textbf{56.35} & \textbf{0.618} & \textbf{16.16} \\ \hline
+    \textbf{Super Ensemble} & \textbf{56.30} & \textbf{0.618} & \textbf{16.24} \\ \hline
     Robust Linear (Stage 2) & 64.40 & 0.499 & 4.18 \\ \hline
     Statistical Trend & 67.21 & 0.467 & 0.00 \\ \hline
     Native Ensemble & 70.30 & 0.372 & -4.59 \\ \hline
@@ -27,7 +27,7 @@ Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms t
 % Figure 2 (Error Butterfly) moved to Methods (Section 2.6)
 
 \subsection{Anomaly Forensics (Black Swan Events)}
-Table~\ref{tab:anomalies} details performance during historic anomalies. The Super Ensemble significantly reduced errors in the 2003 heatwave (+15.1 dt/ha) and the 2018 drought (+78.6 dt/ha) by identifying stress signals in SEAS5 forecasts, while also capturing the 2014 bumper year upside (+29.7 dt/ha).
+Table~\ref{tab:anomalies} details performance during historic anomalies. The Super Ensemble significantly reduced errors in the 2003 heatwave (+15.4 dt/ha) and the 2018 drought (+78.5 dt/ha) by identifying stress signals in SEAS5 forecasts, while also capturing the 2014 bumper year upside (+29.4 dt/ha).
 
 \begin{table}[h]
 \centering
@@ -36,9 +36,9 @@ Table~\ref{tab:anomalies} details performance during historic anomalies. The Sup
     \begin{tabular}{|l|c|c|c|c|}
     \hline
     \textbf{Event} & \textbf{Actual} & \textbf{Super Ensemble} & \textbf{Trend} & \textbf{Improv.} \\ \hline
-    2003 (Heat) & 516.9 & 581.9 (MAE 80.7) & 593.7 (MAE 95.8) & +15.1 \\ \hline
-    2014 (Bumper) & 825.6 & 749.5 (MAE 84.3) & 715.9 (MAE 114.0) & +29.7 \\ \hline
-    2018 (Drought) & 628.5 & 710.8 (MAE 103.5) & 799.7 (MAE 182.1) & +78.6 \\ \hline
+    2003 (Heat) & 516.9 & 581.7 (MAE 80.4) & 593.7 (MAE 95.8) & +15.4 \\ \hline
+    2014 (Bumper) & 825.6 & 748.9 (MAE 84.6) & 715.9 (MAE 114.0) & +29.4 \\ \hline
+    2018 (Drought) & 628.5 & 710.4 (MAE 103.6) & 799.7 (MAE 182.1) & +78.5 \\ \hline
     \end{tabular}%
 }
 \label{tab:anomalies}
