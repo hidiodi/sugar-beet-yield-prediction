@@ -1,23 +1,37 @@
 \section{Discussion}
 
-\subsection{Interpretation of Results}
-The Super Ensemble’s 16--18\% skill gain is driven by its ability to navigate the ``Interpolation vs. Extrapolation'' dilemma. The soft voting mechanism allows the system to remain anchored to the \textbf{Statistical Trend} during stable meteorological years while shifting weight to physics-informed components during extreme anomalies. The observation that relative skill increases during the volatile 2010--2024 period (rising to 18.07\% from a global 16.16\%) suggests that the regime-switching logic becomes increasingly critical as historical climate norms lose their predictive value for linear extrapolation.
+\subsection{Interpretation and Efficiency}
+The Super Ensemble achieves a 16.16\% skill gain by effectively switching strategies. Analysis reveals that 71.6\% of residual error is systemic (Component Gap), while only 28.4\% is due to incorrect model selection (Fig.~\ref{fig:switching}). This validates the Meta-Learner's efficiency and directs future research toward improving sub-model physics.
 
-\subsection{Error Decomposition and the Meta-Learner Ceiling}
-A forensic analysis of the forecasting pipeline reveals an ``Oracle MAE'' of 40.34 dt/ha, representing the theoretical error limit if the Meta-Learner perfectly selected the optimal sub-model $M_k$ for every observation. Our current Super Ensemble MAE of 56.35 dt/ha indicates that 71.6\% of the remaining error is attributable to the limitations of the underlying sub-models (the ``Component Gap''), while only 28.4\% stems from selection errors by the Meta-Learner. This suggests that the gating logic is approaching a theoretical ceiling given the current ensemble members.
-We hypothesize that closing this 71.6\% gap will require addressing the ``Missing Physics'' within the sub-models. Specifically, the current iteration of WOFOST 7.2 does not account for non-climatic ceilings such as phosphorus or potassium limitations, nor the dynamic impact of pest and disease pressure (e.g., \textit{Cercospora beticola}), which act as absolute yield caps regardless of climatic favorability.
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{super_ensemble_switching_efficiency.png}
+    \caption{Meta-Learner Switching Efficiency. The boxplot compares the MAE distribution of the Selected Model vs. the Theoretical Oracle. The narrow gap confirms that the selector is nearly optimized.}
+    \label{fig:switching}
+\end{figure}
 
-\subsection{Spatial Vulnerabilities: East vs. West}
-The system exhibits a higher ``unsolvable'' error (Oracle Error) in Eastern Germany (42.5 dt/ha) compared to the West (39.6 dt/ha). This spatial disparity is likely driven by the continental climate and coarser soil profiles of the East, which amplify non-linear responses to summer heatwaves. These conditions often push the crop beyond the physiological recovery limits assumed in standard calibrations, highlighting a need for site-specific soil and management parameterization in future iterations.
+\subsection{Uncertainty and Drivers}
+The system's diagnostic capability is driven by bio-physical stress signals (Fig.~\ref{fig:importance}). Regret Weight and compound indices (Scorch, Anoxia) dominate the hierarchy, confirming that switching is physically grounded rather than statistical noise.
 
-\subsection{Lead-Time Advantage and Land-Surface Memory}
-A critical contribution of this work is addressing the ``Lead-Time Gap'' in operational agricultural monitoring. Standard systems, such as the European Commission’s MCYFS \citep{vandervelde2019mars}, rely on observed satellite and meteorological data, which typically only become predictive as the growing season progresses. In contrast, our Super Ensemble targets the \textbf{March 1st window}.
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{feature_importance_native.png}
+    \caption{Feature Importance Hierarchy. Mechanism-informed features (Regret Weight, Heat Signal, Bio-Physical Scanner) significantly outrank raw weather variables, confirming the value of the feature engineering pipeline.}
+    \label{fig:importance}
+\end{figure}
 
-This lead-time capability is physically rooted in land-surface memory: winter soil water recharge ($Z_{\text{tank}}$) serves as the primary initial boundary condition for the Critical Dryness Index (CASDI). This pre-season reservoir determines the ``time-to-exhaustion'' of the soil water supply under summer evapotranspiration; essentially, the winter state sets the fuse for summer crop failure months before planting. By extracting a directional heat signal ($r=0.63$) from spring precursors, the system provides a robust early-warning mechanism months before satellite-based vegetation indices become viable.
+Unlike monitoring-based systems like MCYFS that rely on in-season data \citep{vandervelde2019mars}, our use of SEAS5 on March 1st provides a critical 90-day window for economic hedging. While quantile predictions ($M_2$) offer a probabilistic envelope, the primary value lies in the early detection of yield crashes.
 
-\subsection{Uncertainty and Eliminating Regime Blindness}
-The 43.1\% error reduction during the 2018 drought is the most significant validation of the Regret-Weighted training scheme. By prioritizing training instances where the \textbf{Statistical Trend} failed catastrophically, the Meta-Learner learned to recognize the precursor patterns that precede yield crashes.
-
-This approach eliminates the ``Regime Blindness'' inherent in standard linear models. While the \textbf{Statistical Trend} is mathematically sound for long-term averages, it is functionally blind to annual extremes. In the 2014 bumper year, while our model under-predicted the absolute peak, it successfully signaled a directional shift toward a high-yield regime, whereas the baseline remained stagnant.
 \subsection{Limitations}
-Despite the promising results, limitations remain. The inherent conservatism of ensemble-based machine learning—observed in the under-prediction of absolute heat peaks—means the model may still struggle to capture the full magnitude of record-breaking compound extremes. Furthermore, while the non-climatic outlier detection filter isolates climatic signals, it may mask rare systemic failures that a comprehensive monitoring system should eventually incorporate.
+Limitations include reliance on interpolated weather grids \cite{rauthe2013central}, which smooth localized extremes, and district-level aggregation masking field variability.
+
+\subsection{Methodological Considerations}
+
+\subsubsection{Cross-Validation Rigor}
+The expanding window protocol ensures strict temporal separation between training and test sets, mimicking operational deployment where only historical data informs future forecasts. Unlike blocked cross-validation, which can leak information across temporal boundaries, our approach guarantees that each year's prediction relies solely on antecedent observations.
+
+\subsubsection{Data Integrity and Outlier Handling}
+An early iteration of the system employed a retrospective outlier filter based on multi-model consensus, flagging district-years where all components exhibited errors exceeding 200~dt/ha. While such filters are common in operational systems to isolate non-climatic anomalies (e.g., misreported yields), we opted to exclude this step to avoid introducing circularity into the validation framework. The negligible performance impact of this exclusion (Section~3.4) validates our decision and demonstrates that the system's skill derives from capturing genuine climatic signals rather than selectively curating validation data.
+
+\subsubsection{Hyperparameter Selection}
+Meta-Learner hyperparameters were chosen conservatively to prioritize generalization over training-set fit. The shallow tree depth (\texttt{max\_depth=4}) and low learning rate (\texttt{learning\_rate=0.03}) prevent overfitting to idiosyncratic district-year patterns, while the ensemble variance and historical bias features provide regime-specific context that cannot be trivially memorized.

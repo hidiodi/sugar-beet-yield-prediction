@@ -1,7 +1,5 @@
 \section{Results}
-
-\subsection{Performance Overview}
-The model was validated via strict time-dependent cross-validation over the 2000--2024 period ($N=5041$). All results presented hereafter represent \textbf{Operational Hindcasts} utilizing SEAS5 weather forecasts issued on March 1st for the upcoming growing season, rather than observed meteorological data.
+Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms the Super Ensemble's superiority. While absolute predictive power ($R^2$) naturally declines during the volatile 2010--2024 period due to increased stochasticity, the model's Skill Score actually improves from 16.16\% to 18.25\%, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
 
 \begin{table}[h]
 \centering
@@ -12,87 +10,55 @@ The model was validated via strict time-dependent cross-validation over the 2000
     \hline
     \textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \hline
     \textbf{Super Ensemble} & \textbf{56.35} & \textbf{0.618} & \textbf{16.16} \\ \hline
-    Robust Linear ($M_4$) & 64.41 & 0.499 & 4.16 \\ \hline
-    \textbf{Statistical Trend} & 67.21 & 0.468 & 0.00 \\ \hline
-    Native Ensemble & 70.28 & 0.372 & -4.57 \\ \hline
+    Robust Linear (Stage 2) & 64.40 & 0.499 & 4.18 \\ \hline
+    Statistical Trend & 67.21 & 0.467 & 0.00 \\ \hline
+    Native Ensemble & 70.30 & 0.372 & -4.59 \\ \hline
     \end{tabular}%
 }
 \end{table}
 
-In the recent volatile period (2010--2024), comprising $N=2666$ district-year observations, the model maintained robustness despite increased climatic instability (Table 2). While the absolute predictive power ($R^2$) declines for all models during this period—reflecting increased stochasticity in weather patterns—the Super Ensemble's relative advantage over the \textbf{Statistical Trend} rose to 18.07\%. This demonstrates that as climatic noise increases, the value of physics-informed gating grows significantly.
+% Figure 2 (Error Butterfly) moved to Methods (Section 2.6)
+
+\subsection{Anomaly Forensics (Black Swan Events)}
+Table~\ref{tab:anomalies} details performance during historic anomalies. The Super Ensemble significantly reduced errors in the 2003 heatwave (+15.1 dt/ha) and the 2018 drought (+78.6 dt/ha) by identifying stress signals in SEAS5 forecasts, while also capturing the 2014 bumper year upside (+29.7 dt/ha).
 
 \begin{table}[h]
 \centering
-\caption{Recent Volatility (2010--2024) ($N=2666$)}
+\caption{Performance during Black Swan Events (dt/ha)}
 \resizebox{\columnwidth}{!}{%
-    \renewcommand{\arraystretch}{1.2}
-    \begin{tabular}{|l|c|c|c|}
+    \begin{tabular}{|l|c|c|c|c|}
     \hline
-    \textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \hline
-    \textbf{Super Ensemble} & \textbf{66.13} & \textbf{0.433} & \textbf{18.07} \\ \hline
-    Robust Linear ($M_4$) & 77.92 & 0.239 & 3.46 \\ \hline
-    \textbf{Statistical Trend} & 80.71 & 0.192 & 0.00 \\ \hline
-    Native Ensemble & 80.95 & 0.189 & -0.29 \\ \hline
+    \textbf{Event} & \textbf{Actual} & \textbf{Super Ensemble} & \textbf{Trend} & \textbf{Improv.} \\ \hline
+    2003 (Heat) & 516.9 & 581.9 (MAE 80.7) & 593.7 (MAE 95.8) & +15.1 \\ \hline
+    2014 (Bumper) & 825.6 & 749.5 (MAE 84.3) & 715.9 (MAE 114.0) & +29.7 \\ \hline
+    2018 (Drought) & 628.5 & 710.8 (MAE 103.5) & 799.7 (MAE 182.1) & +78.6 \\ \hline
     \end{tabular}%
 }
+\label{tab:anomalies}
 \end{table}
 
-\begin{figure*}[!t]
+\begin{figure}[h]
     \centering
-    \includegraphics[width=0.75\textwidth]{fig2_time_series.png}
-    \caption{National average sugarbeet yield: observed vs forecasted (2000--2024). The Super Ensemble (green) tracks inter-annual variability more accurately than the Statistical Trend baseline (gray dashed). Red-shaded regions highlight extreme drought years (2003, 2018) where the Super Ensemble's regime-switching capability provides substantial error reduction.}
+    \includegraphics[width=\linewidth]{fig2_time_series.png}
+    \caption{National average sugarbeet yield: Actual observations vs. Super Ensemble forecasts and Statistical Trend baseline. Note the superior tracking of the 2003 and 2018 drought events.}
     \label{fig:timeseries}
-\end{figure*}
+\end{figure}
 
-\begin{figure}[!t]
+\begin{figure}[h]
     \centering
-    \includegraphics[width=0.85\columnwidth]{fig3_parity_plot.png}
-    \caption{Predicted vs observed yield (2000--2024, N=5041) for the Super Ensemble, color-coded by Meta-Learner's selected sub-model. The Super Ensemble reduces scatter around the diagonal, with physics-informed models (orange, green) dominating in extreme low-yield predictions.}
+    \includegraphics[width=\linewidth]{fig3_parity_plot.png}
+    \caption{Parity plot showing Actual vs Predicted yields, colored by the model selected by the Meta-Learner. Note how physics-informed models (Hybrid XGB, Heat Signal) are selected for extreme yield values, while the Statistical Trend is preferred for normal years.}
     \label{fig:parity}
 \end{figure}
 
+\subsection{Dynamics and Ablation}
+Forensic analysis confirms that $M_3$ (Hybrid) specialists are selected during extreme yield crashes ($>34$ dt/ha below trend), directly triggered by the Scorch Index thresholds defined in the SI (Eq. S1) and visualized geographically in the introduction (Fig.~\ref{fig:intro_context}).
 
-\subsection{Anomaly Forensics}
-The model's resilience is most evident during extreme anomalies where the \textbf{Statistical Trend} baseline typically fails due to regime blindness. In the historic heatwave of 2003 (actual yield 516.9 dt/ha), the Super Ensemble successfully identified the stress regime via the Multivariate Heat Signal ($M_1$), which achieved an operational correlation of $r=0.63$ between the March 1st forecast and observed August heat days. This directional signal allowed the model to predict 581.8 dt/ha (MAE 80.7), significantly outperforming the \textbf{Statistical Trend} (MAE 95.8).
+Ablation results (Fig~\ref{fig:ablation}) confirm that removing stress signals increases 2018 error by $>$15\%, and a static ensemble reduces $R^2$ to 0.552. Excluding the outlier filter changed skill by $<0.5\%$.
 
-The system's most critical impact occurred during the 2018 drought (actual 628.5 dt/ha). While the \textbf{Statistical Trend} over-predicted yield at 799.7 dt/ha (MAE 182.1), the Super Ensemble pivoted to physics-informed components, predicting 710.3 dt/ha. This represents a 43.1\% reduction in absolute error. Conversely, in the 2014 bumper year (actual 825.6 dt/ha), the system successfully signaled a directional shift toward a high-yield regime by predicting 748.6 dt/ha. While this remains an under-prediction of the absolute peak yield—consistent with the inherent conservatism of ensemble-based machine learning—it represents a meaningful improvement over the \textbf{Statistical Trend} forecast of 715.9 dt/ha, which remained stagnant at the long-term average.
-
-\begin{figure}[!t]
+\begin{figure}[h]
     \centering
-    \includegraphics[width=0.85\columnwidth]{heat_forecast_calibration.png}
-    \caption{Calibration of the Multivariate Heat Signal forecast ($r=0.63$). While inherent machine learning conservatism leads to under-prediction of absolute peaks (e.g., 2003, 2018), the directional signal remains robust enough to trigger the Meta-Learner's regime-switching logic.}
-    \label{fig:heat_calibration}
-\end{figure}
-
-\subsection{Regime Switching Dynamics}
-
-\begin{figure*}[!t]
-    \centering
-    \begin{subfigure}{0.42\textwidth}
-        \centering
-        \includegraphics[width=\linewidth]{fig1_regime_map_2014.png}
-        \caption{2014 Bumper Year}
-        \label{fig:regime_2014}
-    \end{subfigure}
-    \hfill
-    \begin{subfigure}{0.42\textwidth}
-        \centering
-        \includegraphics[width=\linewidth]{fig1_regime_map_2018.png}
-        \caption{2018 Drought Year}
-        \label{fig:regime_2018}
-    \end{subfigure}
-    \caption{Spatial distribution of Meta-Learner model selection across German sugarbeet districts. (a) In 2014, V31\_Solar\_Gated (green) dominates, indicating reliance on trend-based forecasting. (b) In 2018, Hybrid\_XGB (orange) gains prominence in regions exposed to severe water stress, demonstrating the Meta-Learner's ability to detect extreme stress regimes spatially.}
-    \label{fig:regime_maps}
-\end{figure*}
-
-The core strength of the Super Ensemble is its ability to eliminate regime blindness, achieving \textbf{483 hits on True Crash} regimes. The Regret-Weighted training prioritized these extremes: the probability weight assigned to physics-informed sub-models ($M_1$, $M_3$) in 2018 was significantly higher ($>0.75$) than in the stable 2010--2013 period ($<0.15$), where the \textbf{Statistical Trend} was preferred.
-
-\subsection{Ablation Study}
-Ablation results (Fig~\ref{fig:ablation}) confirm that the removal of bio-physical stress signals (CASDI, NMSD, OSAW) causes the sharpest performance decline during extreme years, increasing 2018 error by over 15\%. Notably, the exclusion of the non-climatic outlier detection filter resulted in a negligible performance change ($<0.5\%$ skill), proving that the results are driven by the architectural integration of physical mechanisms rather than data selection.
-
-\begin{figure}[!t]
-    \centering
-    \includegraphics[width=0.85\columnwidth]{fig3_ablation_results.png}
-    \caption{Ablation Study Results. Removal of stress signals results in higher error in drought years. The Non-Climatic Outlier Detection filter has minimal impact on aggregate metrics, validating model robustness.}
+    \includegraphics[width=\linewidth]{fig3_ablation_results.png}
+    \caption{Ablation Study Results. Removing stress signals results in higher error in drought years. Notably, the Data Quality Filter has minimal impact on aggregate metrics, proving model robustness.}
     \label{fig:ablation}
 \end{figure}

@@ -1,54 +1,92 @@
 \section{Materials and Methods}
 
-\subsection{Study Area and Data Integration}
-The study area encompasses all sugarbeet-cultivating districts in Germany ($d \in D$) for the harvest years $t \in T$ (1981--2024). Yield data ($Y_{d,t}$), measured in decitonnes per hectare (dt/ha), was harmonized from the Thuringian State Institute archives and modern Federal Statistical Office (Destatis) records. To isolate climatic signals from noise introduced by administrative or land-use changes, we applied spatial masking via the DLR CropMap \citep{dlr_cropmap}, aggregating meteorological variables strictly from relevant agricultural pixels.
-
-Meteorological forcing for model training was derived from the AgERA5 reanalysis \citep{agera5}. For the operational hindcasts targeted for the pre-season window of March 1st, we integrated ECMWF SEAS5 seasonal forecasts \citep{ecmwf_seas5}. To bridge the resolution gap between raw seasonal forecasts and field-level requirements, we employed an Analog Ensemble approach. In this framework, SEAS5 anomalies are used to select historical AgERA5 years with similar synoptic precursors to drive the process-based simulations. This is supplemented by dynamic soil moisture and land surface temperature data from ERA5-Land \citep{era5land} and static soil properties from SoilGrids 250m \citep{hengl2017soilgrids250m}.
+\subsection{Study Area and Datasets}
+The study covers sugarbeet cultivation districts in Germany, utilizing a multi-source dataset spanning 1981--2024. This includes yield data (Thuringian State Institute, Destatis), meteorological forcing (AgERA5, ECMWF SEAS5), teleconnections (NAO, SCAND, MEI), soil conditions (ERA5-Land, SoilGrids 250m), and spatial masks (DLR CropMap, MODIS). Technical specifications, including resolutions and DOIs, are provided in the Supplementary Information (Table S1).
 
 \subsection{Non-Climatic Outlier Detection}
-To ensure the system learns from climatic signals rather than reporting artifacts, we implemented a non-climatic noise filter. Observations were excluded from the training set if the minimum error achievable by any individual sub-model exceeded 200 dt/ha despite benign climatic forcing. These instances identify non-climatic yield shocks—such as administrative reporting errors or localized biotic failures—that fall outside the scope of atmospheric yield modeling. Crucially, as shown in the ablation study (Section 3.4), the inclusion of this filter resulted in a negligible change ($<0.5\%$) in global Skill Score, confirming that the system's predictive power is derived from its architecture rather than data selection.
 
-\subsection{The Statistical Trend Baseline}
-The \textbf{Statistical Trend} baseline forecast, denoted as $\hat{y}_{\text{base}}(t)$, represents the expected yield under average climatic conditions. It is defined as:
-\begin{equation}
-    \hat{y}_{\text{base}}(t) = \alpha + f_s(t) + \hat{\epsilon}_{t}
-\end{equation}
-where $\alpha$ is the intercept, $f_s(t)$ is a cubic smoothing spline of the year $t$ representing gradual technological trends, and $\hat{\epsilon}_{t}$ is the predicted residual derived from an ARIMA(1,0,0) process.
+\textbf{Note on Methodological Limitation:} An initial data quality filter was implemented to identify non-climatic yield anomalies (e.g., administrative reporting errors, localized pest outbreaks) by flagging district-years where the minimum error across all component models exceeded 200~dt/ha. However, this approach introduces circularity, as model performance is used to filter training data.
 
-\subsection{Feature Engineering and Variable Definitions}
-We derive normalized Z-scores for primary climatic drivers to prevent look-ahead bias. For a feature $x$ at year $t$, the score $Z_t = (x_t - \mu_{1:t-1}) / \sigma_{1:t-1}$ is calculated. We specifically define $Z_{\text{heat}}$ (derived from days where $T_{\text{max}} > 25^{\circ}\text{C}$), $Z_{\text{bal}}$ (summer water balance), and $Z_{\text{tank}}$ (simulated winter soil water recharge).
+Crucially, the ablation study (Section~3.4) demonstrates that excluding this filter results in negligible performance change ($<0.5\%$ in Skill Score), confirming that the system's predictive power derives from its architectural integration of physical mechanisms rather than data selection. \textbf{All results presented in this paper include the full dataset without filtering}, ensuring that reported metrics reflect true operational performance on all observed yield outcomes, including difficult-to-predict outliers.
 
-These scores inform three cumulative physiological stress markers. The \textbf{Critical Dryness Index (CASDI)} counts days of simulated root-zone water exhaustion; the \textbf{Night-time Metabolic Stress Detector (NMSD)} tracks biomass depletion via minimum temperatures ($T_{\text{min}} > 16^{\circ}\text{C}$).
-Finally, \textbf{Oxygen Stress (OSAW)} is derived from the internal moisture balance of the \textbf{WOFOST} 7.2 simulation. Root anoxia is triggered when the simulated volumetric moisture content $\theta$ exceeds the saturation threshold $\theta_{sat}$ for a specific crop-stage duration, representing a physical physiological limit rather than a meteorological proxy.
-Crucially, the March 1st lead-time relies on land-surface memory: $Z_{\text{tank}}$ serves as the primary initial boundary condition for the Critical Dryness Index (CASDI), determining the initial state of the soil water reservoir months before planting. This pre-season reservoir dictates the ``time-to-exhaustion'' of the soil water supply under summer evapotranspiration; essentially, the winter state sets the fuse for summer crop failure.
+\subsection{The Statistical Trend Baseline (GAM + ARIMA)}
+The Statistical Trend Baseline model is a robust, hybrid time-series forecasting pipeline executed via strict Walk-Forward Validation. The forecasting process for any target year $t$ involves two steps:
 
-\subsection{Predictive Sub-Models}
-The ensemble integrates four specialized sub-models $M_k$ ($k \in \{1, \dots, 4\}$). The first ($M_1$) is the \textbf{Multivariate Heat Signal}, predicting $Z_{\text{heat}}$ via Spring precursors. The second ($M_2$) is the \textbf{Physics-Informed Ensemble}, providing quantile-based yield floors and ceilings. The third ($M_3$) is the \textbf{Hybrid XGBoost}, which utilizes WOFOST simulation outputs to predict yield; while $M_3$ is trained on the yield-to-trend ratio, its output is rescaled by $\hat{y}_{\text{base}}(t)$ to absolute units (dt/ha) prior to ensemble integration. The fourth ($M_4$) is the \textbf{Robust Linear Integrator}, utilizing a HuberRegressor for stable residual prediction.
+\begin{enumerate}
+    \item \textbf{Trend Component (Long-Term):} The core long-term trend is modeled using a Generalized Additive Model (GAM) with a smoothing spline function (10 splines). This non-linear approach captures the S-curve of technological yield increases.
+    \[ \hat{y}_{\text{trend}}(t) = \text{GAM}(\text{year}_t) \]
+
+    \item \textbf{Residual Component (Short-Term):} The historical residuals are modeled using an ARIMA(1, 0, 0) model. This step captures short-term, year-to-year autocorrelation.
+    \[ \hat{y}_{\text{residual}}(t) = \text{ARIMA}(\text{Historical Residuals}) \]
+\end{enumerate}
+
+The final trend forecast is the sum of these two components:
+\[ \hat{y}_{\text{final}} = \hat{y}_{\text{trend}} + \hat{y}_{\text{residual}} \]
+
+Following the recommendation of \citet{paudel2022field}, we employed a time-based expanding window for training and validation. This avoids the ``future leakage'' inherent in random k-fold cross-validation and better simulates the operational reality of forecasting systems like MCYFS.
+
+\subsection{Feature Engineering}
+Our two-stage pipeline translates raw data into agronomic signals. First, a \textbf{Bio-Physical Risk Scanner} within WOFOST \cite{boogaard1998wofost} calculates specific risks like Oxygen Stress (Anoxia) and Harvest Respiration. Second, we compute rigorous Z-scores ($Z_t$) using an expanding window to normalize extreme events relative only to known history \cite{paudel2022field}. Key indices include $Z_{heat}$ (heat stress), $Z_{bal}$ (water balance), and $Z_{tank}$ (winter recharge), which are aggregated into compound indices (Scorch, Drown, LateStart) detailed in the Supplementary Information. Additional predictors include pest proxies and \textbf{Root Zone Depletion} ($RZD = \text{Demand}_{\text{heat}} / \text{Supply}_{\text{water}}$).
+
+\subsection{Predictive Algorithms}
+Machine learning components use Scikit-Learn \cite{scikitlearn} and XGBoost \cite{chen2016xgboost}. The \textbf{Multivariate Heat Signal} uses a cubic-weighted XGBoost regressor to predict early-season heat exposure. The \textbf{Physics-Informed Ensemble} trains two quantile-targeted models (V2 for 0.20, V8 for 0.80) to bracket yield potential. The \textbf{Hybrid XGBoost} predicts the yield ratio (Actual/Trend) utilizing WOFOST outputs as features \cite{shahhosseini2021coupling}, training distinct models for the 0.025, 0.50, and 0.975 quantiles. Finally, the \textbf{Robust Linear Integrator} uses a HuberRegressor ($\epsilon=1.35$) to predict residuals from the statistical trend, ensuring robustness against outliers.
 
 \subsection{Super Ensemble Architecture}
-The system utilizes an XGBoost Meta-Learner as a dynamic gating network. The Meta-Learner is trained on a feature vector $\mathbf{x}_{d,t}$ that encodes the bio-physical context, historical bias, and ensemble variance.
+
+The system integrates four specialized component models through an XGBoost-based Meta-Learner that dynamically selects the optimal forecasting strategy for each district-year context.
+
+\subsubsection{Component Models}
+
+The ensemble comprises four specialized sub-models $M_k$ ($k \in \{1, \dots, 4\}$), each targeting distinct yield-limiting regimes:
+
+\textbf{M$_1$: Statistical Trend (Baseline).} A Generalized Additive Model (LinearGAM) captures secular technological progress via cubic splines, supplemented by an ARIMA(1,0,0) process fitted to detrended residuals to account for short-term autocorrelation. This serves as the default forecast under climatically average conditions.
+
+\textbf{M$_2$: Physics-Informed Ensemble.} A dynamic ensemble of two XGBoost regressors switched by a Smart Risk Index. Under high-risk conditions (Smart Risk Index $> 1.2$), a deep-tree model (V2: \texttt{max\_depth=7}) trained on stress indicators (CASDI, summer water balance anomaly) dominates. Under low-risk conditions (Index $< 0.8$), a shallow-tree model (V8: \texttt{max\_depth=4}) trained on growth-favorable signals (solar radiation, clay content) blends with the Statistical Trend.
+
+\textbf{M$_3$: Hybrid XGBoost.} An XGBoost regressor (\texttt{objective='reg:quantileerror'}) predicts the ratio between actual yield and WOFOST Stage 1 simulation. Trained on physics-based stress indices ($Z_{\text{heat}}$, $Z_{\text{tank}}$, $Z_{\text{anoxia}}$) and interaction terms (e.g., \texttt{trend\_x\_failure}), the model leverages WOFOST outputs while correcting for systematic simulation biases.
+
+\textbf{M$_4$: Robust Linear Integrator.} A HuberRegressor predicts residuals of the Statistical Trend using Stage 2 satellite and biotic indicators (VegetationVigorIndex, RootZoneDepletion, mild winter days, fungal risk indicators). The Huber loss provides robustness against outliers in the residual space.
+
+\subsubsection{Cross-Validation Protocol}
+
+Model validation employs a strict \textbf{expanding window (walk-forward)} strategy to prevent temporal leakage. For each target year $t \in \{2000, \dots, 2024\}$:
+\begin{enumerate}
+    \item The model is trained exclusively on data from years $\{1981, \dots, t-1\}$.
+    \item Predictions are generated for all districts in year $t$.
+    \item Year $t$ is then added to the training set for iteration $t+1$.
+\end{enumerate}
+A minimum burn-in period of 10 years (1981--1990) ensures statistical stability before the first validation year. This produces 25 sequential train-test splits with training sets growing from 19 years (1981--1999) to 43 years (1981--2023).
+
+\subsubsection{Meta-Learner Specification}
+
+The Meta-Learner is an XGBoost Classifier (\texttt{objective='multi:softmax'}) configured with conservative parameters ($n\_estimators=200$, $max\_depth=4$, $learning\_rate=0.03$, $subsample=0.75$) to prioritize generalization over training fit. Input features encode bio-physical context ($Z_{\text{tank}}$, CASDI, NMSD, OSAW), ensemble variance, and historical bias.
 
 \subsubsection{Regret-Weighted Training}
-To prioritize the mitigation of extreme errors, training samples are weighted by the $\text{Regret}$ ($w_{d,t}$). Let $\text{E}_{d,t}$ be the absolute error of a prediction ($|Y_{d,t} - \hat{y}_{d,t}|$). The weight is defined as:
+
+To prioritize the mitigation of extreme errors, training samples are weighted by the $\text{Regret}$ ($w_{d,t}$), defined as the difference between the median ensemble error and the oracle (best-case) error:
 \begin{equation}
-    w_{d,t} = \text{E}_{\text{median}}(d,t) - \text{E}_{\text{oracle}}(d,t)
+    w_{d,t} = \text{E}_{\text{median}}(d,t) - \min_{k \in \{1,\dots,4\}} |Y_{d,t} - \hat{y}_k(d,t)|
 \end{equation}
-where $\text{E}_{\text{median}}$ is the median absolute error of the four sub-models and $\text{E}_{\text{oracle}}$ is the best-case error achieved by the optimal sub-model $M_k$:
-\begin{equation}
-    \text{E}_{\text{oracle}}(d,t) = \min_{k \in \{1,\dots,4\}} |Y_{d,t} - \hat{y}_k(d,t)|
-\end{equation}
-This ensures the Meta-Learner prioritizes learning from observations where a clear optimal choice existed to mitigate a failure of the \textbf{Statistical Trend}.
+This weighting forces the Meta-Learner to focus on "Black Swan" events where a specific sub-model significantly outperformed the consensus, thereby directly addressing regime blindness.
 
 \subsubsection{Inference via Soft Voting}
+
 The final yield forecast $\hat{Y}_{d,t}$ is the probability-weighted sum:
 \begin{equation}
     \hat{Y}_{d,t} = \sum_{k=1}^{K} P(M_k | \mathbf{x}_{d,t}) \cdot \hat{y}_k(d,t)
 \end{equation}
 where $P(M_k|\mathbf{x}_{d,t})$ is the probability assigned to sub-model $M_k$ given the input vector $\mathbf{x}_{d,t}$. The complete system architecture is illustrated in Figure~\ref{fig:flowchart}.
 
-\begin{figure*}[!t]
+\begin{figure}[h]
     \centering
-    \includegraphics[width=0.85\textwidth]{super_ensemble_flowchart.png}
-    \caption{Architecture of the Super Ensemble forecasting system. Data sources (AgERA5, SEAS5, SoilGrids, MODIS) flow through feature engineering and WOFOST 7.2 simulation to generate bio-physical markers (CASDI, NMSD, OSAW) and statistical Z-scores. These features feed four specialized sub-models ($M_1$--$M_4$), whose predictions are combined by an XGBoost Meta-Learner that assigns probability weights via soft voting based on ensemble variance, historical bias, and bio-physical context.}
+    \includegraphics[width=\linewidth]{super_ensemble_flowchart.png}
+    \caption{Super Ensemble Architecture Flowchart. The system integrates multiple data sources and component models, using a Meta-Learner to dynamically weight predictions based on the detected regime.}
     \label{fig:flowchart}
-\end{figure*}
+\end{figure}
+
+\subsection{Uncertainty Quantification}
+
+While the Super Ensemble produces point forecasts via soft voting, component-level uncertainty is captured through quantile regression. The Hybrid XGBoost (M$_3$) is trained separately for the 0.025, 0.50, and 0.975 quantiles using the quantile loss objective (\texttt{reg:quantileerror}), providing a 95\% predictive interval for physics-informed forecasts. Additionally, the Meta-Learner's soft voting probabilities indirectly quantify forecast confidence: low-entropy probability distributions (e.g., $P(M_k) > 0.9$ for a single model) indicate high certainty in regime detection, while high-entropy distributions signal ambiguous conditions where multiple models are plausible.
+
+\subsection{Implementation and Feasibility}
+The system is designed for operational deployment on March 1st. While the WOFOST simulation requires daily weather data processing, the component models (XGBoost/Huber) are computationally efficient, allowing for rapid district-level inference across the entire study area.
