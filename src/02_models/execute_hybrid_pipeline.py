@@ -11,14 +11,14 @@ from src.utils.pipeline_runner import run_pipeline
 # Define the pipeline sequence comment/uncomment to enable disable single steps
 SCRIPTS = [
     # --- 1. Simulation Prep & Execution (WOFOST) ---
-    "src/02_models/01_simulation/Wofost7.2/prepare_genetic_parameters.py",
-    "src/02_models/01_simulation/Wofost7.2/prepare_site_data.py",
-    "src/02_models/01_simulation/Wofost7.2/prepare_forecast_weather.py",
-    "src/02_models/01_simulation/Wofost7.2/prepare_initial_conditions.py",
-    "src/02_models/01_simulation/Wofost7.2/execute_wofost_simulation.py",
+    #"src/02_models/01_simulation/Wofost7.2/prepare_genetic_parameters.py",
+    #"src/02_models/01_simulation/Wofost7.2/prepare_site_data.py",
+    #"src/02_models/01_simulation/Wofost7.2/prepare_forecast_weather.py",
+    #"src/02_models/01_simulation/Wofost7.2/prepare_initial_conditions.py",
+    #"src/02_models/01_simulation/Wofost7.2/execute_wofost_simulation.py",
 
     # --- 1. Simulation Prep & Execution (Heat Signal) ---
-    "src/02_models/01_simulation/multivariate_heat_signal.py",
+    #"src/02_models/01_simulation/multivariate_heat_signal.py",
 
     # --- 2. Feature Engineering & Trend ---
     "src/02_models/03_components/statistical/estimate_yield_trend.py",

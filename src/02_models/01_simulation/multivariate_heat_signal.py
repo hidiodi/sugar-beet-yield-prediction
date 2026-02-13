@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import logging
+import matplotlib.pyplot as plt
 from pathlib import Path
 import sys
 import xgboost as xgb
@@ -10,8 +11,8 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 project_root = Path(__file__).resolve().parents[3]
 sys.path.append(str(project_root))
 import importlib
-models_config = importlib.import_module("src.02_models.config")
 
+models_config = importlib.import_module("src.02_models.config")
 
 # --- CONFIGURATION ---
 MAX_DAYS_CAP = 92.0
@@ -25,9 +26,6 @@ def load_data():
     logging.info("LOADING DATA (Target: Days > 25°C)...")
     paths = models_config.FEATURE_ENGINEERING_CONFIG['FILE_PATHS']
 
-    # -------------------------------------------------------
-    # A. Ground Truth
-    # -------------------------------------------------------
     obs_list = []
     weather_dir = paths['DAILY_WEATHER_DIR']
 
@@ -51,9 +49,6 @@ def load_data():
         logging.error("No ground truth found.")
         return pd.DataFrame()
 
-    # -------------------------------------------------------
-    # B. Forecast & Static Features
-    # -------------------------------------------------------
     df_fcst = pd.read_csv(paths['ECMWF_FORECAST_FEATURES_CSV'])
     df_fcst['district_no'] = df_fcst['district_no'].astype(str).str.zfill(5)
 
@@ -76,216 +71,158 @@ def load_data():
             df_grouped = pd.merge(df_grouped, df_master[static_cols + ['year']], on=['district_no', 'year'], how='left')
         else:
             df_grouped = pd.merge(df_grouped, df_master[static_cols], on='district_no', how='left')
-
     except Exception as e:
         logging.warning(f"Static features missing: {e}")
 
     df_final = pd.merge(df_grouped, df_obs, on=['district_no', 'year'], how='inner')
     df_final = df_final.fillna(0)
-
     return df_final
 
 
 # --- 2. DYNAMIC FEATURE ENGINEERING ---
 def create_interaction_features(df):
-    """
-    Creates interactions to amplify signal for extreme years.
-    """
     df = df.copy()
-
-    # 1. Physics: Heat hits sandy soil harder
     if 'summer_temp_anomaly_forecast' in df.columns and 'avg_sand_0_30cm' in df.columns:
         sand_proxy = df['avg_sand_0_30cm'] / (df['avg_sand_0_30cm'].max() + 1.0)
         df['heat_sand_interaction'] = df['summer_temp_anomaly_forecast'] * sand_proxy
 
-    # 2. Physics: Heat Accumulation (Non-linear)
     if 'summer_temp_anomaly_forecast' in df.columns:
         t = df['summer_temp_anomaly_forecast']
-        # Quadratic
         df['summer_temp_sq'] = np.sign(t) * (t ** 2)
-        # Cubic (New): Extreme sensitivity for extreme anomalies
         df['summer_temp_cube'] = t ** 3
 
-    # 3. Physics: Spring Drying Pressure (The 2003/2018 Signal)
     if 'spring_solar_rad_anomaly_forecast' in df.columns and 'spring_soil_temp_l1_anomaly_forecast' in df.columns:
         df['spring_drying_pressure'] = (
                 df['spring_solar_rad_anomaly_forecast'] * df['spring_soil_temp_l1_anomaly_forecast']
         )
 
-    # 4. Physics: Compound Mega-Drought Risk (New)
-    # Combines Summer Heat (Squared) with Spring Runoff Deficit
     if 'summer_temp_sq' in df.columns and 'spring_runoff_anomaly_forecast' in df.columns:
-        # Runoff is negative in drought. Multiply by -1.
-        # Temp Squared * Drought Intensity
         df['compound_drought_risk'] = df['summer_temp_sq'] * (-1 * df['spring_runoff_anomaly_forecast'])
-
     return df
 
 
-# --- 3. WALK-FORWARD MODELING ---
+# --- 3. WALK-FORWARD MODELING (NO LEAK) ---
 def train_and_predict(df_train, df_test):
-    # 1. Calculate Historical Baseline (FIXED CLIMATOLOGY)
-    # CHANGE: Instead of a rolling window (which biases against early years like 2003),
-    # we use the first 10 years of the training data as a fixed reference.
-    # This provides a "spatial risk map" without temporal trend bias.
-
-    # Identify the start year of the dataset
     min_year = df_train['year'].min()
-    # Use first 10 years for climatology
     climatology_df = df_train[df_train['year'] <= (min_year + 10)]
-
-    if climatology_df.empty:
-        climatology_df = df_train
+    if climatology_df.empty: climatology_df = df_train
 
     district_means = climatology_df.groupby('district_no')['heat_days_obs'].mean()
     global_mean = climatology_df['heat_days_obs'].mean()
 
-    # Map to Train and Test
     df_train = df_train.copy()
     df_test = df_test.copy()
-
     df_train['hist_avg_heat'] = df_train['district_no'].map(district_means).fillna(global_mean)
     df_test['hist_avg_heat'] = df_test['district_no'].map(district_means).fillna(global_mean)
 
-    # Define Features
     exclude = ['district_no', 'year', 'heat_days_obs', 'pred_raw', 'pred_days', 'seas5_member']
     features = [c for c in df_train.columns if c not in exclude]
 
-    X_train = df_train[features]
-    y_train = df_train['heat_days_obs']
+    X_train, y_train = df_train[features], df_train['heat_days_obs']
     X_test = df_test[features]
 
-    # WEIGHTING:
-    # Use Cubic Weighting for the tail to force the model to reach 40+
     weights = (y_train / (y_train.mean() + 1e-5)) ** 3
-    weights = np.clip(weights, 1.0, 50.0)  # Allow very high weights for extreme events
+    weights = np.clip(weights, 1.0, 50.0)
 
-    # MODEL: XGBRegressor
     model = xgb.XGBRegressor(
-        objective='reg:squarederror',
-        n_estimators=800,
-        learning_rate=0.015,  # Slow down learning for stability
-        max_depth=8,  # Deep trees to capture the "Compound Drought" interactions
-        min_child_weight=5,
-        colsample_bytree=0.8,
-        subsample=0.8,
-        n_jobs=-1,
-        random_state=42
+        objective='reg:squarederror', n_estimators=800, learning_rate=0.015,
+        max_depth=8, min_child_weight=5, colsample_bytree=0.8, subsample=0.8,
+        n_jobs=-1, random_state=42
     )
 
     model.fit(X_train, y_train, sample_weight=weights)
-
-    preds = model.predict(X_test)
-
-    return preds, model.feature_importances_, features
+    return model.predict(X_test), model.predict(X_train), model.feature_importances_, features
 
 
 def run_walk_forward(df):
     df = create_interaction_features(df)
-
     years = sorted(df['year'].unique())
-    start_idx = max(5, int(len(years) * 0.2))
-    start_year = years[start_idx]
+    start_year = years[max(5, int(len(years) * 0.2))]
 
     logging.info(f"Walk-forward start year: {start_year}")
-
-    results = []
-    importances = []
+    results, importances = [], []
 
     for yr in years:
         if yr < start_year: continue
-
-        train = df[df['year'] < yr]
-        test = df[df['year'] == yr]
-
+        train, test = df[df['year'] < yr], df[df['year'] == yr]
         if test.empty: continue
 
-        preds, feat_imp, feat_names = train_and_predict(train, test)
+        test_raw, train_raw, feat_imp, feat_names = train_and_predict(train, test)
+
+        # Correcting Volatility based ONLY on Train stats
+        obs_std_train, pred_std_train = train['heat_days_obs'].std(), train_raw.std()
+        mu_pred_train = train_raw.mean()
+
+        scale_factor = np.clip((obs_std_train / (pred_std_train + 0.01)) * 1.35, 1.0, 4.0)
+        test_final = np.clip(mu_pred_train + (test_raw - mu_pred_train) * scale_factor, 0, MAX_DAYS_CAP)
 
         res = test[['district_no', 'year', 'heat_days_obs']].copy()
-        res['pred_raw'] = preds
-        results.append(res)
+        res['pred_raw'], res['pred_days'] = test_raw, test_final
+        results.append(res);
         importances.append(feat_imp)
 
     full_res = pd.concat(results)
-
-    # Average Feature Importance
     avg_imp = np.mean(importances, axis=0)
     imp_df = pd.DataFrame({'Feature': feat_names, 'Importance': avg_imp}).sort_values('Importance', ascending=False)
     logging.info("\nTOP PREDICTORS:\n" + imp_df.head(10).to_string())
-
     return full_res
 
 
-# --- 4. POST-PROCESSING (VOLATILITY SCALING) ---
-def apply_volatility_correction(df):
-    """
-    Forces the prediction distribution to match the historical observation distribution.
-    """
-    obs_std = df['heat_days_obs'].std()
-    pred_std = df['pred_raw'].std()
+# --- 4. VISUALIZATION ---
+def generate_calibration_plot(df, output_path):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.figure(figsize=(10, 6))
 
-    # Expansion Factor with Tail Boost
-    # Since we removed the "trend bias", raw predictions might be lower on average.
-    # We need to stretch the variance significantly to recover the extremes.
-    ratio = (obs_std / (pred_std + 0.01)) * 1.35
-    scale_factor = np.clip(ratio, 1.0, 4.0)
+    plt.scatter(df['heat_days_obs'], df['pred_days'], alpha=0.15, color='gray', s=10, label='All Districts')
 
-    logging.info(
-        f"Volatility Expansion Factor: {scale_factor:.2f} (Model Std: {pred_std:.1f} vs Obs Std: {obs_std:.1f})")
+    highlights = {2003: 'red', 2014: 'blue', 2018: 'orange', 2022: 'purple'}
+    for yr, color in highlights.items():
+        sub = df[df['year'] == yr]
+        if not sub.empty:
+            obs_m, pred_m = sub['heat_days_obs'].mean(), sub['pred_days'].mean()
+            plt.scatter(sub['heat_days_obs'], sub['pred_days'], color=color, s=25,
+                        label=f"{yr} (Obs:{obs_m:.1f} vs Pred:{pred_m:.1f})")
 
-    mu_pred = df['pred_raw'].mean()
+    lims = [0, MAX_DAYS_CAP]
+    plt.plot(lims, lims, 'k--', alpha=0.75, zorder=0, label='Perfect Fit')
 
-    # Linear scaling around the mean
-    df['pred_days'] = mu_pred + (df['pred_raw'] - mu_pred) * scale_factor
+    corr = df['heat_days_obs'].corr(df['pred_days'])
+    plt.title(f"Forecast Calibration Check (Correlation: {corr:.2f})")
+    plt.xlabel("Observed Heat Days (Reality)")
+    plt.ylabel("Forecasted Heat Days (Model)")
+    plt.legend(loc='upper left', fontsize='small')
+    plt.grid(alpha=0.3)
 
-    # Final Clip
-    df['pred_days'] = np.clip(df['pred_days'], 0, MAX_DAYS_CAP)
-
-    return df
+    plt.tight_layout()
+    plt.savefig(output_path)
+    logging.info(f"Calibration plot saved to: {output_path}")
 
 
 def audit_results(df):
-    obs = df['heat_days_obs']
-    pred = df['pred_days']
-
-    corr = obs.corr(pred)
-    mae = mean_absolute_error(obs, pred)
+    obs, pred = df['heat_days_obs'], df['pred_days']
+    corr, mae = obs.corr(pred), mean_absolute_error(obs, pred)
     rmse = np.sqrt(mean_squared_error(obs, pred))
 
-    thresh = obs.quantile(0.90)
-    extremes = df[obs > thresh]
-    ext_mae = mean_absolute_error(extremes['heat_days_obs'], extremes['pred_days'])
+    ext_mae = mean_absolute_error(df[obs > obs.quantile(0.90)]['heat_days_obs'],
+                                  df[obs > obs.quantile(0.90)]['pred_days'])
 
-    logging.info("=" * 60)
-    logging.info(" FINAL HEAT SIGNAL MODEL RESULTS (> 25°C)")
-    logging.info("=" * 60)
-    logging.info(f"Samples: {len(df)}")
-    logging.info(f"{'Metric':<20} | {'Value':<10} | {'Goal'}")
-    logging.info("-" * 60)
-    logging.info(f"{'Correlation':<20} | {corr:<10.3f} | {'> 0.70'}")
-    logging.info(f"{'MAE (Overall)':<20} | {mae:<10.1f} | {'Low'}")
-    logging.info(f"{'MAE (Extremes)':<20} | {ext_mae:<10.1f} | {'< 15'}")
-    logging.info(f"{'RMSE':<20} | {rmse:<10.1f} | {'Low'}")
-    logging.info("-" * 60)
-
-    logging.info(">>> CRITICAL YEARS CHECK")
-    for y in [2003,2014, 2018, 2022]:
-        sub = df[df['year'] == y]
-        if not sub.empty:
-            logging.info(f"Year {y}: Obs {sub['heat_days_obs'].mean():.1f} vs Pred {sub['pred_days'].mean():.1f}")
-
+    logging.info("=" * 60 + "\n FINAL HEAT SIGNAL MODEL RESULTS\n" + "=" * 60)
+    logging.info(f"Correlation: {corr:.3f} | MAE: {mae:.1f} | Ext_MAE: {ext_mae:.1f} | RMSE: {rmse:.1f}")
     return df
 
 
 if __name__ == "__main__":
     df_raw = load_data()
     if not df_raw.empty:
-        df_res = run_walk_forward(df_raw)
-        df_final = apply_volatility_correction(df_res)
+        df_final = run_walk_forward(df_raw)
         audit_results(df_final)
 
-        out = models_config.BASE_DIR / 'data/processed/heat_signal_multivariate_moderate.csv'
-        out.parent.mkdir(parents=True, exist_ok=True)
-        df_final.to_csv(out, index=False)
-        logging.info(f"Saved: {out}")
+        # Original output folder for CSV to maintain pipeline
+        csv_out = models_config.BASE_DIR / 'data/processed/heat_signal_multivariate_moderate.csv'
+        csv_out.parent.mkdir(parents=True, exist_ok=True)
+        df_final.to_csv(csv_out, index=False)
+        logging.info(f"Saved CSV: {csv_out}")
+
+        # New plot in reports/analysis
+        plot_out = models_config.BASE_DIR / 'reports/analysis/heat_forecast_calibration.png'
+        generate_calibration_plot(df_final, plot_out)
