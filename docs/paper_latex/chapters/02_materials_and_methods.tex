@@ -15,7 +15,7 @@ The study covers sugarbeet cultivation districts in Germany, utilizing a multi-s
 
 \textbf{Note on Methodological Limitation:} An initial data quality filter was implemented to identify non-climatic yield anomalies (e.g., administrative reporting errors, localized pest outbreaks) by flagging district-years where the minimum error across all component models exceeded 200~dt/ha. However, this approach introduces circularity, as model performance is used to filter training data.
 
-Crucially, the ablation study (Section~3.4) demonstrates that excluding this filter results in negligible performance change ($<0.5\%$ in Skill Score), confirming that the system's predictive power derives from its architectural integration of physical mechanisms rather than data selection. \textbf{All results presented in this paper include the full dataset without filtering}, ensuring that reported metrics reflect true operational performance on all observed yield outcomes, including difficult-to-predict outliers.
+Crucially, the ablation study (Section~3.4) demonstrates that excluding this filter results in negligible performance change ($<0.5\%$ in Skill Score), confirming that the system's predictive power derives from its architectural integration of physical mechanisms rather than data selection. \textbf{Outliers (Oracle Error $>$ 200~dt/ha) were excluded from the Meta-Learner training set to improve stability, though they are retained in the evaluation set to ensure that reported metrics reflect true operational performance.}
 
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
 The Statistical Trend Baseline model is a robust, hybrid time-series forecasting pipeline executed via strict Walk-Forward Validation. The forecasting process for any target year $t$ involves two steps:
@@ -73,7 +73,7 @@ The ensemble comprises four specialized sub-models $M_k$ ($k \in \{1, \dots, 4\}
 
 \textbf{M$_1$: Statistical Trend (Baseline).} A Generalized Additive Model (LinearGAM) captures secular technological progress via cubic splines, supplemented by an ARIMA(1,0,0) process fitted to detrended residuals to account for short-term autocorrelation. This serves as the default forecast under climatically average conditions.
 
-\textbf{M$_2$: Physics-Informed Ensemble.} A dynamic ensemble of two XGBoost regressors switched by a Smart Risk Index. Under high-risk conditions (Smart Risk Index $> 1.2$), a deep-tree model (V2: \texttt{max\_depth=7}) trained on stress indicators (CASDI, summer water balance anomaly) dominates. Under low-risk conditions (Index $< 0.8$), a shallow-tree model (V8: \texttt{max\_depth=4}) trained on growth-favorable signals (solar radiation, clay content) blends with the Statistical Trend.
+\textbf{M$_2$: Physics-Informed Ensemble.} A dynamic ensemble of two XGBoost regressors switched by a Smart Risk Index. Under high-risk conditions (Smart Risk Index $> 1.2$), a deep-tree model (V2: \texttt{max\_depth=7}) trained on stress indicators (Anoxia Events, summer water balance anomaly) dominates. Under low-risk conditions (Index $< 0.8$), a shallow-tree model (V8: \texttt{max\_depth=4}) trained on growth-favorable signals (solar radiation, clay content) blends with the Statistical Trend.
 
 \textbf{M$_3$: Hybrid XGBoost.} An XGBoost regressor (\texttt{objective='reg:quantileerror'}) predicts the ratio between actual yield and WOFOST Stage 1 simulation. Trained on physics-based stress indices ($Z_{\text{heat}}$, $Z_{\text{tank}}$, $Z_{\text{anoxia}}$) and interaction terms (e.g., \texttt{trend\_x\_failure}), the model leverages WOFOST outputs while correcting for systematic simulation biases.
 
@@ -91,7 +91,7 @@ A minimum burn-in period of 10 years (1981--1990) ensures statistical stability 
 
 \subsubsection{Meta-Learner Specification}
 
-The Meta-Learner is an XGBoost Classifier (\texttt{objective='multi:softmax'}) configured with conservative parameters ($n\_estimators=200$, $max\_depth=4$, $learning\_rate=0.03$, $subsample=0.75$) to prioritize generalization over training fit. Input features encode bio-physical context ($Z_{\text{tank}}$, CASDI, NMSD, OSAW), ensemble variance, and historical bias.
+The Meta-Learner is an XGBoost Classifier (\texttt{objective='multi:softmax'}) configured with conservative parameters ($n\_estimators=200$, $max\_depth=4$, $learning\_rate=0.03$, $subsample=0.75$) to prioritize generalization over training fit. Input features encode bio-physical context ($Z_{\text{tank}}$, Summer Water Balance, Heat Days, Anoxia Events, Sowing Anomalies), ensemble variance, and historical bias.
 
 \subsubsection{Regret-Weighted Training}
 
@@ -101,11 +101,11 @@ To prioritize the mitigation of extreme errors, training samples are weighted by
 \end{equation}
 This weighting forces the Meta-Learner to focus on "Black Swan" events where a specific sub-model significantly outperformed the consensus, thereby directly addressing regime blindness.
 
-\subsubsection{Inference via Hard Switch}
+\subsubsection{Inference via Soft Voting}
 
-The final yield forecast $\hat{Y}_{d,t}$ is a discrete selection (Hard Switch) where the Meta-Learner selects the single most appropriate sub-model $M_{k^*}$ for each district-year context based on the highest predicted probability:
+The final yield forecast $\hat{Y}_{d,t}$ is a weighted average (Soft Voting) where the Meta-Learner assigns probability-based weights to each sub-model:
 \begin{equation}
-    \hat{Y}_{d,t} = \hat{y}_{k^*}(d,t) \quad \text{where} \quad k^* = \operatorname{argmax}_k P(M_k | \mathbf{x}_{d,t})
+    \hat{Y}_{d,t} = \sum_{k=1}^4 P(M_k | \mathbf{x}_{d,t}) \cdot \hat{y}_k(d,t)
 \end{equation}
 where $P(M_k|\mathbf{x}_{d,t})$ is the probability assigned to sub-model $M_k$ given the input vector $\mathbf{x}_{d,t}$. The complete system architecture is illustrated in Figure~\ref{fig:flowchart}.
 
@@ -118,7 +118,7 @@ where $P(M_k|\mathbf{x}_{d,t})$ is the probability assigned to sub-model $M_k$ g
 
 \subsection{Uncertainty Quantification}
 
-While the Super Ensemble produces point forecasts via hard switching, component-level uncertainty is captured through quantile regression. The Hybrid XGBoost (M$_3$) is trained separately for the 0.025, 0.50, and 0.975 quantiles using the quantile loss objective (\texttt{reg:quantileerror}), providing a 95\% predictive interval for physics-informed forecasts. Additionally, the Meta-Learner's predicted probabilities indirectly quantify forecast confidence: low-entropy probability distributions (e.g., $P(M_k) > 0.9$ for a single model) indicate high certainty in regime detection, while high-entropy distributions signal ambiguous conditions where multiple models are plausible.
+While the Super Ensemble produces point forecasts via soft voting, component-level uncertainty is captured through quantile regression. The Hybrid XGBoost (M$_3$) is trained separately for the 0.025, 0.50, and 0.975 quantiles using the quantile loss objective (\texttt{reg:quantileerror}), providing a 95\% predictive interval for physics-informed forecasts. Additionally, the Meta-Learner's predicted probabilities indirectly quantify forecast confidence: low-entropy probability distributions (e.g., $P(M_k) > 0.9$ for a single model) indicate high certainty in regime detection, while high-entropy distributions signal ambiguous conditions where multiple models are plausible.
 
 \subsection{Implementation and Feasibility}
 The system is designed for operational deployment on March 1st. While the WOFOST simulation requires daily weather data processing, the component models (XGBoost/Huber) are computationally efficient, allowing for rapid district-level inference across the entire study area.

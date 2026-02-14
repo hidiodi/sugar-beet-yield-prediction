@@ -1,12 +1,12 @@
 \section{Discussion}
 
 \subsection{Regime Selection Efficiency}
-The Super Ensemble achieves a 16.24\% skill gain by employing a discrete Hard Switch strategy. Analysis reveals that the Hard Switch minimizes selection error, which now accounts for only 28.4\% of the total residual error, while 71.6\% remains systemic (Component Gap) (Fig.~\ref{fig:switching}). This confirms that the Meta-Learner effectively maps specific bio-physical precursors to specialized model regimes, leaving the majority of remaining error to the limitations of the sub-models themselves.
+The Super Ensemble achieves a 16.24\% skill gain by employing a Soft Voting strategy. Analysis reveals that the Soft Voting minimizes selection error, which now accounts for only 28.4\% of the total residual error, while 71.6\% remains systemic (Component Gap) (Fig.~\ref{fig:switching}). This confirms that the Meta-Learner effectively maps specific bio-physical precursors to specialized model regimes, leaving the majority of remaining error to the limitations of the sub-models themselves.
 
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{super_ensemble_switching_efficiency.png}
-    \caption{Meta-Learner Switching Efficiency. The boxplot compares the MAE distribution of the Selected Model vs. the Theoretical Oracle. The narrow gap confirms that the selector is nearly optimized.}
+    \caption{Meta-Learner Efficiency. The boxplot compares the MAE distribution of the Selected Model vs. the Theoretical Oracle. The narrow gap confirms that the weighting is nearly optimized.}
     \label{fig:switching}
 \end{figure}
 
