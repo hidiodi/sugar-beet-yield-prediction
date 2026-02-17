@@ -75,14 +75,28 @@ def generate_forecast():
         if 'Oracle_Error' not in df_test.columns: pass
 
         mae_trend = mean_absolute_error(df_test['kreisYield'], df_test['Statistical_Trend_pred'])
-        mae_ens = mean_absolute_error(df_test['kreisYield'], df_test['Super_Ensemble_pred'])
+        mae_ens_insample = mean_absolute_error(df_test['kreisYield'], df_test['Super_Ensemble_pred'])
 
         logging.info("\n" + "=" * 80)
         logging.info(f"TEST PERIOD ({TEST_YEAR_START}-2024)")
         logging.info("=" * 80)
-        logging.info(f"Trend MAE:          {mae_trend:.4f}")
-        logging.info(f"Super Ensemble MAE: {mae_ens:.4f} (Consensus-Aware)")
-        logging.info(f"Gain vs Trend:      {mae_trend - mae_ens:+.4f}")
+        logging.info(f"Trend MAE:                     {mae_trend:.4f}")
+        logging.info(f"Super Ensemble (In-Sample):    {mae_ens_insample:.4f} (Fit to History - LEAKED)")
+
+        # Check for Honest Walk-Forward Predictions
+        honest_path = OUTPUT_DIR / 'super_ensemble_walkforward_predictions.csv'
+        if honest_path.exists():
+            df_honest = pd.read_csv(honest_path)
+            # Filter for the test period
+            df_honest_test = df_honest[df_honest['year'] >= TEST_YEAR_START]
+            if not df_honest_test.empty:
+                mae_honest = mean_absolute_error(df_honest_test['kreisYield'], df_honest_test['Super_Ensemble_pred'])
+                logging.info(f"Super Ensemble (Honest):       {mae_honest:.4f} (Real Performance)")
+                logging.info(f"Gain vs Trend (Honest):        {mae_trend - mae_honest:+.4f}")
+            else:
+                logging.warning("Honest predictions file exists but has no data for test period.")
+        else:
+            logging.warning("Honest predictions file not found. Run train_meta_regressor.py to generate it.")
 
     df[['year', 'district_no', 'kreisYield', 'Super_Ensemble_pred', 'Predicted_Best_Model'] + [c for c in df.columns if
                                                                                                c.startswith(

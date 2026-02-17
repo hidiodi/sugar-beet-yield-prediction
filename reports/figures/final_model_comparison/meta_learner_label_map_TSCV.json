@@ -1,0 +1,7 @@
+{
+    "Hybrid_XGB": 0,
+    "Native_Ensemble": 1,
+    "Robust_Linear": 2,
+    "Statistical_Trend": 3,
+    "V31_Solar_Gated": 4
+}

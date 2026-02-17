@@ -88,7 +88,7 @@ def run_forensic_audit():
     # --- FIX END ---
 
     exclude_cols = ['year', 'district_no', 'kreisYield', 'Best_Model', 'Oracle_Error', 'Predicted_Model',
-                    'Switch_Prediction', 'Target_Encoded', 'Block', 'District_Name'] + components
+                    'Switch_Prediction', 'Target_Encoded', 'Block', 'District_Name', 'Regret_Weight', 'Median_Error'] + components
     features = [c for c in df_clean.columns if c not in exclude_cols]
 
     # Train/Test split
