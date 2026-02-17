@@ -18,7 +18,7 @@ The Super Ensemble achieves a 16.24\% skill gain by employing a Soft Voting stra
     \label{fig:importance}
 \end{figure}
 
-The system's diagnostic capability is driven by mechanism-informed features (Fig.~\ref{fig:importance}). It is crucial to clarify that the \textbf{Regret\_Weight} is utilized strictly as a \textbf{training-time sample importance weight} to address regime blindness, forcing the model to prioritize rare events. The actual inference-time drivers are the mechanism-informed signals, specifically the V31 Solar Signal, Hybrid XGB Signal, and Water Balance anomalies. These compound indices dominate the hierarchy, confirming that switching is physically grounded rather than statistical noise.
+The system's diagnostic capability is driven by mechanism-informed features (Fig.~\ref{fig:importance}). It is crucial to clarify that the \textbf{Regret\_Weight} is utilized strictly as a training-time sample importance weight to address regime blindness, forcing the model to prioritize rare events. The actual inference-time drivers are the mechanism-informed signals, specifically the V31 Solar Signal, Hybrid XGB Signal, and Water Balance anomalies. These compound indices dominate the hierarchy, confirming that switching is physically grounded rather than statistical noise.
 
 Unlike monitoring-based systems like MCYFS that rely on in-season data \citep{vandervelde2019mars}, our use of SEAS5 on March 1st provides a critical 90-day window for economic hedging. While quantile predictions ($M_2$) offer a probabilistic envelope, the primary value lies in the early detection of yield crashes.
 
