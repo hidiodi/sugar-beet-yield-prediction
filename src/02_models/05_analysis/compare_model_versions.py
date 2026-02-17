@@ -168,6 +168,28 @@ def print_anomaly_forensics(df):
         logging.info("-" * 40)
 
 
+def plot_time_series(df):
+    import matplotlib.pyplot as plt
+    # Path to save
+    output_path = project_root / 'docs/paper_latex/figures/fig2_time_series.png'
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Aggregate to National Level
+    national = df.groupby('year')[['kreisYield', 'Statistical Trend_pred', 'Super Ensemble_pred']].mean().reset_index()
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(national['year'], national['kreisYield'], 'k-o', label='Actual', linewidth=2)
+    plt.plot(national['year'], national['Statistical Trend_pred'], 'b--', label='Statistical Trend')
+    plt.plot(national['year'], national['Super Ensemble_pred'], 'r-^', label='Super Ensemble', alpha=0.8)
+
+    plt.title('National Sugarbeet Yield Performance (Germany)', fontsize=14)
+    plt.ylabel('Yield (dt/ha)')
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    print(f"✅ Figure saved to: {output_path}")
+
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     df = load_and_merge_models()
@@ -184,6 +206,8 @@ def main():
     # 3. Anomaly Check
     print_anomaly_forensics(df)
 
+    # 4. plot Time Series
+    plot_time_series(df)
 
 if __name__ == '__main__':
     main()
