@@ -103,6 +103,20 @@ def train_classifier():
             return row.get(f"{row['Predicted_Model']}_pred", np.nan)
 
         test['Switch_Prediction'] = test.apply(get_pred_value, axis=1)
+
+        # --- FIX: Honest Soft Voting (Super Ensemble) ---
+        probas = clf.predict_proba(X_test)
+        weighted_preds = np.zeros(len(test))
+
+        # probas columns correspond to classes 0, 1, ..., num_classes_now-1
+        # which map to le.classes_
+        for idx in range(num_classes_now):
+            model_name = le.classes_[idx]
+            pred_col = f"{model_name}_pred"
+            if pred_col in test.columns:
+                weighted_preds += (test[pred_col].values * probas[:, idx])
+
+        test['Super_Ensemble_pred'] = weighted_preds
         results.append(test)
 
         # Save the model and map from the FINAL iteration (which has the most complete history)
@@ -115,12 +129,19 @@ def train_classifier():
     df_res = pd.concat(results)
     mae_switch = mean_absolute_error(df_res['kreisYield'], df_res['Switch_Prediction'])
     mae_trend = mean_absolute_error(df_res['kreisYield'], df_res['Statistical_Trend_pred'])
+    mae_ens = mean_absolute_error(df_res['kreisYield'], df_res['Super_Ensemble_pred'])
 
     logging.info("\n" + "=" * 60)
     logging.info(f"META-LEARNER v4 RESULTS ({WALK_FORWARD_START_YEAR}-{LAST_HISTORICAL_YEAR})")
     logging.info("=" * 60)
     logging.info(f"Trend MAE:        {mae_trend:.4f}")
     logging.info(f"Hard Switch MAE:  {mae_switch:.4f}")
+    logging.info(f"Super Ensemble MAE: {mae_ens:.4f} (Honest Walk-Forward)")
+
+    # Save honest predictions
+    honesty_path = OUTPUT_DIR / 'super_ensemble_walkforward_predictions.csv'
+    df_res.to_csv(honesty_path, index=False)
+    logging.info(f"✓ Honest predictions saved to {honesty_path}")
 
     if final_model:
         final_model.save_model(OUTPUT_DIR / MODEL_FILENAME)
