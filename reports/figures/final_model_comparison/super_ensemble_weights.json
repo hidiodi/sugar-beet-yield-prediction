@@ -1,6 +1,0 @@
-{
-    "strategy": "Static Blend",
-    "formula": "0.6 * Robust_Linear + 0.4 * V31_Solar_Gated",
-    "skill_overall": 6.944954167244733,
-    "skill_recent": 10.267349259809155
-}
