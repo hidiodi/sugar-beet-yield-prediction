@@ -33,7 +33,7 @@ ANCHOR_MODEL = 'Statistical Trend'
 COMPONENT_MODELS = {
     'Statistical Trend': STATISTICAL_TREND_PATH,
     'V31 Solar Gated': V31_SOLAR_PATH,
-    'Native Ensemble': NATIVE_ENSEMBLE_PATH,
+    #'Native Ensemble': NATIVE_ENSEMBLE_PATH,  # Removing due to poor performance (-4.5% Skill)
     'Hybrid XGB': HYBRID_XGB_PATH,
     'Robust Linear': ROBUST_LINEAR_PATH
 }
