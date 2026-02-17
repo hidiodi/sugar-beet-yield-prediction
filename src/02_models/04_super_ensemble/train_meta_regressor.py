@@ -33,12 +33,14 @@ def train_classifier():
     logging.info("--- Training Meta-Learner (v4: History-Aware + Cleaned) ---")
     df = pd.read_csv(input_path)
 
-    # --- CLEANING STEP ---
-    if 'Is_Garbage_Data' in df.columns:
-        n_garbage = df['Is_Garbage_Data'].sum()
-        if n_garbage > 0:
-            logging.info(f"🧹 Removing {n_garbage} 'Garbage' rows (Oracle Error > 200) from Training...")
-            df = df[df['Is_Garbage_Data'] == 0].copy()
+    # --- CLEANING STEP (DISABLED) ---
+    # Per user request (and paper description), we now INCLUDE all data,
+    # even if component models have large errors.
+    # if 'Is_Garbage_Data' in df.columns:
+    #     n_garbage = df['Is_Garbage_Data'].sum()
+    #     if n_garbage > 0:
+    #         logging.info(f"🧹 Removing {n_garbage} 'Garbage' rows (Oracle Error > 200) from Training...")
+    #         df = df[df['Is_Garbage_Data'] == 0].copy()
 
     # Feature Selection
     exclude_cols = [

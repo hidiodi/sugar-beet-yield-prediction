@@ -88,7 +88,7 @@ def train_and_evaluate(df_train, df_test, feature_cols, experiment_name):
 
     return df_test_res
 
-def run_experiment(experiment_name, df, feature_mask=None, filter_garbage=True, model_type="XGBoost"):
+def run_experiment(experiment_name, df, feature_mask=None, filter_garbage=False, model_type="XGBoost"):
     logging.info(f"\n--- Running Experiment: {experiment_name} ---")
 
     # 1. Filter Garbage
@@ -175,6 +175,7 @@ def main():
     experiments = []
 
     # 1. Baseline
+    # The default behavior is now to INCLUDE all data (filter_garbage=False).
     experiments.append(run_experiment("Baseline", df))
 
     # 2. Feature Ablation (No Scorch/Anoxia)
@@ -197,11 +198,12 @@ def main():
         model_type="Equal_Weight"
     ))
 
-    # 4. Data Quality (No Garbage Filter)
+    # 4. Data Quality (With Garbage Filter)
+    # This checks if the filter would have helped.
     experiments.append(run_experiment(
-        "Data Quality (No Filter)",
+        "Data Quality (With Filter)",
         df,
-        filter_garbage=False
+        filter_garbage=True
     ))
 
     # Save Results

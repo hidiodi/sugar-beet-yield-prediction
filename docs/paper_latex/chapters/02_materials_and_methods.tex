@@ -11,12 +11,6 @@ The study covers sugarbeet cultivation districts in Germany, utilizing a multi-s
     \label{fig:geospatial_features}
 \end{figure}
 
-\subsection{Non-Climatic Outlier Detection}
-
-\textbf{Note on Methodological Limitation:} An initial data quality filter was implemented to identify non-climatic yield anomalies (e.g., administrative reporting errors, localized pest outbreaks) by flagging district-years where the minimum error across all component models exceeded 200~dt/ha. However, this approach introduces circularity, as model performance is used to filter training data.
-
-Crucially, the ablation study (Section~3.4) demonstrates that excluding this filter results in negligible performance change ($<0.5\%$ in Skill Score), confirming that the system's predictive power derives from its architectural integration of physical mechanisms rather than data selection.
-
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
 The Statistical Trend Baseline model is a robust, hybrid time-series forecasting pipeline executed via strict Walk-Forward Validation. The forecasting process for any target year $t$ involves two steps:
 
