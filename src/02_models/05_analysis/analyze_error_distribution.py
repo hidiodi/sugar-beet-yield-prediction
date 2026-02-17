@@ -45,6 +45,58 @@ def define_regime(row, threshold=50):
     return 'Normal'
 
 
+def plot_correct_error_landscape(df):
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    # 1. Define Yield Bins (matching your image)
+    # We create 9 bins across the yield range
+    df['yield_bin'] = pd.cut(df['kreisYield'], bins=9)
+
+    # 2. Calculate Median Error per bin
+    # We compare SE Error to the "Worst" baseline to calculate gain
+    df['SE_Error'] = (df['Super_Ensemble_pred'] - df['kreisYield']).abs()
+    df['Trend_Error'] = (df['Statistical_Trend_pred'] - df['kreisYield']).abs()
+
+    bin_stats = df.groupby('yield_bin', observed=True).agg({
+        'SE_Error': 'median',
+        'Trend_Error': 'median'
+    }).reset_index()
+
+    # Calculate Gain (Positive = SE is better)
+    bin_stats['Gain'] = bin_stats['Trend_Error'] - bin_stats['SE_Error']
+
+    # Format bin labels for X-axis (e.g., "271-359")
+    bin_stats['label'] = bin_stats['yield_bin'].apply(lambda x: f"{int(x.left)}-{int(x.right)}")
+
+    # 3. Plotting
+    fig, ax1 = plt.subplots(figsize=(10, 8))
+
+    # Primary Axis: Median SE Error
+    ax1.plot(bin_stats['label'], bin_stats['SE_Error'], color='black', linewidth=3, label='Median SE Error')
+    # Add a red dashed line representing the Trend Error for visual comparison
+    ax1.plot(bin_stats['label'], bin_stats['Trend_Error'], color='red', linestyle='--', label='Trend Baseline Error')
+
+    ax1.set_xlabel('Yield Bins (dt/ha)')
+    ax1.set_ylabel('Median Absolute Error (dt/ha)', color='black')
+    ax1.set_title('Error Landscape: Super Ensemble Error by Yield Stress Level', fontsize=14)
+
+    # Secondary Axis: Gain over Baseline
+    ax2 = ax1.twinx()
+    # Note: Using a bar or line for gain. The provided image shows "Median Gain" in legend
+    # Here we plot the gain on the right axis
+    ax2.fill_between(bin_stats['label'], 0, bin_stats['Gain'], color='green', alpha=0.3, label='Median Gain (vs Trend)')
+    ax2.set_ylabel('Median Gain (dt/ha) Over Baseline', color='green')
+
+    # Match the y-limit style if needed (image shows specific ticks)
+    # ax2.set_ylim(-0.05, 0.05) # Adjust based on your actual data scale
+
+    fig.tight_layout()
+    output_path = project_root / 'docs/paper_latex/figures/super_ensemble_error_landscape.png'
+    plt.savefig(output_path, dpi=300)
+    print(f"✅ Corrected Error Landscape saved to: {output_path}")
+
+
 def analyze_forensic_failures():
     logging.info("--- 🕵️ FORENSIC ERROR ANALYSIS V2 (Decomposition) ---")
 
@@ -122,6 +174,8 @@ def analyze_forensic_failures():
 
     misses = df.sort_values('Selection_Error', ascending=False).head(5)
     logging.info(f"{'Year':<5} | {'District':<15} | {'Actual':<6} | {'Our Pred':<8} | {'Oracle':<8} | {'Better Model'}")
+
+    plot_correct_error_landscape(df)
 
     for _, row in misses.iterrows():
         # Find who was best

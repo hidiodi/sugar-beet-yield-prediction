@@ -1,12 +1,12 @@
 \section{Discussion}
 
 \subsection{Regime Selection Efficiency}
-The Super Ensemble achieves a 16.24\% skill gain by employing a Soft Voting strategy. Analysis reveals that the Soft Voting minimizes selection error, which now accounts for only 28.4\% of the total residual error, while 71.6\% remains systemic (Component Gap) (Fig.~\ref{fig:switching}). This confirms that the Meta-Learner effectively maps specific bio-physical precursors to specialized model regimes, leaving the majority of remaining error to the limitations of the sub-models themselves.
+The Super Ensemble achieves a \textbf{16.25\%} skill gain by employing a Soft Voting strategy. Analysis reveals that the Meta-Learner has become highly efficient at navigating the five-model architecture; selection error (choosing the suboptimal sub-model) now accounts for only \textbf{28.3\%} of the total residual error, while \textbf{71.7\%} remains systemic (the ``Component Gap'') (Fig.~\ref{fig:switching}). This confirms that the Meta-Learner effectively maps specific bio-physical precursors to specialized model regimes, leaving the majority of remaining error to the inherent predictive limitations of the sub-models themselves.
 
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{super_ensemble_switching_efficiency.png}
-    \caption{Meta-Learner Efficiency. The boxplot compares the MAE distribution of the Selected Model vs. the Theoretical Oracle. The narrow gap confirms that the weighting is nearly optimized.}
+    \caption{Meta-Learner Efficiency. The boxplot compares the MAE distribution of the Selected Model vs. the Theoretical Oracle. The narrow gap confirms that the regime-switching logic is nearly optimized, with selection error significantly minimized.}
     \label{fig:switching}
 \end{figure}
 
@@ -14,16 +14,16 @@ The Super Ensemble achieves a 16.24\% skill gain by employing a Soft Voting stra
 \begin{figure}[ht!]
     \centering
     \includegraphics[width=\linewidth]{feature_importance_native.png}
-    \caption{Feature Importance Hierarchy. Mechanism-informed features (Heat Signal, Bio-Physical Scanner) significantly outrank raw weather variables, confirming the value of the feature engineering pipeline.}
+    \caption{Feature Importance Hierarchy. Mechanism-informed signals (Solar Signal, Hybrid Signal) dominate the hierarchy, confirming that the Meta-Learner successfully maps physical precursors to specialized model regimes.}
     \label{fig:importance}
 \end{figure}
 
-The system's diagnostic capability is driven by mechanism-informed features (Fig.~\ref{fig:importance}). It is crucial to clarify that the \textbf{Regret\_Weight} is utilized strictly as a training-time sample importance weight to address regime blindness, forcing the model to prioritize rare events. The actual inference-time drivers are the mechanism-informed signals, specifically the V31 Solar Signal, Hybrid XGB Signal, and Water Balance anomalies. These compound indices dominate the hierarchy, confirming that switching is physically grounded rather than statistical noise.
+The system's diagnostic capability is driven by mechanism-informed features (Fig.~\ref{fig:importance}). To maintain mathematical consistency, it is important to distinguish between training-time weights and inference-time features. While the \textbf{Regret-Weight} ($w_{d,t}$) is utilized strictly as a training-time sample importance weight to prioritize "Black Swan" events, the actual inference-time decision boundaries are driven by physical signals. The primary drivers are the \textbf{Signal\_V31\_Solar\_Gated} (Importance: 0.20), the \textbf{Signal\_Hybrid\_XGB} (Importance: 0.09), and summer water balance anomalies. These compound indices dominate the hierarchy, confirming that the switching logic is physically grounded rather than a result of statistical noise.
 
-Unlike monitoring-based systems like MCYFS that rely on in-season data \citep{vandervelde2019mars}, our use of SEAS5 on March 1st provides a critical 90-day window for economic hedging. While quantile predictions ($M_2$) offer a probabilistic envelope, the primary value lies in the early detection of yield crashes.
+Unlike monitoring-based systems like MCYFS that rely on in-season vegetation indices \citep{paudel2021machine}, our use of SEAS5 on March 1st provides a critical 90-day window for economic hedging. While quantile predictions ($M_3$) offer a probabilistic envelope, the primary value lies in the early detection of yield crashes, providing actionable signals before satellite-based indices become viable.
 
 \subsection{Limitations}
-Limitations include reliance on interpolated weather grids \cite{rauthe2013central}, which smooth localized extremes, and district-level aggregation masking field variability.
+Limitations include reliance on interpolated weather grids \cite{rauthe2013central}, which smooth localized extremes, and district-level aggregation masking field-scale variability. Additionally, while systemic error was reduced, the 2018 drought remains the most challenging event (Oracle Error: 78.2~dt/ha), indicating that existing sub-models still struggle to fully capture compound heat-drought extremes.
 
 \subsection{Methodological Considerations}
 
@@ -31,7 +31,7 @@ Limitations include reliance on interpolated weather grids \cite{rauthe2013centr
 The expanding window protocol ensures strict temporal separation between training and test sets, mimicking operational deployment where only historical data informs future forecasts. Unlike blocked cross-validation, which can leak information across temporal boundaries, our approach guarantees that each year's prediction relies solely on antecedent observations.
 
 \subsubsection{Data Integrity and Outlier Handling}
-An early iteration of the system employed a retrospective outlier filter based on multi-model consensus, flagging district-years where all components exhibited errors exceeding 200~dt/ha. While such filters are common in operational systems to isolate non-climatic anomalies (e.g., misreported yields), we opted to exclude this step to avoid introducing circularity into the validation framework. The negligible performance impact of this exclusion (Section~3.4) validates our decision and demonstrates that the system's skill derives from capturing genuine climatic signals rather than selectively curating validation data.
+An early iteration of the system employed a retrospective outlier filter based on multi-model consensus, flagging district-years where all components exhibited errors exceeding 200~dt/ha. While such filters are common in operational systems to isolate non-climatic anomalies (e.g., misreported yields), we opted to exclude this step in the final architecture to ensure the model handles the full real-world distribution. By training on the uncurated data and utilizing the regret-weighting mechanism, the Meta-Learner learned to prioritize genuine climatic signals over idiosyncratic noise. The negligible performance impact of this exclusion (Section~3.4) validates this approach and demonstrates the robustness of the regime-switching logic.
 
 \subsubsection{Hyperparameter Selection}
-Meta-Learner hyperparameters were chosen conservatively to prioritize generalization over training-set fit. The shallow tree depth (\texttt{max\_depth=4}) and low learning rate (\texttt{learning\_rate=0.03}) prevent overfitting to idiosyncratic district-year patterns, while the ensemble variance and historical bias features provide regime-specific context that cannot be trivially memorized.
+Meta-Learner hyperparameters were chosen conservatively to prioritize generalization over training-set fit. The shallow tree depth (\texttt{max\_depth=4}) prevents overfitting to idiosyncratic district-year patterns, while the ensemble variance and historical bias features provide regime-specific context that cannot be trivially memorized by the model.

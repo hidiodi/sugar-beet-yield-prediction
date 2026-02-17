@@ -17,6 +17,19 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 OUTPUT_DIR = Path(analysis_config.MODEL_COMPARISON_CONFIG['OUTPUT_DIR'])
 DATA_FILE = OUTPUT_DIR / 'super_ensemble_training_data.csv'
 
+def plot_feature_importance(clf, features):
+    import matplotlib.pyplot as plt
+    output_path = project_root / 'docs/paper_latex/figures/feature_importance_native.png'
+
+    imp = pd.Series(clf.feature_importances_, index=features).sort_values(ascending=True).tail(10)
+
+    plt.figure(figsize=(10, 6))
+    imp.plot(kind='barh', color='teal')
+    plt.title('Meta-Learner Top 10 Feature Importance')
+    plt.xlabel('Importance Score')
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    print(f"✅ Figure saved to: {output_path}")
 
 def run_forensic_audit():
     logging.info("--- 🕵️ COMPONENT INTEGRITY & LEAKAGE AUDIT V2 (Fixed) ---")
@@ -112,6 +125,7 @@ def run_forensic_audit():
     else:
         logging.info("  ✅ Model is actively switching.")
 
+    plot_feature_importance(clf, features)
 
 if __name__ == "__main__":
     run_forensic_audit()

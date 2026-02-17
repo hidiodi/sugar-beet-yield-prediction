@@ -171,6 +171,21 @@ def generate_action_plan(df):
         print("   -> 2018 is Solved/Manageable.")
 
 
+def plot_switching_efficiency(df):
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    output_path = project_root / 'docs/paper_latex/figures/super_ensemble_switching_efficiency.png'
+
+    plt.figure(figsize=(8, 6))
+    # Boxplot of Selection Error vs Actual Error
+    plot_data = df.melt(value_vars=['Actual_Error', 'Oracle_Error'],
+                        var_name='Type', value_name='MAE')
+    sns.boxplot(data=plot_data, x='Type', y='MAE', palette='Set2')
+    plt.title('Meta-Learner Performance vs Oracle Ceiling')
+    plt.ylabel('Absolute Error (dt/ha)')
+    plt.savefig(output_path, dpi=300)
+    print(f"✅ Figure saved to: {output_path}")
+
 def main():
     df = load_data()
     if df is not None:
@@ -178,7 +193,7 @@ def main():
         analyze_systemic_failure(df)
         analyze_component_specialization(df)
         generate_action_plan(df)
-
+        plot_switching_efficiency(df)
 
 if __name__ == "__main__":
     main()

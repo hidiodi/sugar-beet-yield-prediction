@@ -1,5 +1,5 @@
 \section{Results}
-Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms the Super Ensemble's superiority. While absolute predictive power ($R^2$) naturally declines during the volatile 2010--2024 period due to increased stochasticity, the model's Skill Score actually improves from 16.24\% to 18.14\%, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
+Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms the Super Ensemble's superiority. While absolute predictive power ($R^2$) naturally declines during the volatile 2010--2024 period due to increased stochasticity, the model's Skill Score actually improves from \textbf{16.25\% to 18.27\%}, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
 
 \begin{table}[h]
 \centering
@@ -9,10 +9,10 @@ Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms t
     \begin{tabular}{|l|c|c|c|}
     \hline
     \textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \hline
-    \textbf{Super Ensemble} & \textbf{56.30} & \textbf{0.618} & \textbf{16.24} \\ \hline
-    Robust Linear (Stage 2) & 64.40 & 0.499 & 4.18 \\ \hline
-    Statistical Trend & 67.21 & 0.467 & 0.00 \\ \hline
-    Native Ensemble & 70.30 & 0.372 & -4.59 \\ \hline
+    \textbf{Super Ensemble} & \textbf{56.29} & \textbf{0.620} & \textbf{16.25} \\ \hline
+    Robust Linear (Stage 2) & 64.41 & 0.499 & 4.16 \\ \hline
+    Statistical Trend & 67.21 & 0.468 & 0.00 \\ \hline
+    Native Ensemble & 70.28 & 0.372 & -4.57 \\ \hline
     \end{tabular}%
 }
 \end{table}
@@ -24,10 +24,8 @@ Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms t
     \label{fig:error_landscape}
 \end{figure}
 
-% Figure 2 (Error Butterfly) moved to Methods (Section 2.6)
-
 \subsection{Anomaly Forensics (Black Swan Events)}
-Table~\ref{tab:anomalies} details performance during historic anomalies. The Super Ensemble significantly reduced errors in the 2003 heatwave (+15.4 dt/ha) and the 2018 drought (+78.5 dt/ha) by identifying stress signals in SEAS5 forecasts, while also capturing the 2014 bumper year upside (+29.4 dt/ha).
+Table~\ref{tab:anomalies} details performance during historic anomalies. The Super Ensemble significantly reduced errors in the 2003 heatwave (\textbf{+14.6 dt/ha}) and the 2018 drought (\textbf{+79.7 dt/ha}) by identifying stress signals in SEAS5 forecasts, while also capturing the 2014 bumper year upside (\textbf{+29.5 dt/ha}).
 
 \begin{table}[h]
 \centering
@@ -36,9 +34,9 @@ Table~\ref{tab:anomalies} details performance during historic anomalies. The Sup
     \begin{tabular}{|l|c|c|c|c|}
     \hline
     \textbf{Event} & \textbf{Actual} & \textbf{Super Ensemble} & \textbf{Trend} & \textbf{Improv.} \\ \hline
-    2003 (Heat) & 516.9 & 581.7 (MAE 80.4) & 593.7 (MAE 95.8) & +15.4 \\ \hline
-    2014 (Bumper) & 825.6 & 748.9 (MAE 84.6) & 715.9 (MAE 114.0) & +29.4 \\ \hline
-    2018 (Drought) & 628.5 & 710.4 (MAE 103.6) & 799.7 (MAE 182.1) & +78.5 \\ \hline
+    2003 (Heat) & 516.9 & \textbf{582.3 (MAE 81.2)} & 593.7 (MAE 95.8) & \textbf{+14.6} \\ \hline
+    2014 (Bumper) & 825.6 & \textbf{749.0 (MAE 84.5)} & 715.9 (MAE 114.0) & \textbf{+29.5} \\ \hline
+    2018 (Drought) & 628.5 & \textbf{708.7 (MAE 102.4)} & 799.7 (MAE 182.1) & \textbf{+79.7} \\ \hline
     \end{tabular}%
 }
 \label{tab:anomalies}
@@ -54,18 +52,18 @@ Table~\ref{tab:anomalies} details performance during historic anomalies. The Sup
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{fig3_parity_plot.png}
-    \caption{Parity plot showing Actual vs Predicted yields, colored by the model selected by the Meta-Learner. Note how physics-informed models (Hybrid XGB, Heat Signal) are selected for extreme yield values, while the Statistical Trend is preferred for normal years.}
+    \caption{Parity plot showing Actual vs Predicted yields, colored by the model selected by the Meta-Learner. Note how physics-informed models (Hybrid XGB, V31 Solar-Gated) are selected for extreme yield values, while the Statistical Trend and Robust Linear models are preferred for normal years.}
     \label{fig:parity}
 \end{figure}
 
 \subsection{Dynamics and Ablation}
-Forensic analysis confirms that $M_3$ (Hybrid) specialists are selected during extreme yield crashes ($>34$ dt/ha below trend), directly triggered by the Scorch Index thresholds defined in the SI (Eq. S1) and visualized geographically in the introduction (Fig.~\ref{fig:intro_context}).
+Forensic analysis confirms that $M_3$ (Hybrid) specialists are prioritized during extreme yield crashes, triggered by the Meta-Learner's detection of heat and water stress markers. The probabilistic integration achieved an MAE of 56.29~dt/ha. In contrast, a "Hard Switching" approach (selecting only the single most probable model) resulted in an MAE of 69.19~dt/ha. This confirms that early-season forecasting is more effectively handled as a blending of regimes rather than a discrete binary choice.
 
-Ablation results (Fig~\ref{fig:ablation}) confirm that removing stress signals increases 2018 error by $>$15\%, and a static ensemble reduces $R^2$ to 0.552. Excluding the outlier filter changed skill by $<0.5\%$.
+Systemic component failure accounts for 71.7\% of the remaining error, while selection error (sub-optimal probability assignment) represents only 28.3\% of the total residual. Ablation results (Fig~\ref{fig:ablation}) confirm that removing bio-physical stress signals from the integration logic increases 2018 drought error significantly, while the exclusion of the outlier filter changed overall skill by $<0.1\%$.
 
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{fig3_ablation_results.png}
-    \caption{Ablation Study Results. Removing stress signals results in higher error in drought years. Notably, the Data Quality Filter has minimal impact on aggregate metrics, proving model robustness.}
+    \caption{Ablation Study Results. Removing stress signals results in higher error in drought years. Notably, the removal of the outlier filter has minimal impact on aggregate metrics, proving the stability of the meta-learning architecture.}
     \label{fig:ablation}
 \end{figure}
