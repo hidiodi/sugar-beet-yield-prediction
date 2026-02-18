@@ -27,7 +27,7 @@ Machine learning components use Scikit-Learn \cite{scikitlearn} and XGBoost \cit
 \begin{itemize}
     \item \textbf{$M_1$: Statistical Trend Baseline} as defined in Section 2.2.
     \item \textbf{$M_2$: Robust Linear Integrator}, a HuberRegressor ($\epsilon=1.35$) predicting residuals from the statistical trend, providing robustness against non-climatic outliers.
-    \item \textbf{$M_3$: V31 Solar-Gated Specialist}, utilizing conditional logic based on radiation flux and water balance to identify high-yield potential years.
+    \item \textbf{$M_3$: V31 Solar-Gated Specialist}, utilizing conditional logic based on radiation flux and water balance to identify both high-yield potential years (solar-gated upside) and yield crashes (water-limited downside).
     \item \textbf{$S_{hybrid}$: Hybrid XGBoost (Signal Generator)}, which predicts the ratio between actual yield and WOFOST Stage 1 simulation. This component is used exclusively for regime detection and does not contribute directly to the final ensemble sum.
 \end{itemize}
 
