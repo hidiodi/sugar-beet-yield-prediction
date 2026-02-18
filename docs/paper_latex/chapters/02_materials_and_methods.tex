@@ -33,7 +33,7 @@ Machine learning components use Scikit-Learn \cite{scikitlearn} and XGBoost \cit
 
 We also evaluated a \textbf{Static ML Benchmark (Native Ensemble)}, a standard XGBoost ensemble without regime-switching logic, to serve as a baseline for measuring the value of dynamic adaptation.
 
-\subsection{Super Ensemble Architecture}
+\subsection{Expert System-Guided Ensemble Architecture}
 
 The system integrates the three sub-models through an **Expert System** based on bio-physical signal thresholds. The architecture follows a two-stage training and inference protocol:
 
@@ -57,9 +57,9 @@ During inference, the signal $S$ determines the active regime. This deterministi
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{super_ensemble_flowchart.png}
-    \caption{Super Ensemble Architecture Flowchart. The system integrates multiple data sources and component models, using an Expert System to dynamically integrate predictions based on the detected regime.}
+    \caption{Expert System-Guided Ensemble Architecture Flowchart. The system integrates multiple data sources and component models, using an Expert System to dynamically integrate predictions based on the detected regime.}
     \label{fig:flowchart}
 \end{figure}
 
 \subsection{Uncertainty Quantification}
-While the Super Ensemble produces point forecasts via threshold switching, component-level uncertainty is captured through quantile regression.
+While the Expert System-Guided Ensemble produces point forecasts via threshold switching, component-level uncertainty is captured through quantile regression.
