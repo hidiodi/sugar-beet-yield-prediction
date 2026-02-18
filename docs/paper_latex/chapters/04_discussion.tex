@@ -1,12 +1,12 @@
 \section{Discussion}
 
 \subsection{Regime Selection Efficiency}
-The Super Ensemble achieves a \textbf{16.25\%} skill gain by employing a Soft Voting strategy. Analysis reveals that the Meta-Learner has become highly efficient at navigating the five-model architecture; selection error (choosing the suboptimal sub-model) now accounts for only \textbf{28.3\%} of the total residual error, while \textbf{71.7\%} remains systemic (the ``Component Gap'') (Fig.~\ref{fig:switching}). This confirms that the Meta-Learner effectively maps specific bio-physical precursors to specialized model regimes, leaving the majority of remaining error to the inherent predictive limitations of the sub-models themselves.
+The Super Ensemble achieves a \textbf{8.06\%} skill gain by employing a Threshold Switching strategy. Analysis reveals that the Expert System has become highly efficient at navigating the three-component architecture; selection error (choosing the suboptimal sub-model) now accounts for only \textbf{34.3\%} of the total residual error, while \textbf{65.7\%} remains systemic (the ``Component Gap'') (Fig.~\ref{fig:switching}). This confirms that the Expert System effectively maps specific bio-physical precursors to specialized model regimes, leaving the majority of remaining error to the inherent predictive limitations of the sub-models themselves.
 
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{super_ensemble_switching_efficiency.png}
-    \caption{Meta-Learner Efficiency. The boxplot compares the MAE distribution of the Selected Model vs. the Theoretical Oracle. The narrow gap confirms that the regime-switching logic is nearly optimized, with selection error significantly minimized.}
+    \caption{Regime Switching Efficiency. The boxplot compares the MAE distribution of the Selected Model vs. the Theoretical Oracle. The narrow gap confirms that the logic is nearly optimized, with selection error significantly minimized.}
     \label{fig:switching}
 \end{figure}
 
@@ -14,11 +14,11 @@ The Super Ensemble achieves a \textbf{16.25\%} skill gain by employing a Soft Vo
 \begin{figure}[ht!]
     \centering
     \includegraphics[width=\linewidth]{feature_importance_native.png}
-    \caption{Feature Importance Hierarchy. Mechanism-informed signals (Solar Signal, Hybrid Signal) dominate the hierarchy, confirming that the Meta-Learner successfully maps physical precursors to specialized model regimes.}
+    \caption{Feature Importance Hierarchy. Forensic analysis of the 'Oracle' choices reveals that mechanism-informed signals (Solar Signal, Hybrid Signal) dominate the regime decision space.}
     \label{fig:importance}
 \end{figure}
 
-The system's diagnostic capability is driven by mechanism-informed features (Fig.~\ref{fig:importance}). To maintain mathematical consistency, it is important to distinguish between training-time weights and inference-time features. While the \textbf{Regret-Weight} ($w_{d,t}$) is utilized strictly as a training-time sample importance weight to prioritize "Black Swan" events, the actual inference-time decision boundaries are driven by physical signals. The primary drivers are the \textbf{Signal\_V31\_Solar\_Gated} (Importance: 0.20), the \textbf{Signal\_Hybrid\_XGB} (Importance: 0.09), and summer water balance anomalies. These compound indices dominate the hierarchy, confirming that the switching logic is physically grounded rather than a result of statistical noise.
+The system's diagnostic capability is proxied by the $S_{hybrid}$ signal, but forensic analysis (Fig.~\ref{fig:importance}) confirms that the underlying regime dynamics are driven by complex mechanism-informed features. While the operational Expert System relies on a simplified threshold logic ($S < 0.8$ or $S > 1.0$), the "Oracle" analysis reveals that the optimal decision boundaries align with the \textbf{Signal\_V31\_Solar\_Gated} (Importance: 0.24) and the \textbf{Signal\_Hybrid\_XGB} (Importance: 0.12). This confirms that the simplified switching logic is successfully capturing the same physical signal space as a more complex meta-learner would, without the risk of overfitting.
 
 Unlike monitoring-based systems like MCYFS that rely on in-season vegetation indices \citep{paudel2021machine}, our use of SEAS5 on March 1st provides a critical 90-day window for economic hedging. While quantile predictions ($M_3$) offer a probabilistic envelope, the primary value lies in the early detection of yield crashes, providing actionable signals before satellite-based indices become viable.
 
