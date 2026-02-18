@@ -1,5 +1,5 @@
 \section{Results}
-Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms the Super Ensemble's superiority. While absolute predictive power ($R^2$) naturally declines during the volatile 2010--2024 period due to increased stochasticity, the model's Skill Score actually improves from \textbf{8.06\% to 10.75\%}, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
+Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms the Expert System-Guided Ensemble's superiority. While absolute predictive power ($R^2$) naturally declines during the volatile 2010--2024 period due to increased stochasticity, the model's Skill Score actually improves from \textbf{8.06\% to 10.75\%}, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
 
 \begin{table}[h]
 \centering
@@ -9,7 +9,7 @@ Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms t
     \begin{tabular}{|l|c|c|c|}
     \hline
     \textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \hline
-    \textbf{Super Ensemble} & \textbf{61.79} & \textbf{0.548} & \textbf{8.06} \\ \hline
+    \textbf{Expert System-Guided Ensemble} & \textbf{61.79} & \textbf{0.548} & \textbf{8.06} \\ \hline
     Robust Linear (Stage 2) & 64.41 & 0.499 & 4.16 \\ \hline
     Statistical Trend & 67.21 & 0.468 & 0.00 \\ \hline
     Static ML Benchmark (Native Ensemble) & 70.28 & 0.372 & -4.57 \\ \hline
@@ -20,12 +20,12 @@ Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms t
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{super_ensemble_error_landscape.png}
-    \caption{Super Ensemble Error Landscape across Yield Stress Levels. Unlike traditional models that degrade linearly, the Super Ensemble maintains controlled error rates even in extreme low-yield "Crash" scenarios, validating the effectiveness of Regret-Weighted training.}
+    \caption{Expert System-Guided Ensemble Error Landscape across Yield Stress Levels. Unlike traditional models that degrade linearly, the Expert System-Guided Ensemble maintains controlled error rates even in extreme low-yield "Crash" scenarios, validating the effectiveness of Regret-Weighted training.}
     \label{fig:error_landscape}
 \end{figure}
 
 \subsection{Anomaly Forensics (Black Swan Events)}
-Table~\ref{tab:anomalies} details performance during historic anomalies. The Super Ensemble significantly reduced errors in the 2018 drought (\textbf{+58.4 dt/ha}) by identifying stress signals in SEAS5 forecasts, while also capturing the 2014 bumper year upside (\textbf{+4.2 dt/ha}). However, in the 2003 heatwave, the model slightly underperformed the trend baseline (\textbf{-7.4 dt/ha}).
+Table~\ref{tab:anomalies} details performance during historic anomalies. The Expert System-Guided Ensemble significantly reduced errors in the 2018 drought (\textbf{+58.4 dt/ha}) by identifying stress signals in SEAS5 forecasts, while also capturing the 2014 bumper year upside (\textbf{+4.2 dt/ha}). However, in the 2003 heatwave, the model slightly underperformed the trend baseline (\textbf{-7.4 dt/ha}).
 
 \begin{table}[h]
 \centering
@@ -33,7 +33,7 @@ Table~\ref{tab:anomalies} details performance during historic anomalies. The Sup
 \resizebox{\columnwidth}{!}{%
     \begin{tabular}{|l|c|c|c|c|}
     \hline
-    \textbf{Event} & \textbf{Actual} & \textbf{Super Ensemble} & \textbf{Trend} & \textbf{Improv.} \\ \hline
+    \textbf{Event} & \textbf{Actual} & \textbf{Expert System-Guided Ensemble} & \textbf{Trend} & \textbf{Improv.} \\ \hline
     2003 (Heat) & 516.9 & \textbf{609.6 (MAE 103.2)} & 593.7 (MAE 95.8) & \textbf{-7.4} \\ \hline
     2014 (Bumper) & 825.6 & \textbf{720.4 (MAE 109.8)} & 715.9 (MAE 114.0) & \textbf{+4.2} \\ \hline
     2018 (Drought) & 628.5 & \textbf{736.9 (MAE 123.7)} & 799.7 (MAE 182.1) & \textbf{+58.4} \\ \hline
@@ -45,7 +45,7 @@ Table~\ref{tab:anomalies} details performance during historic anomalies. The Sup
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{fig2_time_series.png}
-    \caption{National average sugarbeet yield: Actual observations vs. Super Ensemble forecasts and Statistical Trend baseline. Note the superior tracking of the 2003 and 2018 drought events.}
+    \caption{National average sugarbeet yield: Actual observations vs. Expert System-Guided Ensemble forecasts and Statistical Trend baseline. Note the superior tracking of the 2003 and 2018 drought events.}
     \label{fig:timeseries}
 \end{figure}
 
