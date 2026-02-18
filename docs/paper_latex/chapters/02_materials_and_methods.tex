@@ -23,42 +23,41 @@ Following the recommendation of \citet{paudel2022field}, we employed a time-base
 Our two-stage pipeline translates raw data into agronomic signals. First, a \textbf{Bio-Physical Risk Scanner} within WOFOST \cite{boogaard1998wofost} calculates specific risks like Oxygen Stress (Anoxia) and Harvest Respiration. Second, we compute rigorous Z-scores ($Z_t$) using an expanding window to normalize extreme events relative only to known history. Key indices include $Z_{\text{heat}}$ (heat stress), $Z_{\text{bal}}$ (water balance), $Z_{\text{tank}}$ (winter recharge), $Z_{\text{anoxia}}$ (oxygen stress), and $Z_{\text{sow}}$ (sowing delay), which are aggregated into compound indices (Scorch, Drown, LateStart) detailed in the Supplementary Information.
 
 \subsection{Predictive Algorithms}
-Machine learning components use Scikit-Learn \cite{scikitlearn} and XGBoost \cite{chen2016xgboost}. The system utilizes five specialized sub-models $M_k$:
+Machine learning components use Scikit-Learn \cite{scikitlearn} and XGBoost \cite{chen2016xgboost}. The system utilizes three specialized sub-models $M_k$ and one signal generator:
 \begin{itemize}
     \item \textbf{$M_1$: Statistical Trend Baseline} as defined in Section 2.2.
-    \item \textbf{$M_2$: Native Ensemble}, a consensus-driven approach using weather and soil features via XGBoost and Random Forest.
-    \item \textbf{$M_3$: Hybrid XGBoost}, which predicts the ratio between actual yield and WOFOST Stage 1 simulation, leveraging physics-based stress indices to correct simulation biases.
-    \item \textbf{$M_4$: Robust Linear Integrator}, a HuberRegressor ($\epsilon=1.35$) predicting residuals from the statistical trend, providing robustness against non-climatic outliers.
-    \item \textbf{$M_5$: V31 Solar-Gated Specialist}, utilizing conditional logic based on radiation flux and water balance to identify high-yield potential years.
+    \item \textbf{$M_2$: Robust Linear Integrator}, a HuberRegressor ($\epsilon=1.35$) predicting residuals from the statistical trend, providing robustness against non-climatic outliers.
+    \item \textbf{$M_3$: V31 Solar-Gated Specialist}, utilizing conditional logic based on radiation flux and water balance to identify high-yield potential years.
+    \item \textbf{$S_{hybrid}$: Hybrid XGBoost (Signal Generator)}, which predicts the ratio between actual yield and WOFOST Stage 1 simulation. This component is used exclusively for regime detection and does not contribute directly to the final ensemble sum.
 \end{itemize}
 
 \subsection{Super Ensemble Architecture}
 
-The system integrates the five sub-models through an XGBoost-based Meta-Learner. The architecture follows a two-stage training and inference protocol:
+The system integrates the three sub-models through an **Expert System** based on bio-physical signal thresholds. The architecture follows a two-stage training and inference protocol:
 
 \subsubsection{Cross-Validation Protocol}
-Model validation employs a strict \textbf{expanding window (walk-forward)} strategy. For each year $t \in \{2000, \dots, 2024\}$, the Meta-Learner is trained exclusively on data from years $\{1981, \dots, t-1\}$.
+Model validation employs a strict \textbf{expanding window (walk-forward)} strategy. For each year $t \in \{2000, \dots, 2024\}$, the Expert System parameters are calibrated exclusively on data from years $\{1981, \dots, t-1\}$.
 
-\subsubsection{Meta-Learner Training (Discrete Selection)}
-The Meta-Learner is trained as a multi-class classifier to predict the optimal sub-model $M_k$. For each training sample, we identify the sub-model that achieved the minimum absolute error, assigning it as the target label. To prioritize the mitigation of extreme errors, samples are weighted by the $\text{Regret}$ ($w_{d,t}$), defined as the difference between the median ensemble error ($E_{\text{median}}$) and the best-case error:
-\begin{equation}
-    w_{d,t} = \text{E}_{\text{median}}(d,t) - \min_{k \in \{1,\dots,5\}} |Y_{d,t} - \hat{y}_k(d,t)|
-\end{equation}
-While early iterations tested a 200~dt/ha outlier filter, the final architecture retains all data points, forcing the Meta-Learner to prioritize robustness through the weight $w_{d,t}$.
+\subsubsection{Expert System Configuration}
+Rather than training a "black box" meta-learner, we employ a transparent Threshold Switching Logic driven by the ratio $S = Y_{hybrid} / Y_{trend}$, where $Y_{hybrid}$ is the yield forecast from the Hybrid XGB signal generator. This ratio proxies the physiological stress level relative to the technological trend. The system defines three operational regimes:
 
-\subsubsection{Inference (Probabilistic Integration)}
-During inference, the Meta-Learner generates a probability distribution $P(M_k | \mathbf{x}_{d,t})$ across all sub-models based on the feature vector $\mathbf{x}_{d,t}$ (comprising bio-physical Z-scores, sowing anomalies, and solar flux). The final yield forecast $\hat{Y}_{d,t}$ is calculated as the probabilistically weighted sum of all component predictions:
-\begin{equation}
-    \hat{Y}_{d,t} = \sum_{k=1}^5 P(M_k | \mathbf{x}_{d,t}) \cdot \hat{y}_k(d,t)
-\end{equation}
-This soft-voting approach allows the system to transition smoothly between specialized regimes, leveraging the Meta-Learner's confidence to blend mechanism-informed signals with statistical trends.
+\begin{enumerate}
+    \item \textbf{Safety Mode (Extreme Stress):} Triggered when $S < 0.8$. In cases of extreme predicted divergence, the system defaults to the conservative $M_1$ (Trend) baseline to prevent over-reaction to potential false alarms.
+    \item \textbf{Bumper Mode (Upside Potential):} Triggered when $S > 1.0$. The system activates $M_2$ (Robust Linear) to capture yield potential exceeding the trend.
+    \item \textbf{Normal Regime:} Triggered when $0.8 \le S \le 1.0$. The forecast is calculated as a weighted blend:
+    \[ \hat{Y} = 0.6 \cdot M_2 + 0.4 \cdot M_3 \]
+    This regime activates the solar-gated specialist ($M_3$), allowing physics-informed adjustments for radiation and water balance without fully committing to extreme scenarios.
+\end{enumerate}
+
+\subsubsection{Inference}
+During inference, the signal $S$ determines the active regime. This deterministic approach replaces soft voting, ensuring that yield predictions snap to the most physically plausible mechanism for the detected conditions.
 
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{super_ensemble_flowchart.png}
-    \caption{Super Ensemble Architecture Flowchart. The system integrates multiple data sources and component models, using a Meta-Learner to dynamically integrate predictions based on the detected regime.}
+    \caption{Super Ensemble Architecture Flowchart. The system integrates multiple data sources and component models, using an Expert System to dynamically integrate predictions based on the detected regime.}
     \label{fig:flowchart}
 \end{figure}
 
 \subsection{Uncertainty Quantification}
-While the Super Ensemble produces point forecasts via probabilistic integration, component-level uncertainty is captured through quantile regression. Additionally, the entropy of the Meta-Learner's predicted probability distribution $P(M_k)$ provides an indirect measure of forecast confidence: low-entropy distributions signal high certainty in regime detection.
+While the Super Ensemble produces point forecasts via threshold switching, component-level uncertainty is captured through quantile regression.
