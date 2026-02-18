@@ -27,9 +27,11 @@ Machine learning components use Scikit-Learn \cite{scikitlearn} and XGBoost \cit
 \begin{itemize}
     \item \textbf{$M_1$: Statistical Trend Baseline} as defined in Section 2.2.
     \item \textbf{$M_2$: Robust Linear Integrator}, a HuberRegressor ($\epsilon=1.35$) predicting residuals from the statistical trend, providing robustness against non-climatic outliers.
-    \item \textbf{$M_3$: V31 Solar-Gated Specialist}, utilizing conditional logic based on radiation flux and water balance to identify both high-yield potential years (solar-gated upside) and yield crashes (water-limited downside).
+    \item \textbf{$M_3$: Bio-Physical Limits Model}, utilizing conditional logic based on radiation flux and water balance. It identifies both high-yield potential years (when radiation is high and water sufficient) and yield crashes (when extreme drought thresholds are breached).
     \item \textbf{$S_{hybrid}$: Hybrid XGBoost (Signal Generator)}, which predicts the ratio between actual yield and WOFOST Stage 1 simulation. This component is used exclusively for regime detection and does not contribute directly to the final ensemble sum.
 \end{itemize}
+
+We also evaluated a \textbf{Static ML Benchmark (Native Ensemble)}, a standard XGBoost ensemble without regime-switching logic, to serve as a baseline for measuring the value of dynamic adaptation.
 
 \subsection{Super Ensemble Architecture}
 
@@ -46,7 +48,7 @@ Rather than training a "black box" meta-learner, we employ a transparent Thresho
     \item \textbf{Bumper Mode (Upside Potential):} Triggered when $S > 1.0$. The system activates $M_2$ (Robust Linear) to capture yield potential exceeding the trend.
     \item \textbf{Normal Regime:} Triggered when $0.8 \le S \le 1.0$. The forecast is calculated as a weighted blend:
     \[ \hat{Y} = 0.6 \cdot M_2 + 0.4 \cdot M_3 \]
-    This regime activates the solar-gated specialist ($M_3$), allowing physics-informed adjustments for radiation and water balance without fully committing to extreme scenarios.
+    This regime activates the Bio-Physical Limits Model ($M_3$), allowing physics-informed adjustments for radiation and water balance without fully committing to extreme scenarios.
 \end{enumerate}
 
 \subsubsection{Inference}

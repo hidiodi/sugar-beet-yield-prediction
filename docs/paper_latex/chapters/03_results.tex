@@ -12,6 +12,7 @@ Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms t
     \textbf{Super Ensemble} & \textbf{61.79} & \textbf{0.548} & \textbf{8.06} \\ \hline
     Robust Linear (Stage 2) & 64.41 & 0.499 & 4.16 \\ \hline
     Statistical Trend & 67.21 & 0.468 & 0.00 \\ \hline
+    Static ML Benchmark (Native Ensemble) & 70.28 & 0.372 & -4.57 \\ \hline
     \end{tabular}%
 }
 \end{table}
@@ -51,12 +52,12 @@ Table~\ref{tab:anomalies} details performance during historic anomalies. The Sup
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{fig3_parity_plot.png}
-    \caption{Parity plot showing Actual vs Predicted yields, colored by the model selected by the Expert System. Note how the "Normal Regime" blend (including V31 Solar-Gated) is activated during moderate stress years like 2018, while the Robust Linear model is preferred for bumper years.}
+    \caption{Parity plot showing Actual vs Predicted yields, colored by the model selected by the Expert System. Note how the "Normal Regime" blend (including M3 Bio-Physical Limits) is activated during moderate stress years like 2018, while the Robust Linear model is preferred for bumper years.}
     \label{fig:parity}
 \end{figure}
 
 \subsection{Dynamics and Ablation}
-Forensic analysis confirms that the $S_{hybrid}$ signal effectively modulates the regime choice. In the 2018 drought, the signal correctly identified a deviation from the technological trend without triggering the extreme "Safety Mode" (which would have reverted to the Trend). Instead, the system entered the "Normal Regime," activating a blend of the Robust Linear ($M_2$) and Solar-Gated ($M_3$) models. This blend reduced the prediction error by \textbf{58.4 dt/ha} compared to the trend baseline. The Expert System strategy achieved an overall MAE of 61.79~dt/ha, outperforming a "Hard Switching" approach (MAE 69.19~dt/ha).
+Forensic analysis confirms that the $S_{hybrid}$ signal effectively modulates the regime choice. In the 2018 drought, the signal correctly identified a deviation from the technological trend without triggering the extreme "Safety Mode" (which would have reverted to the Trend). Instead, the system entered the "Normal Regime," activating a blend of the Robust Linear ($M_2$) and Bio-Physical Limits ($M_3$) models. This blend reduced the prediction error by \textbf{58.4 dt/ha} compared to the trend baseline. The Expert System strategy achieved an overall MAE of 61.79~dt/ha, outperforming a "Hard Switching" approach (MAE 69.19~dt/ha).
 
 Systemic component failure accounts for 65.7\% of the remaining error, while selection error (sub-optimal regime assignment) represents only 34.3\% of the total residual. Ablation results (Fig~\ref{fig:ablation}) confirm that removing bio-physical stress signals from the integration logic increases 2018 drought error significantly, while the exclusion of the outlier filter changed overall skill by $<0.1\%$.
 
