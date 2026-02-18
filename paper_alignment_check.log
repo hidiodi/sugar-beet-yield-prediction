@@ -1,0 +1,32 @@
+--- Code-Paper Alignment Check ---
+
+1. Components:
+   - Paper: Claims 3 active components (Trend, Robust, V31) + 1 Signal Generator (Hybrid XGB).
+   - Code (prepare_ensemble_data.py): Loads Statistical Trend, V31 Solar Gated, Robust Linear, Hybrid XGB. Native Ensemble is commented out.
+   - Verdict: MATCH. The code uses exactly these 4 models, consistent with the paper's description of 3 active predictors + 1 signal generator.
+
+2. Expert System Logic:
+   - Paper: Safety Mode (S < 0.8) -> Trend. Bumper Mode (S > 1.0) -> Robust. Normal Regime (0.8 <= S <= 1.0) -> Blend (0.6 Robust + 0.4 V31).
+   - Code (train_meta_regressor.py):
+     - Signal = Hybrid / Trend
+     - if signal < 0.8: return trend (Safety Mode)
+     - elif signal > 1.0: return robust (Bumper Mode)
+     - else: return 0.6 * robust + 0.4 * v31 + 0.0 * trend (Normal Regime)
+   - Verdict: MATCH. The logic is identical.
+
+3. 2018 Performance Explanation:
+   - Paper: Claims 2018 performance (736.9 dt/ha) was due to 'Normal Regime' blend of Robust (770) and V31.
+   - Code Logic Check: If 2018 had a signal between 0.8 and 1.0 (Normal), then 0.6*770 + 0.4*V31 = 736.9 -> V31 must be ~687 dt/ha.
+   - Code (run_solar_gate.py): V31 has a 'WATER CRASH' logic (z_water < -0.95) that reduces the multiplier below 1.0. Given 2018 was a severe drought, this logic would trigger, producing a low yield forecast.
+   - Discrepancy: The paper describes V31 as a 'Solar-Gated Specialist (High Yield Potential)' but omits the internal crash logic that allows it to predict low yields in droughts.
+   - Recommendation: Update V31 description to mention it handles both 'Solar-Gated Upside' AND 'Water-Limited Downside'.
+
+4. Signal Definition:
+   - Paper: S = Y_hybrid / Y_trend
+   - Code: signal = hybrid / trend
+   - Verdict: MATCH.
+
+5. Native Ensemble:
+   - Paper: Removed.
+   - Code: Commented out in prepare_ensemble_data.py.
+   - Verdict: MATCH.
