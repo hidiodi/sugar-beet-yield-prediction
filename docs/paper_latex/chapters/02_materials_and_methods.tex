@@ -28,7 +28,7 @@ Machine learning components use Scikit-Learn \cite{scikitlearn} and XGBoost \cit
     \item \textbf{$M_1$: Statistical Trend Baseline} as defined in Section 2.2.
     \item \textbf{$M_2$: Robust Linear Integrator}, a HuberRegressor ($\epsilon=1.35$) predicting residuals from the statistical trend, providing robustness against non-climatic outliers.
     \item \textbf{$M_3$: Bio-Physical Limits Model}, utilizing conditional logic based on radiation flux and water balance. It identifies both high-yield potential years (when radiation is high and water sufficient) and yield crashes (when extreme drought thresholds are breached).
-    \item \textbf{$S_{hybrid}$: Hybrid XGBoost (Signal Generator)}, which predicts the ratio between actual yield and WOFOST Stage 1 simulation. This component is used exclusively for regime detection and does not contribute directly to the final ensemble sum.
+    \item \textbf{$S_{hybrid}$: Hybrid XGBoost (Signal Generator)}, which predicts the ratio ($Y_{hybrid}$) between actual yield and WOFOST Stage 1 simulation. This component is used exclusively for regime detection and does not contribute directly to the final ensemble sum.
 \end{itemize}
 
 We also evaluated a \textbf{Static ML Benchmark (Native Ensemble)}, a standard XGBoost ensemble without regime-switching logic, to serve as a baseline for measuring the value of dynamic adaptation.
@@ -41,7 +41,11 @@ The system integrates the three sub-models through an **Expert System** based on
 Model validation employs a strict \textbf{expanding window (walk-forward)} strategy. For each year $t \in \{2000, \dots, 2024\}$, the Expert System parameters are calibrated exclusively on data from years $\{1981, \dots, t-1\}$.
 
 \subsubsection{Expert System Configuration}
-Rather than training a "black box" meta-learner, we employ a transparent Threshold Switching Logic driven by the ratio $S = Y_{hybrid} / Y_{trend}$, where $Y_{hybrid}$ is the yield forecast from the Hybrid XGB signal generator. This ratio proxies the physiological stress level relative to the technological trend. The system defines three operational regimes:
+Rather than training a "black box" meta-learner, we employ a transparent Threshold Switching Logic driven by the ratio $S = Y_{hybrid} / Y_{trend}$, where $Y_{hybrid}$ is the yield forecast from the Hybrid XGB signal generator. This ratio proxies the physiological stress level relative to the technological trend. The thresholds were calibrated by minimizing the \textbf{Regret} ($w_{d,t}$), defined as the difference between the baseline error ($E_{trend}$) and the best-case oracle error:
+\begin{equation}
+    w_{d,t} = |Y_{d,t} - \hat{y}_{trend}(d,t)| - \min_{k \in \{1,2,3\}} |Y_{d,t} - \hat{y}_k(d,t)|
+\end{equation}
+The system defines three operational regimes:
 
 \begin{enumerate}
     \item \textbf{Safety Mode (Extreme Stress):} Triggered when $S < 0.8$. In cases of extreme predicted divergence, the system defaults to the conservative $M_1$ (Trend) baseline to prevent over-reaction to potential false alarms.
