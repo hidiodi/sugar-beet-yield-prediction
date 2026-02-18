@@ -21,17 +21,17 @@ SCRIPTS = [
     #"src/02_models/01_simulation/multivariate_heat_signal.py",
 
     # --- 2. Feature Engineering & Trend ---
-    "src/02_models/03_components/statistical/estimate_yield_trend.py",
-    "src/02_models/02_features/generate_stage1_features.py",
-    "src/02_models/02_features/generate_stage2_features.py",
+    #"src/02_models/03_components/statistical/estimate_yield_trend.py",
+    #"src/02_models/02_features/generate_stage1_features.py",
+    #"src/02_models/02_features/generate_stage2_features.py",
 
     # --- 3. Component Models ---
-    "src/02_models/03_components/native_ensemble/train_physics_informed_model.py",
-    "src/02_models/03_components/native_ensemble/train_physics_ensemble.py",
-    "src/02_models/03_components/hybrid_xgb/train_yield_ratio_xgb.py",
-    "src/02_models/03_components/hybrid_xgb/backtest_yield_ratio_xgb.py" ,
-    "src/02_models/03_components/robust_linear/train_robust_integrator.py",
-    "src/02_models/03_components/v31_solar/run_solar_gate.py",
+    #"src/02_models/03_components/native_ensemble/train_physics_informed_model.py",
+    #"src/02_models/03_components/native_ensemble/train_physics_ensemble.py",
+    #"src/02_models/03_components/hybrid_xgb/train_yield_ratio_xgb.py",
+    #"src/02_models/03_components/hybrid_xgb/backtest_yield_ratio_xgb.py" ,
+    #"src/02_models/03_components/robust_linear/train_robust_integrator.py",
+    #"src/02_models/03_components/v31_solar/run_solar_gate.py",
 
     # --- 4. Super Ensemble ---
     "src/02_models/04_super_ensemble/prepare_ensemble_data.py",

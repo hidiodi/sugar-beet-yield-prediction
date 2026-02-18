@@ -1,8 +1,6 @@
 import pandas as pd
 import logging
 from pathlib import Path
-from xgboost import XGBClassifier
-from sklearn.metrics import mean_absolute_error
 import json
 import sys
 import numpy as np
@@ -11,98 +9,91 @@ project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 from src import config as global_config
 import importlib
+
 analysis_config = importlib.import_module("src.03_analysis.config")
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 CONFIG = analysis_config.MODEL_COMPARISON_CONFIG
 OUTPUT_DIR = Path(CONFIG['OUTPUT_DIR'])
 INPUT_FILENAME = 'super_ensemble_training_data.csv'
-MODEL_FILENAME = 'super_ensemble_meta_learner_TSCV.json'
-LABEL_MAP_FILENAME = 'meta_learner_label_map_TSCV.json'
+# Changed: Now loading weights/params instead of a binary model
+METADATA_FILENAME = 'super_ensemble_weights.json'
 FINAL_FORECAST_FILENAME = 'super_ensemble_final_forecast_TSCV.csv'
 
 TEST_YEAR_START = 2020
 
 
+def super_ensemble_logic(row, params):
+    """
+    Returns (prediction, regime_label)
+    """
+    robust = row.get('Robust_Linear_pred', np.nan)
+    v31 = row.get('V31_Solar_Gated_pred', np.nan)
+    trend = row.get('Statistical_Trend_pred', np.nan)
+    hybrid = row.get('Hybrid_XGB_pred', np.nan)
+
+    if pd.isna(robust) or pd.isna(v31) or pd.isna(trend):
+        return trend if not pd.isna(trend) else robust, "Fallback"
+
+    signal = hybrid / trend if trend > 0 else 1.0
+
+    if signal < params['stress_threshold']:
+        return trend, "Statistical Trend (Stress Mode)"
+    elif signal > params['bumper_threshold']:
+        return robust, "Robust Linear (Bumper Mode)"
+    else:
+        # Blend
+        pred = (params['robust_weight'] * robust +
+                params['v31_weight'] * v31 +
+                (1.0 - params['robust_weight'] - params['v31_weight']) * trend)
+        return pred, "Expert Blend (Normal)"
+
 def generate_forecast():
     input_path = OUTPUT_DIR / INPUT_FILENAME
-    model_path = OUTPUT_DIR / MODEL_FILENAME
-    map_path = OUTPUT_DIR / LABEL_MAP_FILENAME
+    meta_path = OUTPUT_DIR / METADATA_FILENAME
 
-    if not model_path.exists(): return
+    if not meta_path.exists():
+        logging.error(f"Metadata {METADATA_FILENAME} not found. Run train_meta_regressor.py first.")
+        return
 
-    logging.info("--- Generating Consensus-Aware Super-Ensemble Forecast ---")
+    logging.info("--- Generating Expert-System Super-Ensemble Forecast ---")
     df = pd.read_csv(input_path)
 
-    clf = XGBClassifier()
-    clf.load_model(model_path)
+    with open(meta_path, 'r') as f:
+        metadata = json.load(f)
 
-    with open(map_path, 'r') as f:
-        label_map = json.load(f)
+    params = metadata['params']
+    logging.info(f"Loaded Strategy: {metadata['strategy']}")
+    logging.info(f"Parameters: {params}")
 
-    sorted_models = sorted(label_map.keys(), key=lambda x: label_map[x])
+    # Apply Inference Logic
+    results = df.apply(lambda row: super_ensemble_logic(row, params), axis=1)
+    df['Super_Ensemble_pred'] = [r[0] for r in results]
+    df['Predicted_Best_Model'] = [r[1] for r in results]  # Restore the missing column
 
-    # Feature Selection (Must match Training!)
-    # FIX: Explicitly exclude Regret_Weight and Median_Error so they aren't used as features
-    exclude_cols = [
-        'year', 'district_no', 'kreisYield', 'Best_Model', 'Oracle_Error',
-        'Predicted_Model', 'Switch_Prediction', 'Target_Encoded',
-        'Is_Garbage_Data', 'Raw_Bias', 'Regret_Weight', 'Median_Error'
-    ]
+    df['Super_Ensemble_pred'] = df['Super_Ensemble_pred'].clip(lower=100, upper=1200)
 
-    pred_cols = [c for c in df.columns if c.endswith('_pred') and c != 'Statistical_Trend_pred']
-    feature_cols = [c for c in df.columns if c not in exclude_cols + pred_cols]
-
-    logging.info(f"Inference Features ({len(feature_cols)}): {feature_cols}")
-
-    # Predict Probas
-    probas = clf.predict_proba(df[feature_cols])
-
-    # Soft Voting
-    weighted_preds = np.zeros(len(df))
-    for idx, model_name in enumerate(sorted_models):
-        pred_col = f"{model_name}_pred"
-        model_prob = probas[:, idx]
-        weighted_preds += (df[pred_col] * model_prob)
-        df[f'Prob_{model_name}'] = model_prob
-
-    df['Super_Ensemble_pred'] = weighted_preds
-    df['Predicted_Best_Model'] = [sorted_models[i] for i in np.argmax(probas, axis=1)]
-
-    # Analysis
+    # Logging and Comparison
     df_test = df[df['year'] >= TEST_YEAR_START].copy()
-    if not df_test.empty:
-        if 'Oracle_Error' not in df_test.columns: pass
-
+    if not df_test.empty and 'kreisYield' in df_test.columns:
+        from sklearn.metrics import mean_absolute_error
         mae_trend = mean_absolute_error(df_test['kreisYield'], df_test['Statistical_Trend_pred'])
-        mae_ens_insample = mean_absolute_error(df_test['kreisYield'], df_test['Super_Ensemble_pred'])
+        mae_ens = mean_absolute_error(df_test['kreisYield'], df_test['Super_Ensemble_pred'])
 
         logging.info("\n" + "=" * 80)
-        logging.info(f"TEST PERIOD ({TEST_YEAR_START}-2024)")
+        logging.info(f"TEST PERIOD ({TEST_YEAR_START}-2024) EVALUATION")
         logging.info("=" * 80)
         logging.info(f"Trend MAE:                     {mae_trend:.4f}")
-        logging.info(f"Super Ensemble (In-Sample):    {mae_ens_insample:.4f} (Fit to History - LEAKED)")
+        logging.info(f"Super Ensemble MAE:            {mae_ens:.4f}")
+        logging.info(f"Skill Improvement:             {((1 - mae_ens / mae_trend) * 100):.2f}%")
 
-        # Check for Honest Walk-Forward Predictions
-        honest_path = OUTPUT_DIR / 'super_ensemble_walkforward_predictions.csv'
-        if honest_path.exists():
-            df_honest = pd.read_csv(honest_path)
-            # Filter for the test period
-            df_honest_test = df_honest[df_honest['year'] >= TEST_YEAR_START]
-            if not df_honest_test.empty:
-                mae_honest = mean_absolute_error(df_honest_test['kreisYield'], df_honest_test['Super_Ensemble_pred'])
-                logging.info(f"Super Ensemble (Honest):       {mae_honest:.4f} (Real Performance)")
-                logging.info(f"Gain vs Trend (Honest):        {mae_trend - mae_honest:+.4f}")
-            else:
-                logging.warning("Honest predictions file exists but has no data for test period.")
-        else:
-            logging.warning("Honest predictions file not found. Run train_meta_regressor.py to generate it.")
+    # Final Output Formatting
+    out_cols = ['year', 'district_no', 'kreisYield', 'Super_Ensemble_pred', 'Predicted_Best_Model']
+    component_cols = [c for c in df.columns if c.endswith('_pred') and c != 'Super_Ensemble_pred']
 
-    df[['year', 'district_no', 'kreisYield', 'Super_Ensemble_pred', 'Predicted_Best_Model'] + [c for c in df.columns if
-                                                                                               c.startswith(
-                                                                                                   'Prob_')]].to_csv(
-        OUTPUT_DIR / FINAL_FORECAST_FILENAME, index=False)
-    logging.info(f"Saved to {OUTPUT_DIR / FINAL_FORECAST_FILENAME}")
+    final_df = df[out_cols + component_cols]
+    final_df.to_csv(OUTPUT_DIR / FINAL_FORECAST_FILENAME, index=False)
+    logging.info(f"\n✓ Saved final forecast to {OUTPUT_DIR / FINAL_FORECAST_FILENAME}")
 
 
 if __name__ == '__main__':
