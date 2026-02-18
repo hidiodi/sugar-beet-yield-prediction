@@ -1,7 +1,7 @@
 \section{Discussion}
 
 \subsection{Regime Selection Efficiency}
-The Expert System-Guided Ensemble achieves a \textbf{8.06\%} skill gain by employing a Threshold Switching strategy. Analysis reveals that the Expert System has become highly efficient at navigating the three-component architecture; selection error (choosing the suboptimal sub-model) now accounts for only \textbf{34.3\%} of the total residual error, while \textbf{65.7\%} remains systemic (the ``Component Gap'') (Fig.~\ref{fig:switching}). This confirms that the Expert System effectively maps specific bio-physical precursors to specialized model regimes, leaving the majority of remaining error to the inherent predictive limitations of the sub-models themselves.
+The Expert System-Guided Ensemble achieves a \textbf{8.06\%} skill gain by employing a Threshold Switching strategy. Analysis reveals that the Expert System has become highly efficient at navigating the three-component architecture; selection error ($E_{total} - E_{oracle}$) accounts for only \textbf{34.3\%} of the total residual error, while \textbf{65.7\%} remains systemic ($E_{oracle} / E_{total}$), representing the ``Component Gap'' (Fig.~\ref{fig:switching}). This confirms that the Expert System effectively maps specific bio-physical precursors to specialized model regimes, leaving the majority of remaining error to the inherent predictive limitations of the sub-models themselves.
 
 \begin{figure}[h]
     \centering
