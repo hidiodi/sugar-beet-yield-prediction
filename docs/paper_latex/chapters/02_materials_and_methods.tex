@@ -1,7 +1,7 @@
 \section{Materials and Methods}
 
 \subsection{Study Area and Datasets}
-The study covers sugarbeet cultivation districts in Germany, utilizing a multi-source dataset spanning 1981--2024. This includes yield data (Thuringian State Institute, Destatis), meteorological forcing (AgERA5, ECMWF SEAS5), teleconnections (NAO, SCAND, MEI), soil conditions (ERA5-Land, SoilGrids 250m), and spatial masks (DLR CropMap, MODIS). Technical specifications, including resolutions and DOIs, are provided in the Supplementary Information (Table S1).
+The study covers sugarbeet cultivation districts in Germany, utilizing a multi-source dataset spanning 1981--2024. The validation set (2000--2024) comprises $N=5041$ district-year observations, aggregated from approximately 202 active cultivation districts across 13 federal states. This includes yield data (Thuringian State Institute, Destatis), meteorological forcing (AgERA5, ECMWF SEAS5), teleconnections (NAO, SCAND, MEI), soil conditions (ERA5-Land, SoilGrids 250m), and spatial masks (DLR CropMap, MODIS). Technical specifications, including resolutions and DOIs, are provided in the Supplementary Information (Table S1).
 
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
 The Statistical Trend Baseline model ($M_1$) is a robust time-series forecasting pipeline executed via strict Walk-Forward Validation. The forecasting process for any target year $t$ involves a two-stage decomposition:
@@ -45,7 +45,7 @@ Rather than training a "black box" meta-learner, we employ a transparent Thresho
 \begin{equation}
     w_{d,t} = |Y_{d,t} - \hat{y}_{trend}(d,t)| - \min_{k \in \{1,2,3\}} |Y_{d,t} - \hat{y}_k(d,t)|
 \end{equation}
-The system defines three operational regimes:
+For this study, the switching thresholds were fixed globally based on domain knowledge of physiological stress points (representing a 20\% deviation), rather than dynamically optimized in each fold, to maintain physical interpretability and avoid overfitting to specific training windows. The system defines three operational regimes:
 
 \begin{enumerate}
     \item \textbf{Safety Mode (Extreme Stress):} Triggered when $S < 0.8$. In cases of extreme predicted divergence, the system defaults to the conservative $M_1$ (Trend) baseline to prevent over-reaction to potential false alarms.
@@ -66,4 +66,4 @@ During inference, the signal $S$ determines the active regime. This deterministi
 \end{figure}
 
 \subsection{Uncertainty Quantification}
-While the Expert System-Guided Ensemble produces point forecasts via threshold switching, component-level uncertainty is captured through quantile regression.
+While the Expert System-Guided Ensemble produces point forecasts via threshold switching, component-level uncertainty is inherently captured within the $S_{hybrid}$ signal generator (using XGBoost quantile regression) to inform regime detection stability, although full probabilistic forecasting envelopes are not evaluated in this study.
