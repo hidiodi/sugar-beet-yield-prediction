@@ -36,7 +36,7 @@
 \maketitle
 
 \begin{abstract}
-    This document provides technical details, comprehensive data specifications, model hyperparameters, and regional forensic analyses supporting the main text. This material ensures the reproducibility of the Super Ensemble pipeline and provides evidence for the regime-switching hypothesis.
+    This document provides technical details, comprehensive data specifications, model hyperparameters, and regional forensic analyses supporting the main text. This material ensures the reproducibility of the Expert System-Guided Ensemble pipeline and provides evidence for the regime-switching hypothesis.
 \end{abstract}
 
 \newpage
@@ -80,6 +80,16 @@ MOD13Q1 & NASA LP DAAC \citep{didan2015mod13q1} & 250m (16-day) & Vegetation Ano
 \section{Extended Mechanistic Formulas}
 The \textbf{Compound Failure Index} identifies yield crashes by aggregating stress vectors derived from WOFOST internal moisture balances \citep{boogaard1998wofost} and SEAS5 anomalies.
 
+\textbf{$M_3$ Bio-Physical Limits Logic}:
+The $M_3$ model applies a hierarchical decision tree to adjust the trend baseline ($Y_{trend}$):
+\begin{enumerate}
+    \item \textbf{Water Crash:} If $Z_{water} < -0.95$:
+    \[ M_3 = Y_{trend} \times \left(1.0 - \left(0.15 + |Z_{water} + 0.95| \times 0.25\right)\right) \]
+    \item \textbf{Bumper Potential:} If $Z_{water} > 1.0$ AND $Z_{solar} > -1.0$:
+    \[ M_3 = Y_{trend} \times \left(1.0 + \left(0.05 + (Z_{water} - 1.0) \times 0.05\right)\right) \]
+    \item \textbf{Else:} $M_3 = Y_{trend}$
+\end{enumerate}
+
 \textbf{Scorch Index} (Heat + Drought interaction):
 \begin{equation}
     \text{Scorch} = \max\left(Z_{\text{heat}} \times (-Z_{\text{bal}})^+ , \left(Z_{\text{heat}} - 1.5\right)^+ \times 2.0\right)
@@ -105,7 +115,7 @@ The skill score quantifies the improvement of the ensemble model relative to the
 % S3. COMPREHENSIVE HYPERPARAMETERS
 % ==========================================
 \section{Comprehensive Hyperparameters}
-Hyperparameters for the Meta-Learner were configured following best practices for robust generalization in high-noise agricultural environments \citep{paudel2022field}.
+Hyperparameters for the Expert System were configured following best practices for robust generalization in high-noise agricultural environments \citep{paudel2022field}.
 
 \begin{table}[h]
 \centering
@@ -124,12 +134,12 @@ Expert System & Thresholds: Safety ($S < 0.8$), Bumper ($S > 1.0$), Weights ($0.
 \end{table}
 
 % ==========================================
-% S5. IMPLEMENTATION SNIPPETS
+% S4. IMPLEMENTATION SNIPPETS
 % ==========================================
 \section{Implementation Details}
-As discussed in Section 2.6 of the main text, the $M_3$ component targets the yield-to-trend ratio rather than absolute yield to improve local optimization convergence[cite: 421, 422].
+As discussed in Section 2.6 of the main text, the $S_{hybrid}$ component targets the yield-to-trend ratio rather than absolute yield to improve local optimization convergence.
 
-\textbf{Yield-to-Ratio Scaling ($M_3$):}
+\textbf{Yield-to-Ratio Scaling ($S_{hybrid}$):}
 \begin{verbatim}
 # Predicting the Ratio between observed yield and WOFOST simulation
 df['yield_ratio'] = df['actual_yield'] / df['stage1_forecast']
