@@ -128,13 +128,13 @@ Hyperparameters for the Expert System were configured following best practices f
 $M_1$ Trend & LinearGAM ($n\_splines=10$), ARIMA($1,0,0$) \\ \hline
 $M_2$ Robust & HuberRegressor: $\epsilon=1.35, max\_iter=200$ \\ \hline
 $M_3$ Bio-Physical Limits & Solar-Gated Logic (Thresholds: $Z_{water} < -0.95$, $Z_{solar} > -1.0$) \\ \hline
-$S_{hybrid}$ Hybrid & XGBoost: $n\_est=1242, lr=0.057, max\_depth=3$ \citep{shahhosseini2021coupling} \\ \hline
+$S_{hybrid}$ Hybrid & XGBoost: $n\_est=1242, lr=0.057, max\_depth=3$ \\ \hline
 Expert System & Thresholds: Safety ($S < 0.8$), Bumper ($S > 1.0$), Weights ($0.6/0.4$) \\ \hline
 \end{tabular}%
 }
 \end{table}
 
-Hyperparameters for $S_{hybrid}$ were selected via a time-aware random search over 200 iterations, optimizing MAE on the walk-forward validation folds. The final values reflect the best-performing configuration within the constrained search space.
+Hyperparameters for $S_{hybrid}$ were selected via a time-aware random search over 200 iterations, optimizing MAE on the walk-forward validation folds, following the gradient boosting architecture of \citet{shahhosseini2021coupling}. The final values reflect the best-performing configuration within the constrained search space.
 
 % ==========================================
 % S4. IMPLEMENTATION SNIPPETS
