@@ -51,7 +51,7 @@ The switching thresholds were informed by domain knowledge of physiological stre
     \item \textbf{Safety Mode (Extreme Stress):} Triggered when $S < 0.8$. In cases of extreme predicted divergence, the system defaults to the conservative $M_1$ (Trend) baseline to prevent over-reaction to potential false alarms.
     \item \textbf{Bumper Mode (Upside Potential):} Triggered when $S > 1.0$. The system activates $M_2$ (Robust Linear) to capture yield potential exceeding the trend.
     \item \textbf{Normal Regime:} Triggered when $0.8 \le S \le 1.0$. The forecast is calculated as a weighted blend:
-    \[ \hat{Y} = 0.6 \cdot M_2 + 0.4 \cdot M_3 \]
+    \[ \hat{Y} = 0.6 \cdot M_2 + 0.4 \cdot M_3 \quad \text{(where } M_2, M_3 \text{ denote absolute yields)} \]
     This regime activates the Bio-Physical Limits Model ($M_3$), allowing physics-informed adjustments for radiation and water balance without fully committing to extreme scenarios.
 \end{enumerate}
 
