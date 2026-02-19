@@ -45,7 +45,7 @@ Rather than training a "black box" meta-learner, we employ a transparent Thresho
 \begin{equation}
     w_{d,t} = |Y_{d,t} - \hat{y}_{trend}(d,t)| - \min_{k \in \{1,2,3\}} |Y_{d,t} - \hat{y}_k(d,t)|
 \end{equation}
-The switching thresholds were informed by domain knowledge of physiological stress points (representing a 20\% deviation) and validated by minimizing the Regret metric on the training set. They were fixed globally rather than dynamically optimized in each fold to maintain physical interpretability and avoid overfitting to specific training windows. The system defines three operational regimes:
+The switching thresholds were informed by domain knowledge of physiological stress points (representing a 20\% deviation) and validated by minimizing the Regret metric on the training set. Specifically, domain knowledge defined the candidate search space (thresholds within $\pm$0.3 of unity), and Regret minimisation confirmed the final values within that space. They were fixed globally rather than dynamically optimized in each fold to maintain physical interpretability and avoid overfitting to specific training windows. The system defines three operational regimes:
 
 \begin{enumerate}
     \item \textbf{Safety Mode (Extreme Stress):} Triggered when $S < 0.8$. In cases of extreme predicted divergence, the system defaults to the conservative $M_1$ (Trend) baseline to prevent over-reaction to potential false alarms.
