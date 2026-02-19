@@ -1,5 +1,5 @@
 \section{Results}
-Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms the Expert System-Guided Ensemble's superiority. While absolute predictive power ($R^2$) naturally declines during the volatile 2010--2024 period due to increased stochasticity, the model's Skill Score actually improves from \textbf{8.06\% to 10.75\%}, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
+Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) demonstrates consistent improvement over the trend baseline. While absolute predictive power ($R^2$) naturally declines during the volatile 2010--2024 period due to increased stochasticity, the model's Skill Score actually improves from \textbf{8.06\% to 10.75\%}, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
 
 \begin{table}[h]
 \centering
@@ -25,7 +25,7 @@ Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) confirms t
 \end{figure}
 
 \subsection{Anomaly Forensics (Black Swan Events)}
-Table~\ref{tab:anomalies} details performance during historic anomalies. The Expert System-Guided Ensemble significantly reduced errors in the 2018 drought (\textbf{+58.4 dt/ha}) by identifying stress signals in SEAS5 forecasts, while also capturing the 2014 bumper year upside (\textbf{+4.2 dt/ha}). However, in the 2003 heatwave, the model slightly underperformed the trend baseline (\textbf{-7.4 dt/ha}).
+Table~\ref{tab:anomalies} details performance during historic anomalies. The Expert System-Guided Ensemble significantly reduced errors in the 2018 drought (\textbf{+58.4 dt/ha}) by identifying stress signals in SEAS5 forecasts, while also capturing the 2014 bumper year upside (\textbf{+4.2 dt/ha}). However, in the 2003 heatwave, the model slightly underperformed the trend baseline (-7.4 dt/ha).
 
 \begin{table}[h]
 \centering
