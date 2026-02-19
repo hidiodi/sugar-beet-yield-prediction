@@ -134,6 +134,8 @@ Expert System & Thresholds: Safety ($S < 0.8$), Bumper ($S > 1.0$), Weights ($0.
 }
 \end{table}
 
+Hyperparameters for $S_{hybrid}$ were selected via a time-aware random search over 200 iterations, optimizing MAE on the walk-forward validation folds. The final values reflect the best-performing configuration within the constrained search space.
+
 % ==========================================
 % S4. IMPLEMENTATION SNIPPETS
 % ==========================================
