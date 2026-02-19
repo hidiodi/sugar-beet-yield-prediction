@@ -14,7 +14,7 @@ The Statistical Trend Baseline model ($M_1$) is a robust time-series forecasting
     \[ \hat{y}_{\text{residual}}(t) = \text{ARIMA}(R_{1 \dots t-1}) \]
 \end{enumerate}
 
-The final trend forecast $M_1$ for year $t$ is the sum of these two components:
+A minimum training window of 10 years was enforced before fitting the ARIMA component to ensure statistical stability. The final trend forecast $M_1$ for year $t$ is the sum of these two components:
 \[ M_1(t) = \hat{y}_{\text{trend}}(t) + \hat{y}_{\text{residual}}(t) \]
 
 Following the recommendation of \citet{paudel2022field}, we employed a time-based expanding window for training and validation to avoid temporal leakage.
@@ -26,7 +26,7 @@ Our two-stage pipeline translates raw data into agronomic signals. First, a \tex
 Machine learning components use Scikit-Learn \cite{scikitlearn} and XGBoost \cite{chen2016xgboost}. The system utilizes three specialized sub-models $M_k$ and one signal generator:
 \begin{itemize}
     \item \textbf{$M_1$: Statistical Trend Baseline} as defined in Section 2.2.
-    \item \textbf{$M_2$: Robust Linear Integrator}, a HuberRegressor ($\epsilon=1.35$) predicting residuals from the statistical trend, providing robustness against non-climatic outliers.
+    \item \textbf{$M_2$: Robust Linear Integrator}, a HuberRegressor ($\epsilon=1.35$) predicting residuals from the statistical trend. The final $M_2$ forecast is the sum of the trend and the predicted residual, providing robustness against non-climatic outliers.
     \item \textbf{$M_3$: Bio-Physical Limits Model}, utilizing conditional logic based on radiation flux and water balance. It identifies both high-yield potential years (when radiation is high and water sufficient) and yield crashes (when extreme drought thresholds are breached).
     \item \textbf{$S_{hybrid}$: Hybrid XGBoost (Signal Generator)}, which predicts the ratio ($Y_{hybrid}$) between actual yield and WOFOST Stage 1 simulation. This component is used exclusively for regime detection and does not contribute directly to the final ensemble sum.
 \end{itemize}
@@ -45,7 +45,7 @@ Rather than training a "black box" meta-learner, we employ a transparent Thresho
 \begin{equation}
     w_{d,t} = |Y_{d,t} - \hat{y}_{trend}(d,t)| - \min_{k \in \{1,2,3\}} |Y_{d,t} - \hat{y}_k(d,t)|
 \end{equation}
-For this study, the switching thresholds were fixed globally based on domain knowledge of physiological stress points (representing a 20\% deviation), rather than dynamically optimized in each fold, to maintain physical interpretability and avoid overfitting to specific training windows. The system defines three operational regimes:
+The switching thresholds were informed by domain knowledge of physiological stress points (representing a 20\% deviation) and validated by minimizing the Regret metric on the training set. They were fixed globally rather than dynamically optimized in each fold to maintain physical interpretability and avoid overfitting to specific training windows. The system defines three operational regimes:
 
 \begin{enumerate}
     \item \textbf{Safety Mode (Extreme Stress):} Triggered when $S < 0.8$. In cases of extreme predicted divergence, the system defaults to the conservative $M_1$ (Trend) baseline to prevent over-reaction to potential false alarms.

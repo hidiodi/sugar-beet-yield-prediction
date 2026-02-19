@@ -29,7 +29,7 @@
 % --- Title Information ---
 \title{Supplementary Information for:\\ \textbf{Hybrid Yield Forecasting: Bridging Process-Based Simulation and Machine Learning for Pre-Season Risk Assessment}}
 \author{Tim Schweitzer}
-\date{February 13, 2026}
+\date{\today}
 
 \begin{document}
 
@@ -53,7 +53,7 @@
 % S1. MASTER DATA TABLE
 % ==========================================
 \section{Master Data Table}
-The operational forecasting pipeline integrates 11 distinct data streams to bridge the gap between seasonal climate precursors and field-level physiological responses.
+The operational forecasting pipeline integrates multi-source data streams to bridge the gap between seasonal climate precursors and field-level physiological responses.
 
 \begin{table}[h]
 \centering
@@ -69,6 +69,7 @@ ERA5-Land & ECMWF \citep{era5land} & 0.1$^\circ$ (Monthly) & Soil Moisture / Tem
 SoilGrids & ISRIC \citep{hengl2017soilgrids250m} & 250m & Static Soil Properties \\ \hline
 CropMap & DLR \citep{dlr_cropmap} & 10m & Spatial Mask \\ \hline
 MOD13Q1 & NASA LP DAAC \citep{didan2015mod13q1} & 250m (16-day) & Vegetation Anomalies \\ \hline
+Teleconnections & NOAA (NAO, SCAND, MEI) & Monthly & Climate Indices \\ \hline
 \end{tabular}%
 }
 \label{tab:datasources_si}
