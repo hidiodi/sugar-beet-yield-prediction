@@ -65,16 +65,10 @@ def calculate_weather_proxies(df_stage1):
                 # 1. Pest Pressure: Mild Winter Days (Jan/Feb Tmin > 0)
                 winter_mask = group['month'].isin([1, 2])
                 mild_days = group[winter_mask & (group['tmin'] > 0)].shape[0]
-
-                # 2. Fungal Risk: Warm & Wet Spring (May/Jun Tmax > 15 & Precip > 1mm)
-                spring_mask = group['month'].isin([5, 6])
-                fungal_days = group[spring_mask & (group['tmax'] > 15) & (group['precip'] > 1.0)].shape[0]
-
                 proxy_results.append({
                     'district_no': district,
                     'year': year,
                     'mild_winter_days': mild_days,
-                    'fungal_risk_days': fungal_days
                 })
 
         except Exception as e:
@@ -105,13 +99,6 @@ def main():
     else:
         logger.warning("Daily weather directory not found. Skipping weather proxies.")
 
-    # FALLBACK: Ensure columns exist even if merge failed or data missing
-    for col in ['mild_winter_days', 'fungal_risk_days']:
-        if col not in df.columns:
-            df[col] = 0
-        else:
-            df[col] = df[col].fillna(0)
-
     # 2. Vegetation Vigor Index
     if 'winter_cropland_ndvi_anomaly' in df.columns and 'spring_precip_anomaly_forecast' in df.columns:
         df['VegetationVigorIndex'] = (df['winter_cropland_ndvi_anomaly'] +
@@ -129,7 +116,7 @@ def main():
         df['RootZoneDepletion'] = 0
 
     # Save ONLY New Features to avoid redundancy
-    cols_to_keep = ['year', 'district_no', 'mild_winter_days', 'fungal_risk_days', 'VegetationVigorIndex',
+    cols_to_keep = ['year', 'district_no', 'mild_winter_days', 'VegetationVigorIndex',
                     'RootZoneDepletion']
     df_final = df[cols_to_keep]
 
