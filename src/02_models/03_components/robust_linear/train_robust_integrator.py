@@ -90,7 +90,7 @@ def load_merged_data():
     df['wofost_residual'] = df['wofost_yield_water_limited'] - df['trend_forecast']
 
     # Fill Stage 2 NaNs
-    for c in ['VegetationVigorIndex', 'RootZoneDepletion', 'mild_winter_days', 'fungal_risk_days']:
+    for c in ['VegetationVigorIndex', 'RootZoneDepletion', 'mild_winter_days']:
         if c in df.columns: df[c] = df[c].fillna(0)
 
     # Drop rows where we can't train or evaluate
@@ -107,7 +107,6 @@ def train_stage2_model(df):
         'VegetationVigorIndex',  # Stage 2 Satellite
         'RootZoneDepletion',  # Stage 2 Water
         'mild_winter_days',  # Stage 2 Pest
-        'fungal_risk_days'  # Stage 2 Disease
     ]
 
     features = [f for f in features if f in df.columns]

@@ -3,179 +3,173 @@ import numpy as np
 import logging
 from pathlib import Path
 import sys
+from scipy.stats import spearmanr, pearsonr
+from sklearn.ensemble import RandomForestRegressor
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# --- Project Setup ---
-project_root = Path(__file__).resolve().parents[2]
+# --- Setup ---
+project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
-from src import config
+
+from src import config as global_config
+import importlib
+
+models_config = importlib.import_module("src.02_models.config")
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
-# --- DYNAMIC CONFIGURATION (Fixed Path Mismatch) ---
-# We use the same config dictionary that the data prep scripts used
-MODEL_CONFIG = config.MODEL_COMPARISON_CONFIG
-INPUT_DIR = Path(MODEL_CONFIG['OUTPUT_DIR'])
-
-TRAINING_DATA_PATH = INPUT_DIR / 'super_ensemble_training_data.csv'
-FORECAST_PATH = INPUT_DIR / 'super_ensemble_final_forecast_TSCV.csv'
-OUTPUT_REPORT_DIR = config.BASE_DIR / 'reports/super_analysis'
-OUTPUT_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+# Adjust paths if necessary based on your current pipeline state
+STAGE1_PATH = models_config.XGBOOST_TRAINING_CONFIG['DATA_PATH']
+STAGE2_PATH = global_config.DATA_DIR / '05_model_input/stage2_refined_features.csv'
+OUTPUT_DIR = global_config.DATA_DIR / '06_model_output/analysis'
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def load_data():
-    """Merges the Ground Truth Potential (Training Data) with Actual Decisions (Forecast)."""
-    if not TRAINING_DATA_PATH.exists():
-        logging.error(f"Missing Training Data: {TRAINING_DATA_PATH}")
+def load_and_prepare_data():
+    logging.info("--- Loading Data for March 1st Predictability Analysis ---")
+
+    if not STAGE1_PATH.exists():
+        logging.error(f"Stage 1 file missing: {STAGE1_PATH}")
         return None
-    if not FORECAST_PATH.exists():
-        logging.error(f"Missing Forecast Data: {FORECAST_PATH}")
+    df = pd.read_csv(STAGE1_PATH)
+
+    if STAGE2_PATH.exists():
+        df2 = pd.read_csv(STAGE2_PATH)
+        df = pd.merge(df, df2, on=['year', 'district_no'], how='left')
+    else:
+        logging.warning("Stage 2 features missing, proceeding with Stage 1 only.")
+
+    # We need Actual Yield and a Baseline (Trend or Stage 1 Forecast)
+    if 'kreisYield' not in df.columns:
+        logging.error("Target 'kreisYield' is missing.")
         return None
 
-    # Load Ground Truth (The "Oracle")
-    df_truth = pd.read_csv(TRAINING_DATA_PATH)
+    trend_col = 'stage1_forecast' if 'stage1_forecast' in df.columns else 'trend_forecast'
+    if trend_col not in df.columns:
+        logging.error("No trend/baseline forecast column found.")
+        return None
 
-    # Load Actual Decisions (The "Meta-Learner")
-    df_pred = pd.read_csv(FORECAST_PATH)
+    # Filter out missing values and calculate targets
+    df = df.dropna(subset=['kreisYield', trend_col])
+    df = df[df[trend_col] > 0]  # Prevent division by zero
 
-    # Merge on keys
-    # Note: df_pred has the 'Super_Ensemble_pred', df_truth has 'Oracle_Error' and 'Best_Model'
-    # We need to be careful not to duplicate columns if they exist in both
-    cols_to_use = ['year', 'district_no', 'Super_Ensemble_pred', 'Predicted_Best_Model']
-    if 'Prob_Robust_Linear' in df_pred.columns:  # Add probabilities if available
-        prob_cols = [c for c in df_pred.columns if c.startswith('Prob_')]
-        cols_to_use.extend(prob_cols)
+    # Calculate the Climate Target: Yield Ratio
+    df['yield_ratio'] = df['kreisYield'] / df[trend_col]
+    df['yield_residual'] = df['kreisYield'] - df[trend_col]
 
-    df = pd.merge(df_truth, df_pred[cols_to_use], on=['year', 'district_no'], how='inner')
-
+    logging.info(
+        f"Loaded {len(df)} records. Target: Yield Ratio (mean: {df['yield_ratio'].mean():.3f}, std: {df['yield_ratio'].std():.3f})")
     return df
 
 
-def analyze_regret(df):
-    """
-    Regret = Error of Selected Model - Error of Best Possible Model (Oracle).
-    """
-    logging.info("\n" + "=" * 80)
-    logging.info(" 1. REGRET ANALYSIS (Selector Performance)")
-    logging.info("=" * 80)
+def analyze_correlations(df):
+    logging.info("\n--- 1. Bivariate Correlation Analysis (Spearman Rank) ---")
+    logging.info("Target: Yield Ratio (Actual / Trend). Positive correlation means feature increases yield.")
 
-    # Calculate Actual Error
-    df['Actual_Error'] = (df['kreisYield'] - df['Super_Ensemble_pred']).abs()
+    # Define feature groups we want to investigate
+    feature_groups = {
+        "ECMWF Forecasts (Summer)": [
+            'summer_precip_anomaly_forecast', 'summer_temp_anomaly_forecast',
+            'summer_solar_rad_anomaly_forecast', 'summer_water_balance_anomaly',
+            'pred_days', 'mv_days', 'z_rain'
+        ],
+        "March 1st Observables (Winter/Spring)": [
+            'effective_winter_water', 'winter_precip_sum', 'z_tank',
+            'mild_winter_days', 'sowing_doy', 'feb_frost_days', 'spring_precip_anomaly_forecast'
+        ],
+        "Simulated/Composite Indexes": [
+            'wofost_yield_water_limited', 'solar_capture_potential',
+            'VegetationVigorIndex', 'RootZoneDepletion', 'Index_Failure', 'Index_Bumper'
+        ],
+        "Potential Leakage Risk (Observed Summer Data)": [
+            'summer_days_tmax_gt_30c', 'heat_stress_sq', 'z_heat'
+        ]
+    }
 
-    # Calculate Regret (Actual - Ideal)
-    # Ensure Oracle Error is non-negative
-    df['Regret'] = (df['Actual_Error'] - df['Oracle_Error']).clip(lower=0)
+    results = []
+    for group_name, cols in feature_groups.items():
+        logging.info(f"\n[{group_name}]")
+        for col in cols:
+            if col in df.columns:
+                clean_df = df.dropna(subset=[col, 'yield_ratio'])
+                if len(clean_df) > 50:
+                    corr, p_val = spearmanr(clean_df[col], clean_df['yield_ratio'])
+                    sig = "***" if p_val < 0.001 else "**" if p_val < 0.01 else "*" if p_val < 0.05 else ""
+                    logging.info(f"{col:<35} : {corr:>6.3f} {sig}")
+                    results.append({'Feature': col, 'Group': group_name, 'Correlation': corr, 'P-val': p_val})
+            else:
+                pass  # Feature not in dataset
 
-    total_regret = df['Regret'].mean()
-    oracle_mae = df['Oracle_Error'].mean()
-    actual_mae = df['Actual_Error'].mean()
-
-    logging.info(f"Current Ensemble MAE: {actual_mae:.2f}")
-    logging.info(f"Oracle (Perfect) MAE: {oracle_mae:.2f}")
-    logging.info(f"Average Regret:       {total_regret:.2f} (Loss due to imperfect selection)")
-
-    # Conclusion
-    share_of_loss = 0
-    if actual_mae > 0:
-        share_of_loss = (total_regret / actual_mae) * 100
-
-    logging.info(f"Insight: {share_of_loss:.1f}% of the error comes from picking the wrong model.")
-
-    if share_of_loss > 20:
-        logging.info(">> RECOMMENDATION: Focus on improving the META-LEARNER (Classifier).")
-    else:
-        logging.info(">> RECOMMENDATION: Focus on improving the BASE MODELS (Physics/Signals).")
-
-    return df
-
-
-def analyze_systemic_failure(df):
-    """
-    Where does even the Oracle fail?
-    """
-    logging.info("\n" + "=" * 80)
-    logging.info(" 2. SYSTEMIC FAILURE ANALYSIS (Blind Spots)")
-    logging.info("=" * 80)
-
-    # Define "Failure" as Oracle Error > 50 dt/ha
-    hard_rows = df[df['Oracle_Error'] > 50].copy()
-
-    logging.info(f"Number of 'Hard' predictions: {len(hard_rows)} ({len(hard_rows) / len(df):.1%})")
-
-    # 1. Temporal Analysis
-    worst_years = hard_rows.groupby('year')['Oracle_Error'].mean().sort_values(ascending=False).head(5)
-    logging.info("\nTop 5 Years where ALL models fail:")
-    logging.info(worst_years)
-
-    # 2. Regional Analysis (East vs West)
-    df['Region'] = df['district_no'].astype(str).str.zfill(5).str[:2].astype(int).apply(
-        lambda x: 'East (GDR)' if x >= 11 else 'West'
-    )
-
-    region_perf = df.groupby('Region')['Oracle_Error'].mean()
-    logging.info("\nUnsolvable Error by Region:")
-    logging.info(region_perf)
-
-    return hard_rows
+    return pd.DataFrame(results)
 
 
-def analyze_component_specialization(df):
-    """
-    When is each model the winner?
-    """
-    logging.info("\n" + "=" * 80)
-    logging.info(" 3. COMPONENT SPECIALIZATION (Who wins when?)")
-    logging.info("=" * 80)
+def run_multivariate_importance(df):
+    logging.info("\n--- 2. Multivariate Feature Importance (Random Forest) ---")
 
-    # Best Model Distribution
-    dist = df['Best_Model'].value_counts(normalize=True) * 100
-    logging.info("True 'Best Model' Frequency (The Oracle's Choice):")
-    logging.info(dist)
+    # Select numeric features excluding targets and IDs
+    exclude_cols = ['year', 'district_no', 'kreisYield', 'yield_ratio', 'yield_residual',
+                    'stage1_forecast', 'trend_forecast', 'is_gdr', 'state_encoded']
 
-    logging.info("\nWinning Conditions (Mean Deviation from Trend when winning):")
-    for model in dist.index:
-        signal_col = f'Signal_{model}'
-        if signal_col in df.columns:
-            wins = df[df['Best_Model'] == model]
-            avg_signal = wins[signal_col].mean()
-            logging.info(f"  {model:<20}: {avg_signal:+.2f} dt/ha vs Trend")
+    features = [c for c in df.select_dtypes(include=[np.number]).columns if c not in exclude_cols]
+
+    # Drop columns with too many NaNs
+    df_clean = df.dropna(subset=['yield_ratio'])
+    features = [f for f in features if df_clean[f].isna().mean() < 0.1]
+    df_clean = df_clean.fillna(0)
+
+    X = df_clean[features]
+    y = df_clean['yield_ratio']
+
+    rf = RandomForestRegressor(n_estimators=150, max_depth=7, random_state=42, n_jobs=-1)
+    rf.fit(X, y)
+
+    importances = pd.DataFrame({
+        'Feature': features,
+        'Importance': rf.feature_importances_
+    }).sort_values('Importance', ascending=False)
+
+    logging.info("Top 15 Drivers of Yield Ratio (Multivariate):")
+    for idx, row in importances.head(15).iterrows():
+        logging.info(f"{row['Feature']:<35} : {row['Importance']:.4f}")
+
+    return importances
 
 
-def generate_action_plan(df):
-    logging.info("\n" + "=" * 80)
-    logging.info(" 4. FINAL STRATEGIC VERDICT")
-    logging.info("=" * 80)
+def check_extreme_regimes(df):
+    logging.info("\n--- 3. Extreme Regime Analysis ---")
 
-    actual_mae = df['Actual_Error'].mean()
-    oracle_mae = df['Oracle_Error'].mean()
+    stress_mask = df['yield_ratio'] < 0.85
+    bumper_mask = df['yield_ratio'] > 1.10
+    normal_mask = (df['yield_ratio'] >= 0.85) & (df['yield_ratio'] <= 1.10)
 
-    print(f"1. OPTIMIZATION SPACE: We can gain {actual_mae - oracle_mae:.2f} dt/ha just by fixing the Classifier.")
+    logging.info(f"Crash Years (<85% trend): {stress_mask.sum()} samples")
+    logging.info(f"Bumper Years (>110% trend): {bumper_mask.sum()} samples")
+    logging.info(f"Normal Years: {normal_mask.sum()} samples")
 
-    hard_years = df.groupby('year')['Oracle_Error'].mean()
-    # Safe check for keys
-    is_2003_bad = hard_years.get(2003, 0) > 60
-    is_2018_bad = hard_years.get(2018, 0) > 60
+    key_metrics = ['summer_water_balance_anomaly', 'effective_winter_water', 'summer_days_tmax_gt_30c', 'Index_Failure']
 
-    print("\n2. MODEL GAPS:")
-    if is_2003_bad:
-        print(f"   -> 2003 is still unsolved (Oracle Error: {hard_years.get(2003):.1f}). Needs Heat Physics.")
-    else:
-        print("   -> 2003 is Solved/Manageable.")
-
-    if is_2018_bad:
-        print(f"   -> 2018 is still unsolved (Oracle Error: {hard_years.get(2018):.1f}). Needs Drought Physics.")
-    else:
-        print("   -> 2018 is Solved/Manageable.")
+    for metric in key_metrics:
+        if metric in df.columns:
+            crash_mean = df.loc[stress_mask, metric].mean()
+            norm_mean = df.loc[normal_mask, metric].mean()
+            bump_mean = df.loc[bumper_mask, metric].mean()
+            logging.info(f"\nMean of [{metric}]:")
+            logging.info(f"  Crash:  {crash_mean:.2f}")
+            logging.info(f"  Normal: {norm_mean:.2f}")
+            logging.info(f"  Bumper: {bump_mean:.2f}")
 
 
 def main():
-    df = load_data()
-    if df is not None:
-        df = analyze_regret(df)
-        analyze_systemic_failure(df)
-        analyze_component_specialization(df)
-        generate_action_plan(df)
+    df = load_and_prepare_data()
+    if df is None:
+        return
+
+    corr_df = analyze_correlations(df)
+    imp_df = run_multivariate_importance(df)
+    check_extreme_regimes(df)
+
+    logging.info("\nAnalysis Complete.")
 
 
 if __name__ == "__main__":
