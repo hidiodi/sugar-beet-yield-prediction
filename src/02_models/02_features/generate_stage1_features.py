@@ -176,7 +176,7 @@ def probability_to_days(df):
         return pd.Series(np.nan, index=df.index)
 
 def main():
-    logging.info("--- Starting Feature Engineering (v17.0 - Scenario Analysis Mode) ---")
+    logging.info("--- Starting Feature Engineering (v17.1 - Corrected Order of Operations & Math) ---")
     paths = CONFIG['FILE_PATHS']
     paths['OUTPUT_DIR'].mkdir(exist_ok=True, parents=True)
 
@@ -185,23 +185,20 @@ def main():
     df['kreisYield'] = pd.to_numeric(df['yield'], errors='coerce')
     df.dropna(subset=['kreisYield'], inplace=True)
 
+    # 1. Base Economcs
     df_econ = load_economics(paths['PRODUCER_PRICE_CSV'], paths['INPUT_PRICE_CSV'])
     if not df_econ.empty: df = pd.merge(df, df_econ, on='year', how='left')
 
+    # 2. Base Forecasts & Custom Heat Days
     df_fcst = load_forecasts_with_mapping(paths['ECMWF_FORECAST_FEATURES_CSV'])
     if not df_fcst.empty:
         cols = [c for c in df_fcst.columns if c not in df.columns or c in ['year', 'district_no']]
         df = pd.merge(df, df_fcst[cols], on=['year', 'district_no'], how='left')
-
-        # 1. Check if we have the forecast column
         if 'summer_temp_prob_warm_forecast' in df.columns:
-            # 2. Apply the conversion function
-            # We assume ~5 heat days is normal, and a strong signal could add ~15 days
-            df['summer_days_tmax_gt_30c'] = probability_to_days(
-                df
-            )
+            df['summer_days_tmax_gt_30c'] = probability_to_days(df)
             logging.info("Applied probability-to-days conversion.")
 
+    # 3. Base Weather & Sowing
     df_recharge = create_winter_recharge_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)
     if not df_recharge.empty:
         df = pd.merge(df, df_recharge, left_on=['district_no', 'year'], right_on=['district_no', 'crop_year'],
@@ -212,63 +209,63 @@ def main():
     if not df_sowing.empty:
         df = pd.merge(df, df_sowing, on=['district_no', 'year'], how='left')
 
-        # Calculate Logic using OBSERVED heat (Scenario)
-        sowing_factor = (150 - df['sowing_doy']).clip(lower=0) if 'sowing_doy' in df.columns else 0
-        rad_magnitude = df[
-            'summer_solar_rad_anomaly_forecast'].abs() if 'summer_solar_rad_anomaly_forecast' in df.columns else 0
+    df_sat = pd.read_csv(paths['SATELLITE_FEATURES_CSV'], dtype={'district_no': str})
+    df_sat['district_no'] = df_sat['district_no'].str.zfill(5)
+    cols = [c for c in df_sat.columns if c not in df.columns or c in ['year', 'district_no']]
+    df = pd.merge(df, df_sat[cols], on=['district_no', 'year'], how='left')
 
-        # Use Observed Days for the Kill Switch
-        if 'summer_days_tmax_gt_30c' in df.columns:
-            heat_days = df['summer_days_tmax_gt_30c']
-        else:
-            heat_days = pd.Series(0, index=df.index)
+    # --- CRITICAL FIX: LOAD TREND EARLY ---
+    df_trend = pd.read_csv(paths['WALKFORWARD_FORECAST_CSV'], dtype={'district_no': str})
+    df_trend.rename(columns={'final_corrected_forecast': 'stage1_forecast'}, inplace=True)
+    df = pd.merge(df, df_trend[['year', 'district_no', 'stage1_forecast']], on=['year', 'district_no'], how='left')
+    df['stage1_forecast'] = df['stage1_forecast'].fillna(
+        df.groupby('district_no')['kreisYield'].transform(lambda x: x.shift(1).expanding().mean())
+    )
+    df['has_wofost_data'] = df['stage1_forecast'].notna().astype(int)
 
-        direction_multiplier = np.where(heat_days > 5, -1.0, 1.0)
-        penalty_weight = np.where(heat_days > 5, (1.0 + heat_days / 10.0), 1.0)
-        raw_potential = sowing_factor * rad_magnitude * direction_multiplier * penalty_weight
-        df['solar_capture_potential'] = raw_potential.clip(upper=250, lower=-2000)
-
-    if 'solar_capture_potential' in df.columns:
-        df['is_heat_crash'] = (df['solar_capture_potential'] < -50).astype(int)
-        df['is_solar_bumper'] = (df['solar_capture_potential'] > 50).astype(int)
-        if 'stage1_forecast' in df.columns:
-            df['trend_x_crash'] = df['stage1_forecast'] * df['is_heat_crash']
-            df['trend_x_bumper'] = df['stage1_forecast'] * df['is_solar_bumper']
-        else:
-            df['trend_x_crash'] = 0
-            df['trend_x_bumper'] = 0
+    # --- CRITICAL FIX: CORRECT EVAPORATION MATH EARLY ---
+    # Evaporation is negative in ECMWF. Add it to precip to get net balance.
+    if 'summer_precip_anomaly_forecast' in df.columns and 'summer_evaporation_anomaly_forecast' in df.columns:
+        df['summer_water_balance_anomaly'] = df['summer_precip_anomaly_forecast'] + df[
+            'summer_evaporation_anomaly_forecast']
     else:
-        df['is_heat_crash'] = 0
-        df['is_solar_bumper'] = 0
-        df['trend_x_crash'] = 0
-        df['trend_x_bumper'] = 0
+        df['summer_water_balance_anomaly'] = 0
 
-    if 'summer_days_tmax_gt_30c' in df.columns:
-        df['heat_stress_sq'] = df['summer_days_tmax_gt_30c'] ** 2
-    else:
-        df['heat_stress_sq'] = 0
+    # --- CONDITIONAL PHYSICS (Now that dependencies exist) ---
+    sowing_factor = (150 - df['sowing_doy']).clip(lower=0) if 'sowing_doy' in df.columns else 0
+    rad_magnitude = df[
+        'summer_solar_rad_anomaly_forecast'].abs() if 'summer_solar_rad_anomaly_forecast' in df.columns else 0
+    heat_days = df['summer_days_tmax_gt_30c'] if 'summer_days_tmax_gt_30c' in df.columns else pd.Series(0,
+                                                                                                        index=df.index)
 
-    if 'solar_capture_potential' in df.columns:
-        df['solar_potential_cubed'] = (df['solar_capture_potential'] / 100.0) ** 3
-    else:
-        df['solar_potential_cubed'] = 0
+    direction_multiplier = np.where(heat_days > 5, -1.0, 1.0)
+    penalty_weight = np.where(heat_days > 5, (1.0 + heat_days / 10.0), 1.0)
+    df['solar_capture_potential'] = (sowing_factor * rad_magnitude * direction_multiplier * penalty_weight).clip(
+        upper=250, lower=-2000)
 
-    if 'summer_water_balance_anomaly' in df.columns:
-        wba = df['summer_water_balance_anomaly']
-        df['dwd_severe_stress_days'] = (wba < -0.1).astype(int) * df['summer_days_tmax_gt_30c']
-        is_opt_water = wba > 0
-        is_opt_temp = df['summer_days_tmax_gt_30c'] < 5
-        df['dwd_optimal_growth_zone'] = (is_opt_water & is_opt_temp).astype(int)
-    else:
-        df['dwd_severe_stress_days'] = 0
-        df['dwd_optimal_growth_zone'] = 0
+    df['is_heat_crash'] = (df['solar_capture_potential'] < -50).astype(int)
+    df['is_solar_bumper'] = (df['solar_capture_potential'] > 50).astype(int)
+    df['trend_x_crash'] = df['stage1_forecast'] * df['is_heat_crash']
+    df['trend_x_bumper'] = df['stage1_forecast'] * df['is_solar_bumper']
+
+    df['heat_stress_sq'] = heat_days ** 2
+    df['solar_potential_cubed'] = (df['solar_capture_potential'] / 100.0) ** 3
+
+    wba = df['summer_water_balance_anomaly']
+    df['dwd_severe_stress_days'] = (wba < -0.1).astype(int) * heat_days
+    df['dwd_optimal_growth_zone'] = ((wba > 0) & (heat_days < 5)).astype(int)
+
+    # Load WOFOST Metrics for Anoxia
+    df_metrics = load_wofost_risk_metrics(CONFIG['FILE_PATHS']['WOFOST_METRICS_CSV'])
+    if not df_metrics.empty:
+        df = pd.merge(df, df_metrics, on=['district_no', 'year'], how='left')
+        for c in ['anoxia_events', 'prob_sowing_failure', 'harvest_respiration_risk', 'prob_terminal_freeze']:
+            if c in df.columns: df[c] = df[c].fillna(0)
 
     if 'anoxia_events' in df.columns:
         df['dwd_oxygen_stress'] = (df['anoxia_events'] > 3).astype(int)
-    elif 'summer_water_balance_anomaly' in df.columns:
-        df['dwd_oxygen_stress'] = (df['summer_water_balance_anomaly'] > 0.3).astype(int)
     else:
-        df['dwd_oxygen_stress'] = 0
+        df['dwd_oxygen_stress'] = (wba > 0.3).astype(int)
 
     if 'sowing_doy' in df.columns:
         df['growing_season_length'] = 295 - df['sowing_doy']
@@ -280,11 +277,7 @@ def main():
     if 'sowing_doy' in df.columns and 'winter_precip_sum' in df.columns:
         root_access_factor = (100 - df['sowing_doy']).clip(lower=0, upper=20) / 20.0
         df['effective_winter_water'] = df['winter_precip_sum'] * root_access_factor
-        if 'stage1_forecast' in df.columns:
-            tank_status = (df['effective_winter_water'] / 250.0).clip(upper=1.5)
-            df['trend_x_winter_water'] = df['stage1_forecast'] * tank_status
-        else:
-            df['trend_x_winter_water'] = 0
+        df['trend_x_winter_water'] = df['stage1_forecast'] * (df['effective_winter_water'] / 250.0).clip(upper=1.5)
         df['winter_water_surplus'] = (df['effective_winter_water'] - 200.0).clip(lower=0)
     else:
         df['effective_winter_water'] = 0
@@ -296,111 +289,50 @@ def main():
     else:
         df['late_sowing_x_summer_heat'] = 0
 
-    # --- START INTEGRATION: GDR FLAG ---
-    # States 12-16 are the "New States" (former GDR)
-    # 11: Berlin, 12: Brandenburg, 13: MV, 14: Sachsen, 15: Sachsen-Anhalt, 16: Thüringen
-    # (Note:  and is technically mixed, so we exclude it for a clean "East" signal)
-    # Using >= 12 excludes Berlin (11) which is historically mixed.
     df['is_gdr'] = (df['district_no'].str[:2].astype(int) >= 11).astype(int)
-
     df['state_encoded'] = df['district_no'].str[:2].astype(int)
 
-    df_sat = pd.read_csv(paths['SATELLITE_FEATURES_CSV'], dtype={'district_no': str})
-    df_sat['district_no'] = df_sat['district_no'].str.zfill(5)
-    cols = [c for c in df_sat.columns if c not in df.columns or c in ['year', 'district_no']]
-    df = pd.merge(df, df_sat[cols], on=['district_no', 'year'], how='left')
-
-    df_trend = pd.read_csv(paths['WALKFORWARD_FORECAST_CSV'], dtype={'district_no': str})
-    df_trend.rename(columns={'final_corrected_forecast': 'stage1_forecast'}, inplace=True)
-    df = pd.merge(df, df_trend[['year', 'district_no', 'stage1_forecast']], on=['year', 'district_no'], how='left')
-    df['stage1_forecast'] = df['stage1_forecast'].fillna(
-        df.groupby('district_no')['kreisYield'].transform(lambda x: x.shift(1).expanding().mean())
-    )
-    df['has_wofost_data'] = df['stage1_forecast'].notna().astype(int)
-
-    if 'stage1_forecast' in df.columns:
-        if 'wofost_forecast_x_profit_margin' not in df.columns and 'profit_margin_proxy_lag1' in df.columns:
-            df['wofost_forecast_x_profit_margin'] = df['stage1_forecast'] * df['profit_margin_proxy_lag1']
+    if 'wofost_forecast_x_profit_margin' not in df.columns and 'profit_margin_proxy_lag1' in df.columns:
+        df['wofost_forecast_x_profit_margin'] = df['stage1_forecast'] * df['profit_margin_proxy_lag1']
 
     norm_solar = df['solar_capture_potential'] / 1000.0
     norm_water = (df['effective_winter_water'] / 40000.0).clip(upper=1.0)
-    physical_score = norm_solar + norm_water
-    if 'year_trend' in df.columns:
-        df['trend_x_physics'] = df['year_trend'] * physical_score
-    else:
-        df['trend_x_physics'] = 0
+    df['trend_x_physics'] = df['stage1_forecast'] * (norm_solar + norm_water)
 
-    if 'summer_precip_anomaly_forecast' in df.columns and 'summer_evaporation_anomaly_forecast' in df.columns:
-        df['summer_water_balance_anomaly'] = df['summer_precip_anomaly_forecast'] - df[
-            'summer_evaporation_anomaly_forecast']
-    else:
-        df['summer_water_balance_anomaly'] = 0
-
-    df_metrics = load_wofost_risk_metrics(CONFIG['FILE_PATHS']['WOFOST_METRICS_CSV'])
-    if not df_metrics.empty:
-        df = pd.merge(df, df_metrics, on=['district_no', 'year'], how='left')
-        risk_cols = ['anoxia_events', 'prob_sowing_failure', 'harvest_respiration_risk', 'prob_terminal_freeze']
-        for c in risk_cols:
-            if c in df.columns: df[c] = df[c].fillna(0)
-
-    # V14 Physics Logic (Using Observed Scenarios)
+    # V14 Physics Logic (Z-Scores)
     logging.info("Applying V14 Physics Logic...")
     groups = df.groupby('district_no')
 
-    if 'summer_days_tmax_gt_30c' in df.columns:
-        df['z_heat'] = groups['summer_days_tmax_gt_30c'].transform(calculate_z_score)
-    else:
-        df['z_heat'] = 0
+    df['z_heat'] = groups['summer_days_tmax_gt_30c'].transform(
+        calculate_z_score) if 'summer_days_tmax_gt_30c' in df.columns else 0
+    df['z_bal'] = groups['summer_water_balance_anomaly'].transform(
+        calculate_z_score) if 'summer_water_balance_anomaly' in df.columns else 0
+    df['z_tank'] = groups['effective_winter_water'].transform(
+        calculate_z_score) if 'effective_winter_water' in df.columns else 0
+    df['z_rain'] = groups['summer_precip_anomaly_forecast'].transform(
+        calculate_z_score) if 'summer_precip_anomaly_forecast' in df.columns else 0
+    df['z_anoxia'] = groups['anoxia_events'].transform(calculate_z_score) if 'anoxia_events' in df.columns else 0
+    df['z_sow'] = groups['sowing_doy'].transform(calculate_z_score) if 'sowing_doy' in df.columns else 0
 
-    if 'summer_water_balance_anomaly' in df.columns:
-        df['z_bal'] = groups['summer_water_balance_anomaly'].transform(calculate_z_score)
-    else:
-        df['z_bal'] = 0
-
-    if 'effective_winter_water' in df.columns:
-        df['z_tank'] = groups['effective_winter_water'].transform(calculate_z_score)
-    else:
-        df['z_tank'] = 0
-
-    if 'summer_precip_anomaly_forecast' in df.columns:
-        df['z_rain'] = groups['summer_precip_anomaly_forecast'].transform(calculate_z_score)
-    else:
-        df['z_rain'] = 0
-
-    if 'anoxia_events' in df.columns:
-        df['z_anoxia'] = groups['anoxia_events'].transform(calculate_z_score)
-    else:
-        df['z_anoxia'] = 0
-
-    if 'sowing_doy' in df.columns:
-        df['z_sow'] = groups['sowing_doy'].transform(calculate_z_score)
-    else:
-        df['z_sow'] = 0
-
-    dryness = (df['z_bal'] * -1).clip(lower=0)
-    heat = df['z_heat'].clip(lower=0)
-    scorch = np.maximum(heat * dryness, (heat - 1.5).clip(lower=0) * 2.0)
+    scorch = np.maximum(df['z_heat'].clip(lower=0) * (df['z_bal'] * -1).clip(lower=0),
+                        (df['z_heat'].clip(lower=0) - 1.5).clip(lower=0) * 2.0)
     drown = (df['z_anoxia'] - 0.8).clip(lower=0) * 2.0
     late_start = (df['z_sow'] - 1.5).clip(lower=0) * 2.0
+
     df['Index_Failure'] = np.maximum.reduce([scorch, drown, late_start])
+    df['Index_Bumper'] = ((df['z_tank'].clip(lower=0) + df['z_rain'].clip(lower=0)) / 2.0) * (df['z_heat'] * -1).clip(
+        lower=0)
 
-    water_supply = (df['z_tank'].clip(lower=0) + df['z_rain'].clip(lower=0)) / 2.0
-    coolness = (df['z_heat'] * -1).clip(lower=0)
-    df['Index_Bumper'] = water_supply * coolness
-
-    if 'stage1_forecast' in df.columns:
-        df['trend_x_failure'] = df['stage1_forecast'] * np.tanh(df['Index_Failure'])
-        df['trend_x_bumper'] = df['stage1_forecast'] * np.tanh(df['Index_Bumper'])
-    else:
-        df['trend_x_failure'] = 0
-        df['trend_x_bumper'] = 0
+    df['trend_x_failure'] = df['stage1_forecast'] * np.tanh(df['Index_Failure'])
+    # Overwrite the previous trend_x_bumper with the superior Z-score version
+    df['trend_x_bumper'] = df['stage1_forecast'] * np.tanh(df['Index_Bumper'])
 
     drop_cols = ['yield', 'producer_price_index', 'seed_price_index', 'fertilizer_price_index',
                  'plant_protection_price_index', 'energy_price_index', 'state']
     df.drop(columns=drop_cols, inplace=True, errors='ignore')
 
     df.to_csv(paths['OUTPUT_FILE'], index=False)
-    logging.info(f"✓ Feature Engineering (v17.0 Scenario Mode) Complete. Saved to {paths['OUTPUT_FILE']}")
+    logging.info(f"✓ Feature Engineering (v17.1 Corrected Mode) Complete. Saved to {paths['OUTPUT_FILE']}")
 
 
 if __name__ == '__main__':

@@ -160,6 +160,119 @@ def check_extreme_regimes(df):
             logging.info(f"  Bumper: {bump_mean:.2f}")
 
 
+def evaluate_feature_stability(df, target_col='kreisYield', min_train_years=10):
+    """
+    Walk-forward Spearman correlation to expose features that look good in-sample
+    but fail out-of-sample. No temporal leaking.
+    """
+    import pandas as pd
+    import numpy as np
+    from scipy.stats import spearmanr
+
+    years = sorted(df['year'].unique())
+    results = []
+    features = [c for c in df.columns if
+                c not in ['year', 'district_no', target_col] and pd.api.types.is_numeric_dtype(df[c])]
+
+    for y in years[min_train_years:]:
+        train = df[df['year'] < y]
+        test = df[df['year'] == y]
+
+        for f in features:
+            try:
+                train_corr, _ = spearmanr(train[f], train[target_col], nan_policy='omit')
+                test_corr, _ = spearmanr(test[f], test[target_col], nan_policy='omit')
+
+                results.append({
+                    'test_year': y, 'feature': f,
+                    'train_corr': train_corr if not np.isnan(train_corr) else 0,
+                    'test_corr': test_corr if not np.isnan(test_corr) else 0,
+                    'stability_penalty': abs(train_corr - test_corr) if not (
+                                np.isnan(train_corr) or np.isnan(test_corr)) else 1.0
+                })
+            except:
+                continue
+
+    res_df = pd.DataFrame(results)
+    summary = res_df.groupby('feature').agg(
+        mean_train_corr=('train_corr', 'mean'),
+        mean_test_corr=('test_corr', 'mean'),
+        volatility=('stability_penalty', 'mean')
+    ).sort_values('volatility', ascending=True)
+
+    return summary
+
+
+def log_walkforward_feature_decay(df, target_col='kreisYield', min_train_years=10):
+    import logging
+    from scipy.stats import spearmanr
+    import numpy as np
+
+    years = sorted(df['year'].unique())
+    features = [c for c in df.columns if
+                pd.api.types.is_numeric_dtype(df[c]) and c not in ['year', 'district_no', target_col]]
+
+    for f in features:
+        train_corrs, test_corrs = [], []
+        for y in years[min_train_years:]:
+            train, test = df[df['year'] < y], df[df['year'] == y]
+            if len(test) < 10 or train[f].nunique() <= 1 or test[f].nunique() <= 1:
+                continue
+
+            tr_c, _ = spearmanr(train[f], train[target_col], nan_policy='omit')
+            te_c, _ = spearmanr(test[f], test[target_col], nan_policy='omit')
+
+            if not np.isnan(tr_c) and not np.isnan(te_c):
+                train_corrs.append(tr_c)
+                test_corrs.append(te_c)
+
+        if train_corrs:
+            mean_tr, mean_te = np.mean(train_corrs), np.mean(test_corrs)
+            decay = abs(mean_tr) - abs(mean_te)
+            if decay > 0.15:
+                logging.warning(
+                    f"Feature {f} is rotting OOS! Train Corr: {mean_tr:.3f} -> Test Corr: {mean_te:.3f}. Decay: {decay:.3f}")
+            else:
+                logging.info(f"Feature {f} stable. Test Corr: {mean_te:.3f}")
+
+
+def log_spatial_temporal_gaps(df):
+    import logging
+
+    expected_districts = df['district_no'].nunique()
+    years = sorted(df['year'].unique())
+
+    for y in years:
+        df_year = df[df['year'] == y]
+        actual_districts = df_year['district_no'].nunique()
+
+        if actual_districts < expected_districts * 0.9:
+            logging.error(f"Year {y}: Missing >10% of NUTS3 districts! Found {actual_districts}/{expected_districts}.")
+
+        missing_ratios = df_year.isnull().mean()
+        shit_features = missing_ratios[missing_ratios > 0.05]
+
+        for feat, ratio in shit_features.items():
+            logging.warning(
+                f"Year {y}: Feature '{feat}' is missing in {ratio * 100:.1f}% of districts. March 1st data is compromised.")
+
+
+def log_zero_variance_traps(df):
+    import logging
+
+    features = [c for c in df.columns if
+                pd.api.types.is_numeric_dtype(df[c]) and c not in ['year', 'district_no', 'kreisYield']]
+
+    for f in features:
+        zeros_pct = (df[f] == 0).mean()
+        if zeros_pct > 0.8:
+            logging.critical(
+                f"TRAP: Feature '{f}' is 0 for {zeros_pct * 100:.1f}% of the data. The model will overfit this noise.")
+
+        unique_vals = df[f].nunique()
+        if unique_vals < 5 and zeros_pct < 0.8:
+            logging.info(f"Categorical/Flag identified: '{f}' has {unique_vals} unique values.")
+
 def main():
     df = load_and_prepare_data()
     if df is None:
@@ -168,7 +281,10 @@ def main():
     corr_df = analyze_correlations(df)
     imp_df = run_multivariate_importance(df)
     check_extreme_regimes(df)
-
+    evaluate_feature_stability(df)
+    log_walkforward_feature_decay(df)
+    log_spatial_temporal_gaps(df)
+    log_zero_variance_traps(df)
     logging.info("\nAnalysis Complete.")
 
 

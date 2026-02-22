@@ -13,7 +13,7 @@ from joblib import Parallel, delayed
 import argparse
 
 # --- Setup Project Root ---
-project_root = Path(__file__).resolve().parents[3]
+project_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(project_root))
 from src import config as global_config
 import importlib
@@ -81,6 +81,8 @@ class AnalogYearSelector:
 
 
 def generate_forecasts_for_group(group_name, group_df, analog_engine, output_dir):
+    import pandas as pd
+    from pathlib import Path
     district_no, target_year = group_name
     forecast_rows = []
 
@@ -94,25 +96,33 @@ def generate_forecasts_for_group(group_name, group_df, analog_engine, output_dir
         mask = daily_data['date'].dt.month >= 3
         daily_data = daily_data[mask]
 
-        is_target_leap = (target_year % 4 == 0) and (target_year % 100 != 0 or target_year % 400 == 0)
-        new_dates = []
-        valid_indices = []
-
+        safe_dates, valid_indices = [], []
         for idx, row in daily_data.iterrows():
-            d = row['date']
-            if d.month == 2 and d.day == 29 and not is_target_leap: continue
             try:
-                new_dates.append(pd.Timestamp(year=target_year, month=d.month, day=d.day))
+                # Target mapping (implicitly drops invalid leaps like Feb 29 on non-leap targets)
+                safe_dates.append(pd.Timestamp(year=target_year, month=row['date'].month, day=row['date'].day))
                 valid_indices.append(idx)
             except ValueError:
                 continue
 
         mapped_data = daily_data.loc[valid_indices].copy()
-        mapped_data['date'] = new_dates
-        mapped_data['year'] = target_year
-        mapped_data['member'] = member_id
-        mapped_data['analog_source_year'] = analog_year
-        forecast_rows.append(mapped_data)
+        mapped_data['date'] = safe_dates
+
+        # CRITICAL FIX: Force continuous daily sequence to prevent PCSE crash
+        mapped_data.set_index('date', inplace=True)
+        mapped_data = mapped_data[~mapped_data.index.duplicated()]
+
+        start_dt = pd.Timestamp(year=target_year, month=3, day=1)
+        end_dt = mapped_data.index.max()
+        if pd.notna(end_dt):
+            full_index = pd.date_range(start=start_dt, end=end_dt, freq='D')
+            mapped_data = mapped_data.reindex(full_index).ffill().bfill().reset_index()
+            mapped_data.rename(columns={'index': 'date'}, inplace=True)
+
+            mapped_data['year'] = target_year
+            mapped_data['member'] = member_id
+            mapped_data['analog_source_year'] = analog_year
+            forecast_rows.append(mapped_data)
 
     if forecast_rows:
         result_df = pd.concat(forecast_rows, ignore_index=True)
