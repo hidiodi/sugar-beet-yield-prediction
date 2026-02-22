@@ -21,7 +21,7 @@ from joblib import Parallel, delayed
 from sklearn.linear_model import Ridge
 
 # --- Setup Project Root ---
-project_root = Path(__file__).resolve().parents[3]
+project_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(project_root))
 
 from src import config as global_config
@@ -420,7 +420,11 @@ def main():
     df_sowing = pd.DataFrame(sowing_results)
 
     # 3. Merge & Save
-    df_final = pd.merge(df_sowing, df_wav, on=['year', 'district_no'])
+    df_final = pd.merge(df_sowing, df_wav, on=['year', 'district_no'], how='left')
+
+    # Fallback for inference year when CDS API inevitably lags
+    df_final['WAV'] = df_final['WAV'].fillna(df_final.groupby('district_no')['WAV'].transform('median'))
+
     df_final = pd.merge(df_final, df_satellite, on=['year', 'district_no'], how='left')
 
     df_final['winter_cropland_ndvi_anomaly'] = df_final['winter_cropland_ndvi_anomaly'].fillna(0)

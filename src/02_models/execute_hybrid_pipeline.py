@@ -12,18 +12,19 @@ from src.utils.pipeline_runner import run_pipeline
 SCRIPTS = [
     # --- 1. Simulation Prep & Execution (WOFOST) ---
     #"src/02_models/01_simulation/Wofost7.2/prepare_genetic_parameters.py",
-    #"src/02_models/01_simulation/Wofost7.2/prepare_site_data.py",
-    #"src/02_models/01_simulation/Wofost7.2/prepare_forecast_weather.py",
-    #"src/02_models/01_simulation/Wofost7.2/prepare_initial_conditions.py",
-    #"src/02_models/01_simulation/Wofost7.2/execute_wofost_simulation.py",
+    "src/02_models/01_simulation/Wofost7.2/prepare_site_data.py",
+    "src/02_models/01_simulation/Wofost7.2/prepare_forecast_weather.py",
+    "src/02_models/01_simulation/Wofost7.2/prepare_initial_conditions.py",
+    "src/02_models/01_simulation/Wofost7.2/execute_wofost_simulation.py",
 
     # --- 1. Simulation Prep & Execution (Heat Signal) ---
-    #"src/02_models/01_simulation/multivariate_heat_signal.py",
+    "src/02_models/01_simulation/multivariate_heat_signal.py",
 
     # --- 2. Feature Engineering & Trend ---
-    #"src/02_models/03_components/statistical/estimate_yield_trend.py",
+    "src/02_models/03_components/statistical/estimate_yield_trend.py",
     "src/02_models/02_features/generate_stage1_features.py",
     "src/02_models/02_features/generate_stage2_features.py",
+    "src/03_analysis/basic_analysis/super_analyzer.py",
 
     # --- 3. Component Models ---
     "src/02_models/03_components/native_ensemble/train_physics_informed_model.py",
