@@ -147,7 +147,8 @@ class DynamicSowingManager:
 
 def _precalculate_wav_from_era5(gdf_districts, static_df):
     logging.info("--- Pre-calculating WAV (Using ERA5 & V6 Soil Physics) ---")
-    era5_files = sorted(list(ERA5_SOIL_DATA_DIR.glob("*_FEBRUARY.nc")))
+    # Updated: Use January Data for March 1st Forecast due to lag
+    era5_files = sorted(list(ERA5_SOIL_DATA_DIR.glob("*_JANUARY.nc")))
 
     # We need SMW (Wilting Point) and SMFCF (Field Capacity) from Static Data
     # to correctly interpret the ERA5 Volumetric Water Content
@@ -156,7 +157,7 @@ def _precalculate_wav_from_era5(gdf_districts, static_df):
 
     pbar = tqdm(era5_files, desc="Scanning ERA5 Soil Moisture")
     for nc_file in pbar:
-        year_match = re.search(r'_(\d{4})_FEBRUARY', nc_file.name)
+        year_match = re.search(r'_(\d{4})_JANUARY', nc_file.name)
         if not year_match: continue
         year = int(year_match.group(1))
 
