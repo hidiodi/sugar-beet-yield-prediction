@@ -141,7 +141,7 @@ def analyze_performance_by_year(df, output_dir):
     plot_path = os.path.join(output_dir, 'performance_over_time.png')
     plt.savefig(plot_path, dpi=300)
     logging.info(f"✓ Yearly performance plot saved to {plot_path}")
-    plt.show()
+    #plt.show()
 
 
 def analyze_and_plot_results(df, output_dir):
@@ -197,7 +197,7 @@ def analyze_and_plot_results(df, output_dir):
     plot_path = os.path.join(output_dir, 'final_walkforward_performance.png')
     plt.savefig(plot_path, dpi=300)
     logging.info(f"✓ Overall scatter plot saved to {plot_path}")
-    plt.show()
+    #plt.show()
 
     # --- Run the new yearly analysis ---
     analyze_performance_by_year(df, output_dir)

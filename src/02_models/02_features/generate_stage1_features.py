@@ -185,18 +185,18 @@ def main():
     df['kreisYield'] = pd.to_numeric(df['yield'], errors='coerce')
     df.dropna(subset=['kreisYield'], inplace=True)
 
-    # 1. Base Economcs
-    df_econ = load_economics(paths['PRODUCER_PRICE_CSV'], paths['INPUT_PRICE_CSV'])
-    if not df_econ.empty: df = pd.merge(df, df_econ, on='year', how='left')
 
-    # 2. Base Forecasts & Custom Heat Days
+    # 2. Base Forecasts & Custom Heat Days (RESTORED)
+    logging.info("Loading ECMWF Forecasts and Heat Signal...")
     df_fcst = load_forecasts_with_mapping(paths['ECMWF_FORECAST_FEATURES_CSV'])
     if not df_fcst.empty:
         cols = [c for c in df_fcst.columns if c not in df.columns or c in ['year', 'district_no']]
         df = pd.merge(df, df_fcst[cols], on=['year', 'district_no'], how='left')
-        if 'summer_temp_prob_warm_forecast' in df.columns:
-            df['summer_days_tmax_gt_30c'] = probability_to_days(df)
-            logging.info("Applied probability-to-days conversion.")
+
+        # Restore the custom Heat Signal
+        df['summer_days_tmax_gt_30c'] = probability_to_days(df)
+        logging.info("Applied custom Heat Signal conversion.")
+
 
     # 3. Base Weather & Sowing
     df_recharge = create_winter_recharge_features(paths['DAILY_WEATHER_DIR'], 1981, 2024)
@@ -232,16 +232,19 @@ def main():
         df['summer_water_balance_anomaly'] = 0
 
     # --- CONDITIONAL PHYSICS (Now that dependencies exist) ---
-    sowing_factor = (150 - df['sowing_doy']).clip(lower=0) if 'sowing_doy' in df.columns else 0
+    sowing_factor = (150 - df['sowing_doy']).clip(lower=0) if 'sowing_doy' in df.columns else pd.Series(0, index=df.index)
     rad_magnitude = df[
-        'summer_solar_rad_anomaly_forecast'].abs() if 'summer_solar_rad_anomaly_forecast' in df.columns else 0
+        'summer_solar_rad_anomaly_forecast'].abs() if 'summer_solar_rad_anomaly_forecast' in df.columns else pd.Series(0, index=df.index)
     heat_days = df['summer_days_tmax_gt_30c'] if 'summer_days_tmax_gt_30c' in df.columns else pd.Series(0,
                                                                                                         index=df.index)
 
     direction_multiplier = np.where(heat_days > 5, -1.0, 1.0)
     penalty_weight = np.where(heat_days > 5, (1.0 + heat_days / 10.0), 1.0)
-    df['solar_capture_potential'] = (sowing_factor * rad_magnitude * direction_multiplier * penalty_weight).clip(
-        upper=250, lower=-2000)
+    # Ensure the calculation results in a Series before clipping
+    potential_raw = (sowing_factor * rad_magnitude * direction_multiplier * penalty_weight)
+    if isinstance(potential_raw, (int, float)):
+        potential_raw = pd.Series(potential_raw, index=df.index)
+    df['solar_capture_potential'] = potential_raw.clip(upper=250, lower=-2000)
 
     df['is_heat_crash'] = (df['solar_capture_potential'] < -50).astype(int)
     df['is_solar_bumper'] = (df['solar_capture_potential'] > 50).astype(int)
@@ -327,8 +330,8 @@ def main():
     # Overwrite the previous trend_x_bumper with the superior Z-score version
     df['trend_x_bumper'] = df['stage1_forecast'] * np.tanh(df['Index_Bumper'])
 
-    drop_cols = ['yield', 'producer_price_index', 'seed_price_index', 'fertilizer_price_index',
-                 'plant_protection_price_index', 'energy_price_index', 'state']
+    # NOTE: We keep economic features (lagged) for Model A
+    drop_cols = ['yield', 'state']
     df.drop(columns=drop_cols, inplace=True, errors='ignore')
 
     df.to_csv(paths['OUTPUT_FILE'], index=False)

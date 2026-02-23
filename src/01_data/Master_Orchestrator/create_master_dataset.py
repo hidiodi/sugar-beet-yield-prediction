@@ -20,6 +20,14 @@ ECONOMIC_FEATURES_TO_INCLUDE = [
     'LWBM-14',  # Pflanzenschutzmittel (Plant Protection Products)
 ]
 
+# Explicit Mapping for consistency with downstream models
+FEATURE_NAME_MAPPING = {
+    'LWPR-132': 'producer_price_index',
+    'LWBM-11': 'seed_price_index',
+    'LWBM-12': 'energy_price_index',
+    'LWBM-13': 'fertilizer_price_index',
+    'LWBM-14': 'plant_protection_price_index'
+}
 
 # =======================================================================
 
@@ -44,14 +52,15 @@ def process_economic_features(producer_price_file, input_price_file, feature_ids
                 var_name='year',
                 value_name='price_index'
             )
-            # Create a clean feature name (e.g., 'zuckerrben')
-            df_melted_prod['feature_name'] = df_melted_prod['Description'].str.lower().str.replace(' ',
-                                                                                                   '_').str.replace(
-                '[^a-zA-Z0-9_]', '', regex=True)
+            # Use explicit mapping
+            df_melted_prod['feature_name'] = df_melted_prod['ID'].map(FEATURE_NAME_MAPPING)
+            
+            # Strict Lag Implementation: Use T-1 prices for Year T forecast
+            df_melted_prod['year'] = pd.to_numeric(df_melted_prod['year']) + 1
             df_producer_prices = df_melted_prod.pivot_table(index='year', columns='feature_name',
                                                             values='price_index')
-            df_producer_prices.index = pd.to_numeric(df_producer_prices.index)
-        logging.info(" -> Producer prices processed.")
+            # df_producer_prices.index is already numeric now
+        logging.info(" -> Producer prices processed and lagged by 1 year.")
     except Exception as e:
         logging.error(f"Could not process producer prices. Error: {e}")
         # Return an empty dataframe with a 'year' index to prevent merge errors
@@ -69,8 +78,8 @@ def process_economic_features(producer_price_file, input_price_file, feature_ids
                 var_name='period',
                 value_name='price_index'
             )
-            df_melted['feature_name'] = df_melted['Description'].str.lower().str.replace(' ', '_').str.replace(
-                '[^a-zA-Z0-9_]', '', regex=True)
+            # Use explicit mapping
+            df_melted['feature_name'] = df_melted['ID'].map(FEATURE_NAME_MAPPING)
 
             df_melted['price_index'] = pd.to_numeric(df_melted['price_index'], errors='coerce')
 
@@ -80,8 +89,10 @@ def process_economic_features(producer_price_file, input_price_file, feature_ids
             df_melted['year'] = df_melted['year'].astype(int)
             # Calculate the annual average from quarterly data
             df_annual_avg = df_melted.groupby(['year', 'feature_name'])['price_index'].mean().reset_index()
+            # Strict Lag Implementation: Use T-1 prices for Year T forecast
+            df_annual_avg['year'] = df_annual_avg['year'] + 1
             df_input_prices_final = df_annual_avg.pivot(index='year', columns='feature_name', values='price_index')
-        logging.info(" -> Input prices processed and averaged annually.")
+        logging.info(" -> Input prices processed, averaged annually, and lagged by 1 year (T-1 used for T).")
     except Exception as e:
         logging.error(f"Could not process input prices. Error: {e}")
         # Return an empty dataframe with a 'year' index

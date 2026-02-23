@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from xgboost import XGBRegressor
 import joblib
 import sys
@@ -9,73 +10,66 @@ project_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(project_root))
 from src import config as global_config
 import importlib
+
 models_config = importlib.import_module("src.02_models.config")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 TRAIN_CONFIG = models_config.STANDALONE_XGB_CONFIG
 
-# NEW: Define a Burn-In threshold to ignore statistically unstable early years
-BURN_IN_YEARS = 7
-
 
 def train_standalone_model(train_config):
-    logging.info("--- Starting Standalone Training (Target: Yield Ratio) ---")
+    logging.info("--- Starting Standalone Training (Target: Log Ratio) ---")
+    df = pd.read_csv(train_config['DATA_PATH'])
 
-    try:
-        df = pd.read_csv(train_config['DATA_PATH'])
-    except FileNotFoundError:
-        logging.error("Data file not found.")
-        sys.exit(1)
+    # CRITICAL FIX: Ensure base district_no is a formatted string before merging
+    df['district_no'] = df['district_no'].astype(str).str.zfill(5)
+
+    # Merge Stage 2 features to give it the full arsenal
+    stage2_path = global_config.DATA_DIR / '05_model_input/stage2_refined_features.csv'
+    if stage2_path.exists():
+        df2 = pd.read_csv(stage2_path)
+        df2['district_no'] = df2['district_no'].astype(str).str.zfill(5)
+        df = pd.merge(df, df2, on=['year', 'district_no'], how='left')
 
     target_col = train_config['TARGET_COL']
-
-    # 1. CLEANING: Ensure we have valid targets and inputs
     df.dropna(subset=[target_col, 'stage1_forecast'], inplace=True)
+    df = df[df['year'] >= (df['year'].min() + 7)].copy()
+    df = df[df['stage1_forecast'] > 0.1]
 
-    # 2. IMPROVEMENT: Apply Burn-In Filter
-    # With 'expanding' statistics, the first few years have high variance/low reliability.
-    # We drop them to prevent the model from learning noise.
-    start_year = df['year'].min()
-    valid_start_year = start_year + BURN_IN_YEARS
+    # Widened clip to allow crashes
+    df['yield_ratio'] = np.log(df[target_col] / df['stage1_forecast']).clip(-0.6, 0.6)
 
-    logging.info(f"Applying Burn-In: Dropping years < {valid_start_year} (Unstable Stats)")
-    df = df[df['year'] >= valid_start_year].copy()
+    # DYNAMIC FEATURE SELECTION: Ingest everything except strict exclusions
+    exclude_cols = [
+        'district_no', 'year', 'kreisYield', 'yield', 'stage1_forecast',
+        'yield_ratio', 'has_wofost_data', 'state_encoded', 'year_trend'
+    ]
+    valid_features = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and c not in exclude_cols]
 
-    # --- STRUCTURAL PIVOT: PREDICT RATIO ---
-    # 3. IMPROVEMENT: Robust Ratio Calculation
-    # Prevent division by zero or extreme outliers from 'honest' (noisy) forecasts
-    df = df[df['stage1_forecast'] > 0.1]  # Safety check
-
-    df['yield_ratio'] = df[target_col] / df['stage1_forecast']
-
-    # Clip allows the model to focus on realistic deviations, not data errors
-    df['yield_ratio'] = df['yield_ratio'].clip(0.5, 1.5)
-
-    feature_cols = train_config['FEATURE_COLS']
-    # Remove year features from Standalone too (Physics Focus)
-    valid_features = [c for c in feature_cols if c in df.columns and c not in ['year', 'year_trend']]
-
-    X_train = df[valid_features]
-    y_train = df['yield_ratio']  # Target is Ratio
-
-    logging.info(f"Target: Yield Ratio. Features: {len(valid_features)}. Rows: {len(X_train)}")
+    X_train, y_train = df[valid_features], df['yield_ratio']
+    logging.info(f"Features Unlocked: {len(valid_features)}. Rows: {len(X_train)}")
 
     for name, quantile in train_config['QUANTILES'].items():
         logging.info(f"Training {name.upper()} model...")
-        params = train_config[f'BEST_PARAMS_{name.upper()}']
 
-        # 4. RECOMMENDATION: Increase Regularization if not already tuned
-        # 'Honest' data is noisier. If you haven't re-tuned, consider forcing higher gamma here manually
-        # params['gamma'] = max(params.get('gamma', 0), 1.0)
-
-        model = XGBRegressor(objective='reg:quantileerror', quantile_alpha=quantile, **params)
+        model = XGBRegressor(
+            objective='reg:quantileerror',
+            quantile_alpha=quantile,
+            n_estimators=150,
+            max_depth=5,
+            learning_rate=0.05,
+            reg_lambda=2.0,
+            gamma=1.0,
+            subsample=0.8,
+            colsample_bytree=0.5,
+            random_state=42,
+            n_jobs=-1
+        )
         model.fit(X_train, y_train)
 
         out_path = train_config[f'{name.upper()}_MODEL_PATH']
         out_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(model, out_path)
-
-    logging.info("--- Standalone Training Complete ---")
 
 
 if __name__ == "__main__":
