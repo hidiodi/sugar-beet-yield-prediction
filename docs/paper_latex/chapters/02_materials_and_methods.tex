@@ -1,10 +1,10 @@
 \section{Materials and Methods}
 
 \subsection{Study Area and Datasets}
-The study covers sugarbeet cultivation districts in Germany, utilizing a multi-source dataset spanning 1981--2024. The validation set (2000--2024) comprises $N=5041$ district-year observations, aggregated from approximately 202 active cultivation districts across 13 federal states. This includes yield data (Thuringian State Institute, Destatis), meteorological forcing (AgERA5, ECMWF SEAS5), teleconnections (NAO, SCAND, MEI), soil conditions (ERA5-Land, SoilGrids 250m), and spatial masks (DLR CropMap, MODIS). Yields are reported in decitonnes per hectare (dt/ha), the standard unit in German agricultural statistics, where 1 dt/ha = 0.1 t/ha; observed national averages of 600--800 dt/ha correspond to 60--80 t/ha, which is consistent with European sugarbeet productivity ranges. Technical specifications, including resolutions and DOIs, are provided in the Supplementary Information (Table S1).
+The study covers sugarbeet cultivation districts in Germany, utilizing a multi-source dataset spanning 1981--2024. The validation set (2005--2024) comprises $N=4133$ district-year observations, aggregated from active cultivation districts across 13 federal states. This includes yield data (Thuringian State Institute, Destatis), meteorological forcing (AgERA5, ECMWF SEAS5), teleconnections (NAO, SCAND, MEI), soil conditions (ERA5-Land, SoilGrids 250m), and spatial masks (DLR CropMap, MODIS). Yields are reported in decitonnes per hectare (dt/ha). Technical specifications are provided in the Supplementary Information (Table S1).
 
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
-The Statistical Trend Baseline model ($M_1$) is a robust time-series forecasting pipeline executed via strict Walk-Forward Validation. The forecasting process for any target year $t$ involves a two-stage decomposition:
+The Statistical Trend Baseline model ($M_{trend}$) is a robust time-series forecasting pipeline executed via strict Walk-Forward Validation. The forecasting process for any target year $t$ involves a two-stage decomposition:
 
 \begin{enumerate}
     \item \textbf{Trend Component (Long-Term):} The secular technological trend is modeled using a Generalized Additive Model (GAM) where $f(t)$ is a smoothing spline (10 splines):
@@ -14,56 +14,47 @@ The Statistical Trend Baseline model ($M_1$) is a robust time-series forecasting
     \[ \hat{y}_{\text{residual}}(t) = \text{ARIMA}(R_{1 \dots t-1}) \]
 \end{enumerate}
 
-A minimum training window of 10 years was enforced before fitting the ARIMA component to ensure statistical stability. The final trend forecast $M_1$ for year $t$ is the sum of these two components:
-\[ M_1(t) = \hat{y}_{\text{trend}}(t) + \hat{y}_{\text{residual}}(t) \]
+A minimum training window of 10 years was enforced before fitting the ARIMA component. The final trend forecast for year $t$ is the sum of these two components:
+\[ M_{trend}(t) = \hat{y}_{\text{trend}}(t) + \hat{y}_{\text{residual}}(t) \]
 
-Following the recommendation of \citet{paudel2022field}, we employed a time-based expanding window for training and validation to avoid temporal leakage.
-
-\subsection{Feature Engineering}
-Our two-stage pipeline translates raw data into agronomic signals. First, a \textbf{Bio-Physical Risk Scanner} within WOFOST \cite{boogaard1998wofost} calculates specific risks like Oxygen Stress (Anoxia) and Harvest Respiration. Second, we compute rigorous Z-scores ($Z_t$) using an expanding window to normalize extreme events relative only to known history. Key indices include $Z_{\text{heat}}$ (heat stress), $Z_{\text{bal}}$ (water balance), $Z_{\text{tank}}$ (winter recharge), $Z_{\text{anoxia}}$ (oxygen stress), and $Z_{\text{sow}}$ (sowing delay), which are aggregated into compound indices (Scorch, Drown, LateStart) detailed in the Supplementary Information.
+\subsection{The Leak-Free Standard}
+We rigorously purged all information unavailable on March 1st to ensure a realistic production forecast. Specifically, economic data (Sugar Prices) were strictly lagged by 1 year ($T-1$ prices used for year $T$) to reflect autumn purchasing decisions made prior to the planting season. This eliminates the "look-ahead bias" common in retrospective studies where contemporaneous prices are used as proxies for management intensity.
 
 \subsection{Predictive Algorithms}
-Machine learning components use Scikit-Learn \cite{scikitlearn} and XGBoost \cite{chen2016xgboost}. The system utilizes three specialized sub-models $M_k$ and one signal generator:
-\begin{itemize}
-    \item \textbf{$M_1$: Statistical Trend Baseline} as defined in Section 2.2.
-    \item \textbf{$M_2$: Robust Linear Integrator}, a HuberRegressor ($\epsilon=1.35$) predicting residuals from the statistical trend. The final $M_2$ forecast is the sum of the trend and the predicted residual, providing robustness against non-climatic outliers.
-    \item \textbf{$M_3$: Bio-Physical Limits Model}, utilizing conditional logic based on radiation flux and water balance. It identifies both high-yield potential years (when radiation is high and water sufficient) and yield crashes (when extreme drought thresholds are breached).
-    \item \textbf{$S_{hybrid}$: Hybrid XGBoost (Signal Generator)}, which predicts the ratio ($Y_{hybrid}$) between actual yield and WOFOST Stage 1 simulation. This component is used exclusively for regime detection and does not contribute directly to the final ensemble sum.
-\end{itemize}
-
-We also evaluated a \textbf{Static ML Benchmark (Native Ensemble)}, a standard XGBoost ensemble without regime-switching logic, to serve as a baseline for measuring the value of dynamic adaptation.
-
-\subsection{Expert System-Guided Ensemble Architecture}
-
-The system integrates the three sub-models through an \textbf{Expert System} based on bio-physical signal thresholds. The architecture follows a two-stage training and inference protocol:
-
-\subsubsection{Cross-Validation Protocol}
-Model validation employs a strict \textbf{expanding window (walk-forward)} strategy. For each year $t \in \{2000, \dots, 2024\}$, the Expert System parameters are calibrated exclusively on data from years $\{1981, \dots, t-1\}$.
-
-\subsubsection{Expert System Configuration}
-Rather than training a "black box" meta-learner, we employ a transparent Threshold Switching Logic driven by the ratio $S = Y_{hybrid} / Y_{trend}$, where $Y_{hybrid}$ is the yield forecast from the Hybrid XGB signal generator. This ratio proxies the physiological stress level relative to the technological trend. The thresholds were calibrated by minimizing the \textbf{Regret} ($w_{d,t}$), defined as the difference between the baseline error ($E_{trend}$) and the best-case oracle error:
-\begin{equation}
-    w_{d,t} = |Y_{d,t} - \hat{y}_{trend}(d,t)| - \min_{k \in \{1,2,3\}} |Y_{d,t} - \hat{y}_k(d,t)|
-\end{equation}
-The switching thresholds were informed by domain knowledge of physiological stress points (representing a 20\% deviation) and validated by minimizing the Regret metric on the training set. Specifically, domain knowledge defined the candidate search space (thresholds within $\pm$0.3 of unity), and Regret minimisation confirmed the final values within that space. They were fixed globally rather than dynamically optimized in each fold to maintain physical interpretability and avoid overfitting to specific training windows. The system defines three operational regimes:
+The system utilizes three specialized components:
 
 \begin{enumerate}
-    \item \textbf{Safety Mode (Extreme Stress):} Triggered when $S < 0.8$. In cases of extreme predicted divergence, the system defaults to the conservative $M_1$ (Trend) baseline to prevent over-reaction to potential false alarms.
-    \item \textbf{Bumper Mode (Upside Potential):} Triggered when $S > 1.0$. The system activates $M_2$ (Robust Linear) to capture yield potential exceeding the trend.
-    \item \textbf{Normal Regime:} Triggered when $0.8 \le S \le 1.0$. The forecast is calculated as a weighted blend:
-    \[ \hat{Y} = 0.6 \cdot M_2 + 0.4 \cdot M_3 \quad \text{(where } M_2, M_3 \text{ denote absolute yields)} \]
-    This regime activates the Bio-Physical Limits Model ($M_3$), allowing physics-informed adjustments for radiation and water balance without fully committing to extreme scenarios.
+    \item \textbf{The Anchor ($M_{trend}$):} The Statistical Trend Baseline as defined in Section 2.2. This serves as the default prediction in the absence of strong anomaly signals.
+
+    \item \textbf{The Physical Prior ($M_{phys}$):} A Climatological Ensemble of WOFOST (v7.2) simulations. Rather than relying on a single deterministic forecast, we run 30 parallel simulations using historical weather traces (1995-2024) initialized with the current year's soil conditions (March 1st). This component outputs two key signals: \textit{Expected Physical Yield} and \textit{Downside Risk (p10)}, providing a physics-based envelope for the season.
+
+    \item \textbf{The Hybrid Detector ($M_{hybrid}$):} A specialized XGBoost model trained to predict deviations from the trend.
+    \begin{itemize}
+        \item \textbf{Target:} `log(yield / trend)` with symmetric clipping at $[-0.6, 0.6]$ to focus on realizable anomalies.
+        \item \textbf{Features:} An "Unleashed" feature set (106 features) including `sowing_doy`, `heat_signal`, and the risk outputs from the Physical Prior ($M_{phys}$).
+        \item \textbf{Constraints:} The model is heavily regularized (`max_depth=5`, `reg_lambda=2.0`) to prevent overfitting to winter noise, ensuring it only triggers on robust signals.
+    \end{itemize}
 \end{enumerate}
 
-\subsubsection{Inference}
-During inference, the signal $S$ determines the active regime. This deterministic approach replaces soft voting, ensuring that yield predictions snap to the most physically plausible mechanism for the detected conditions.
+\subsection{Asymmetric Threshold Gating}
+We replaced traditional ensemble blending with a deterministic \textbf{Asymmetric Gate}. The logic follows a "Safety First" principle:
+
+\begin{enumerate}
+    \item \textbf{Default State:} The system defaults to the \textbf{Statistical Trend} ($M_{trend}$).
+    \item \textbf{Trigger Mechanism:} The Gate activates only if the Hybrid Detector ($M_{hybrid}$) deviates from the Trend by more than \textbf{4.0\%}.
+    \item \textbf{Asymmetric Trust:}
+    \begin{itemize}
+        \item \textbf{Downside (Crash):} 100\% Trust. If $M_{hybrid}$ predicts a crash based on physical signals (e.g., Late Sowing + Dry Soil), the system fully adopts the forecast.
+        \item \textbf{Upside (Bumper):} 50\% Trust. Bumper yields are harder to guarantee in March, so the system remains conservative, blending the upside prediction with the trend.
+    \end{itemize}
+\end{enumerate}
 
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{super_ensemble_flowchart.png}
-    \caption{Expert System-Guided Ensemble Architecture Flowchart. The system integrates multiple data sources and component models, using an Expert System to dynamically integrate predictions based on the detected regime.}
+    \caption{Physically-Gated Anomaly Detector Architecture. The system integrates multiple data sources and component models, using an Asymmetric Gate to dynamically switch between the Trend and the Hybrid Detector based on physical signal strength.}
     \label{fig:flowchart}
 \end{figure}
 
 \subsection{Uncertainty Quantification}
-While the Expert System-Guided Ensemble produces point forecasts via threshold switching, component-level uncertainty is inherently captured within the $S_{hybrid}$ signal generator (using XGBoost quantile regression) to inform regime detection stability, although full probabilistic forecasting envelopes are not evaluated in this study.
+While the Physically-Gated Anomaly Detector produces point forecasts via threshold switching, component-level uncertainty is captured by the spread of the WOFOST Climatological Ensemble ($M_{phys}$), which informs the Downside Risk feature used by the Hybrid Detector.

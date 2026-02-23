@@ -1,18 +1,34 @@
 \section{Results}
-Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) demonstrates consistent improvement over the trend baseline. While absolute predictive power ($R^2$) naturally declines during the volatile 2010--2024 period due to increased stochasticity, the model's Skill Score actually improves from \textbf{8.06\% to 10.75\%}, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
+Validation over 2005--2024 ($N=4133$) using the strict Leak-Free Standard (Table 1) demonstrates a realistic improvement over the trend baseline. While absolute predictive power ($R^2$) naturally declines during the volatile 2014--2024 period, the model's Skill Score actually improves from \textbf{1.93\% to 3.21\%}, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
 
 \begin{table}[h]
 \centering
-\caption{Long-Term Stability (2000--2024) ($N=5041$)}
+\caption{Long-Term Stability (2005--2024) ($N=4133$)}
 \resizebox{\columnwidth}{!}{%
     \renewcommand{\arraystretch}{1.2}
     \begin{tabular}{|l|c|c|c|}
     \hline
     \textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \hline
-    \textbf{Expert System-Guided Ensemble} & \textbf{61.79} & \textbf{0.548} & \textbf{8.06} \\ \hline
-    Robust Linear (Stage 2) & 64.41 & 0.499 & 4.16 \\ \hline
-    Statistical Trend & 67.21 & 0.468 & 0.00 \\ \hline
-    Static ML Benchmark (Native Ensemble) & 70.28 & 0.372 & -4.57 \\ \hline
+    \textbf{Physically-Gated Anomaly Detector} & \textbf{68.75} & \textbf{0.406} & \textbf{1.93} \\ \hline
+    Statistical Trend & 70.10 & 0.366 & 0.00 \\ \hline
+    Model C (Robust Ridge) & 80.15 & 0.230 & -14.29 \\ \hline
+    Model A (XGBoost) & 91.66 & 0.138 & -0.61 \\ \hline
+    \end{tabular}%
+}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Recent Volatility (2014--2024) ($N=1895$)}
+\resizebox{\columnwidth}{!}{%
+    \renewcommand{\arraystretch}{1.2}
+    \begin{tabular}{|l|c|c|c|}
+    \hline
+    \textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \hline
+    \textbf{Physically-Gated Anomaly Detector} & \textbf{88.85} & \textbf{0.179} & \textbf{3.21} \\ \hline
+    Model A (XGBoost) & 91.66 & 0.138 & -0.61 \\ \hline
+    Statistical Trend & 91.80 & 0.101 & 0.00 \\ \hline
+    Model C (Robust Ridge) & 104.86 & -0.119 & -15.10 \\ \hline
     \end{tabular}%
 }
 \end{table}
@@ -20,23 +36,26 @@ Validation over 2000--2024 ($N=5041$) using SEAS5 hindcasts (Table 1) demonstrat
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{super_ensemble_error_landscape.png}
-    \caption{Expert System-Guided Ensemble Error Landscape across Yield Stress Levels. Unlike traditional models that degrade linearly, the Expert System-Guided Ensemble maintains controlled error rates even in extreme low-yield "Crash" scenarios, validating the effectiveness of Regret-Weighted training.}
+    \caption{Physically-Gated Anomaly Detector Error Landscape across Yield Stress Levels. Unlike traditional models that degrade linearly, the Gate maintains controlled error rates even in extreme low-yield "Crash" scenarios.}
     \label{fig:error_landscape}
 \end{figure}
 
+\subsection{Quantification of Look-Ahead Bias}
+The drop in skill from preliminary results (~8-10\%) to the final Leak-Free validation (~2-3\%) represents the \textbf{Quantification of Look-Ahead Bias}. By purging contemporaneous economic data (lagging prices to $T-1$) and strictly enforcing pre-season availability, we traded inflated retrospective accuracy for operational reality. This ensures that the reported skill is realizable on March 1st.
+
 \subsection{Anomaly Forensics (Black Swan Events)}
-Table~\ref{tab:anomalies} details performance during historic anomalies. The Expert System-Guided Ensemble significantly reduced errors in the 2018 drought (\textbf{+58.4 dt/ha}) by identifying stress signals in SEAS5 forecasts, while also capturing the 2014 bumper year upside (\textbf{+4.2 dt/ha}). However, in the 2003 heatwave, the model slightly underperformed the trend baseline (-7.4 dt/ha).
+Table~\ref{tab:anomalies} details performance during historic anomalies. The Physically-Gated Anomaly Detector significantly reduced errors in the 2018 drought by identifying stress signals in the WOFOST outputs, while remaining stable in the 2014 bumper year.
 
 \begin{table}[h]
 \centering
 \caption{Performance during Black Swan Events (dt/ha)}
 \resizebox{\columnwidth}{!}{%
-    \begin{tabular}{|l|c|c|c|c|}
+    \begin{tabular}{|l|c|c|c|}
     \hline
-    \textbf{Event} & \textbf{Actual} & \textbf{Expert System-Guided Ensemble} & \textbf{Trend} & \textbf{Improv.} \\ \hline
-    2003 (Heat) & 516.9 & \textbf{609.6 (MAE 103.2)} & 593.7 (MAE 95.8) & -7.4 \\ \hline
-    2014 (Bumper) & 825.6 & \textbf{720.4 (MAE 109.8)} & 715.9 (MAE 114.0) & \textbf{+4.2} \\ \hline
-    2018 (Drought) & 628.5 & \textbf{736.9 (MAE 123.7)} & 799.7 (MAE 182.1) & \textbf{+58.4} \\ \hline
+    \textbf{Event} & \textbf{Actual} & \textbf{Physically-Gated Anomaly Detector} & \textbf{Trend} \\ \hline
+    2003 (Heat) & 516.2 & \textbf{593.1} (Imputed via Trend) & 593.1 \\ \hline
+    2014 (Bumper) & 824.5 & \textbf{714.7} (Stable) & 715.2 \\ \hline
+    2018 (Drought) & 625.5 & \textbf{743.7} (Crash Detected) & 797.3 \\ \hline
     \end{tabular}%
 }
 \label{tab:anomalies}
@@ -45,25 +64,13 @@ Table~\ref{tab:anomalies} details performance during historic anomalies. The Exp
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{fig2_time_series.png}
-    \caption{National average sugarbeet yield: Actual observations vs. Expert System-Guided Ensemble forecasts and Statistical Trend baseline. Note the superior tracking of the 2018 drought event.}
+    \caption{National average sugarbeet yield: Actual observations vs. Physically-Gated Anomaly Detector forecasts and Statistical Trend baseline. Note the superior tracking of the 2018 drought event.}
     \label{fig:timeseries}
 \end{figure}
 
 \begin{figure}[h]
     \centering
     \includegraphics[width=\linewidth]{fig3_parity_plot.png}
-    \caption{Parity plot showing Actual vs Predicted yields, colored by the model selected by the Expert System. Note how the "Normal Regime" blend (including M3 Bio-Physical Limits) is activated during moderate stress years like 2018, while the Robust Linear model is preferred for bumper years.}
+    \caption{Parity plot showing Actual vs Predicted yields, colored by the model selected by the Gate. Note how the "Crash Mode" is activated during extreme stress years like 2018, while the Trend is preferred for stable years.}
     \label{fig:parity}
-\end{figure}
-
-\subsection{Dynamics and Ablation}
-Forensic analysis confirms that the $S_{hybrid}$ signal effectively modulates the regime choice. In the 2018 drought, the signal correctly identified a deviation from the technological trend without triggering the extreme "Safety Mode" (which would have reverted to the Trend). Instead, the system entered the "Normal Regime," activating a blend of the Robust Linear ($M_2$) and Bio-Physical Limits ($M_3$) models. This blend reduced the prediction error by \textbf{58.4 dt/ha} compared to the trend baseline. The Expert System strategy achieved an overall MAE of 61.79~dt/ha, outperforming a "Hard Switching" approach (MAE 69.19~dt/ha).
-
-Systemic component failure accounts for 65.7\% of the remaining error, while selection error (sub-optimal regime assignment) represents only 34.3\% of the total residual. Ablation results (Fig~\ref{fig:ablation}) confirm that removing bio-physical stress signals from the integration logic increases 2018 drought error significantly, while the exclusion of the outlier filter changed overall skill by $<0.1\%$.
-
-\begin{figure}[h]
-    \centering
-    \includegraphics[width=\linewidth]{fig3_ablation_results.png}
-    \caption{Ablation Study Results. Removing stress signals results in higher error in drought years. Notably, the removal of the outlier filter has minimal impact on aggregate metrics, proving the stability of the meta-learning architecture.}
-    \label{fig:ablation}
 \end{figure}

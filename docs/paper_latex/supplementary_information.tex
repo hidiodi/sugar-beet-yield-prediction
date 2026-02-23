@@ -27,7 +27,7 @@
 }
 
 % --- Title Information ---
-\title{Supplementary Information for:\\ \textbf{Hybrid Yield Forecasting: Bridging Process-Based Simulation and Machine Learning for Pre-Season Risk Assessment}}
+\title{Supplementary Information for:\\ \textbf{Physically-Gated Anomaly Detector: Bridging Process-Based Simulation and Machine Learning for Pre-Season Risk Assessment}}
 \author{Tim Schweitzer}
 \date{\today}
 
@@ -36,7 +36,7 @@
 \maketitle
 
 \begin{abstract}
-    This document provides technical details, comprehensive data specifications, model hyperparameters, and regional forensic analyses supporting the main text. This material ensures the reproducibility of the Expert System-Guided Ensemble pipeline and provides evidence for the regime-switching hypothesis.
+    This document provides technical details, comprehensive data specifications, model hyperparameters, and regional forensic analyses supporting the main text. This material ensures the reproducibility of the Physically-Gated Anomaly Detector pipeline and provides evidence for the Leak-Free Standard.
 \end{abstract}
 
 \newpage
@@ -76,78 +76,47 @@ Teleconnections & NOAA (NAO, SCAND, MEI) & Monthly & Climate Indices \\ \hline
 \end{table}
 
 % ==========================================
-% S2. EXTENDED MECHANISTIC FORMULAS
+% S2. PREDICTIVE ALGORITHMS & HYPERPARAMETERS
 % ==========================================
-\section{Extended Mechanistic Formulas}
-The \textbf{Compound Failure Index} identifies yield crashes by aggregating stress vectors derived from WOFOST internal moisture balances \citep{boogaard1998wofost} and SEAS5 anomalies.
+\section{Predictive Algorithms \& Hyperparameters}
+The Physically-Gated Anomaly Detector utilizes specialized components configured for operational stability.
 
-\textbf{$M_3$ Bio-Physical Limits Logic}:
-The $M_3$ model applies a hierarchical decision tree to adjust the trend baseline ($Y_{trend}$):
+\subsection{Model A: The Hybrid Detector ($M_{hybrid}$)}
+The Hybrid Detector is an XGBoost model designed to predict yield deviations from the trend.
+\begin{itemize}
+    \item \textbf{Target:} $\log(Y_{actual} / Y_{trend})$, clipped symmetrically at $[-0.6, 0.6]$.
+    \item \textbf{Features:} 106 "Unleashed" features, including `sowing_doy`, `heat_signal`, and outputs from the Physical Prior.
+    \item \textbf{Hyperparameters:} heavily regularized to prevent overfitting:
+    \begin{itemize}
+        \item \texttt{max\_depth=5}
+        \item \texttt{reg\_lambda=2.0}
+        \item \texttt{learning\_rate=0.05}
+    \end{itemize}
+\end{itemize}
+
+\subsection{Model B: The Physical Prior ($M_{phys}$)}
+The Physical Prior is a Climatological Ensemble of WOFOST (v7.2) simulations.
+\begin{itemize}
+    \item \textbf{Configuration:} 30 parallel simulations.
+    \item \textbf{Weather Traces:} Historical weather data from 1995--2024.
+    \item \textbf{Initialization:} Current year's soil moisture and temperature (March 1st).
+    \item \textbf{Outputs:} Expected Physical Yield ($Y_{phys}$) and Downside Risk (10th percentile).
+\end{itemize}
+
+\subsection{Asymmetric Threshold Gate}
+The Gate determines the final forecast by comparing the Hybrid Detector ($M_{hybrid}$) with the Statistical Trend ($M_{trend}$).
+
 \begin{enumerate}
-    \item \textbf{Water Crash:} If $Z_{water} < -0.95$:
-    \[ M_3 = Y_{trend} \times \left(1.0 - \left(0.15 + |Z_{water} + 0.95| \times 0.25\right)\right) \]
-    \item \textbf{Bumper Potential:} If $Z_{water} > 1.0$ AND $Z_{solar} > -1.0$:
-    \[ M_3 = Y_{trend} \times \left(1.0 + \left(0.05 + (Z_{water} - 1.0) \times 0.05\right)\right) \]
-    \item \textbf{Else:} $M_3 = Y_{trend}$
+    \item \textbf{Trigger:} Activate if $|M_{hybrid} - M_{trend}| > 4.0\%$.
+    \item \textbf{Downside Trust (Crash):} If Triggered AND $M_{hybrid} < M_{trend}$:
+    \[ Y_{final} = 1.0 \times M_{hybrid} \]
+    (Trust the Crash signal fully).
+    \item \textbf{Upside Trust (Bumper):} If Triggered AND $M_{hybrid} > M_{trend}$:
+    \[ Y_{final} = 0.5 \times M_{hybrid} + 0.5 \times M_{trend} \]
+    (Blend the Bumper signal conservatively).
+    \item \textbf{Default (Safety Mode):} Else:
+    \[ Y_{final} = M_{trend} \]
 \end{enumerate}
-
-\textbf{Scorch Index} (Heat + Drought interaction):
-\begin{equation}
-    \text{Scorch} = \max\left(Z_{\text{heat}} \times (-Z_{\text{bal}})^+ , \left(Z_{\text{heat}} - 1.5\right)^+ \times 2.0\right)
-\end{equation}
-
-\textbf{Drown Index} (Anoxia/Waterlogging):
-\begin{equation}
-    \text{Drown} = (Z_{\text{anoxia}} - 0.8)^+ \times 2.0
-\end{equation}
-
-\textbf{Late Start Index} (Sowing delay):
-\begin{equation}
-    \text{LateStart} = (Z_{\text{sow}} - 1.5)^+ \times 2.0
-\end{equation}
-
-\textbf{Skill Score}:
-The skill score quantifies the improvement of the ensemble model relative to the statistical trend baseline:
-\begin{equation}
-    \text{Skill Score} = \left(1 - \frac{\text{MAE}_{\text{Ensemble}}}{\text{MAE}_{\text{Trend}}}\right) \times 100
-\end{equation}
-
-% ==========================================
-% S3. COMPREHENSIVE HYPERPARAMETERS
-% ==========================================
-\section{Comprehensive Hyperparameters}
-Hyperparameters for the Expert System were configured following best practices for robust generalization in high-noise agricultural environments \citep{paudel2022field}.
-
-\begin{table}[h]
-\centering
-\caption{Hyperparameters for Sub-Models and Expert System}
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{|l|l|}
-\hline
-\textbf{Model} & \textbf{Configuration} \\ \hline
-$M_1$ Trend & LinearGAM ($n\_splines=10$), ARIMA($1,0,0$) \\ \hline
-$M_2$ Robust & HuberRegressor: $\epsilon=1.35, max\_iter=200$ \\ \hline
-$M_3$ Bio-Physical Limits & Solar-Gated Logic (Thresholds: $Z_{water} < -0.95$, $Z_{solar} > -1.0$) \\ \hline
-$S_{hybrid}$ Hybrid & XGBoost: $n\_est=1242, lr=0.057, max\_depth=3$ \\ \hline
-Expert System & Thresholds: Safety ($S < 0.8$), Bumper ($S > 1.0$), Weights ($0.6/0.4$) \\ \hline
-\end{tabular}%
-}
-\end{table}
-
-Hyperparameters for $S_{hybrid}$ were selected via a time-aware random search over 200 iterations, optimizing MAE on the walk-forward validation folds, following the gradient boosting architecture of \citet{shahhosseini2021coupling}. The final values reflect the best-performing configuration within the constrained search space.
-
-% ==========================================
-% S4. IMPLEMENTATION SNIPPETS
-% ==========================================
-\section{Implementation Details}
-As discussed in Section 2.4 of the main text, the $S_{hybrid}$ component targets the yield-to-trend ratio rather than absolute yield to improve local optimization convergence.
-
-\textbf{Yield-to-Ratio Scaling ($S_{hybrid}$):}
-\begin{verbatim}
-# Predicting the Ratio between observed yield and WOFOST simulation
-df['yield_ratio'] = df['actual_yield'] / df['stage1_forecast']
-df['yield_ratio'] = df['yield_ratio'].clip(0.5, 1.5)
-\end{verbatim}
 
 \bibliographystyle{plainnat}
 \bibliography{references}
