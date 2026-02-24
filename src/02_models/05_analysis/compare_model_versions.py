@@ -41,7 +41,7 @@ def load_and_merge_models():
 
     rename_map = {
         'Statistical_Trend_pred': 'Statistical Trend_pred',
-        'Hybrid_XGB_pred': 'Model A (XGBoost)_pred',
+        'Hybrid_XGB_pred': 'Standalone XGBoost_pred',
         'Robust_Linear_pred': 'Model C (Ridge)_pred',
         'Super_Ensemble_pred': 'Super Ensemble_pred'
     }
@@ -112,7 +112,7 @@ def evaluate_timeframe(df, start_year, end_year, title):
         return
 
     models = [
-        'Model A (XGBoost)',
+        'Standalone XGBoost',
         'Model C (Ridge)',
         'Super Ensemble'
     ]
@@ -184,7 +184,7 @@ def print_anomaly_forensics(df):
     anomalies = [2003, 2014, 2018, 2022]
     model_map = {
         'TREND': 'Statistical Trend_pred',
-        'MODEL_A_XGB': 'Model A (XGBoost)_pred',
+        'STANDALONE_XGB': 'Standalone XGBoost_pred',
         'MODEL_C_RIDGE': 'Model C (Ridge)_pred',
         'SUPER_ENSEMBLE': 'Super Ensemble_pred'
     }
