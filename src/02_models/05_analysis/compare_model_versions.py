@@ -1,3 +1,4 @@
+import geopandas as gpd
 import pandas as pd
 import logging
 from pathlib import Path
@@ -26,6 +27,8 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 # Consolidated input path
 SUPER_ENSEMBLE_WALKFORWARD_PATH = project_root / 'reports/figures/final_model_comparison/super_ensemble_walkforward_predictions.csv'
+MASTER_DATA_PATH = config.DATA_DIR / "04_master/master_dataset.csv"
+GEOJSON_PATH = config.DATA_DIR / "01_raw/districts_official.geojson"
 
 def load_and_merge_models():
     """
@@ -224,6 +227,60 @@ def print_anomaly_forensics(df):
 
         logging.info("-" * 40)
 
+def plot_2018_yield_map():
+    """Generates Figure 1: 2018 Actual Yield Map."""
+    output_path = project_root / 'docs/paper_latex/figures/fig1_regime_map_2018.png'
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not MASTER_DATA_PATH.exists():
+        logging.warning(f"Master Dataset not found at {MASTER_DATA_PATH}. Skipping Figure 1.")
+        return
+
+    if not GEOJSON_PATH.exists():
+        logging.warning(f"GeoJSON not found at {GEOJSON_PATH}. Skipping Figure 1.")
+        return
+
+    # Load Data
+    df = pd.read_csv(MASTER_DATA_PATH)
+    df = df[df['year'] == 2018].copy()
+
+    # Load GeoJSON
+    gdf = gpd.read_file(GEOJSON_PATH)
+
+    # Merge
+    # Ensure district_no is same type
+    df['district_no'] = df['district_no'].astype(str).str.zfill(5)
+    # The GeoJSON uses 'id' for the district code (ARS/RS)
+    if 'id' in gdf.columns:
+        gdf['id'] = gdf['id'].astype(str).str.zfill(5)
+        join_col = 'id'
+    elif 'RS' in gdf.columns:
+        gdf['RS'] = gdf['RS'].astype(str).str.zfill(5)
+        join_col = 'RS'
+    else:
+        logging.error(f"GeoJSON columns: {gdf.columns}. Cannot find district code (id/RS).")
+        return
+
+    merged = gdf.merge(df, left_on=join_col, right_on='district_no', how='inner')
+
+    if merged.empty:
+        logging.warning("No matched districts for 2018 map. Check district IDs.")
+        return
+
+    # Plot
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+    merged.plot(column='yield', ax=ax, legend=True,
+                legend_kwds={'label': "Sugarbeet Yield (dt/ha)", 'orientation': "horizontal"},
+                cmap='RdYlGn', edgecolor='black', linewidth=0.5)
+
+    ax.set_title('Figure 1: Observed Sugarbeet Yields (2018 Drought)', fontsize=15)
+    ax.set_axis_off()
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    logging.info(f"✅ Figure 1 (Map) saved to: {output_path}")
+
+
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -240,6 +297,7 @@ def main():
 
     # 3. Anomaly Check
     print_anomaly_forensics(df)
+    plot_2018_yield_map()
 
 if __name__ == '__main__':
     main()
