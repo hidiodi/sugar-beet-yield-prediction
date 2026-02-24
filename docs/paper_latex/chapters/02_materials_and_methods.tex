@@ -1,7 +1,7 @@
 \section{Materials and Methods}
 
 \subsection{Study Area and Datasets}
-The study covers sugarbeet cultivation districts in Germany, utilizing a multi-source dataset spanning 1981--2024. The validation set (2005--2024) comprises $N=4133$ district-year observations, aggregated from active cultivation districts across 13 federal states. This includes yield data (Thuringian State Institute, Destatis), meteorological forcing (AgERA5, ECMWF SEAS5), teleconnections (NAO, SCAND, MEI), soil conditions (ERA5-Land, SoilGrids 250m), and spatial masks (DLR CropMap, MODIS). Yields are reported in decitonnes per hectare (dt/ha). Technical specifications are provided in the Supplementary Information (Table S1).
+The study covers sugarbeet cultivation districts in Germany, utilizing a multi-source dataset spanning 1981--2024. The validation set (2005--2024) comprises $N=3794$ district-year observations, representing the strict intersection of all component data sources (meteorological, soil, and yield records) to ensure consistent comparison. This subset covers active cultivation districts across 13 federal states and includes yield data (Thuringian State Institute, Destatis), meteorological forcing (AgERA5, ECMWF SEAS5), teleconnections (NAO, SCAND, MEI), soil conditions (ERA5-Land, SoilGrids 250m), and spatial masks (DLR CropMap, MODIS). Yields are reported in decitonnes per hectare (dt/ha). Technical specifications are provided in the Supplementary Information (Table S1).
 
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
 The Statistical Trend Baseline model ($M_{trend}$) is a robust time-series forecasting pipeline executed via strict Walk-Forward Validation. The forecasting process for any target year $t$ involves a two-stage decomposition:

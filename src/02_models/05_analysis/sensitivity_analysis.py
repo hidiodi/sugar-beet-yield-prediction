@@ -14,6 +14,7 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 # Input path
 SUPER_ENSEMBLE_WALKFORWARD_PATH = project_root / 'reports/figures/final_model_comparison/super_ensemble_walkforward_predictions.csv'
+OUTPUT_DIR = project_root / 'reports/figures/final_model_comparison'
 
 THRESHOLDS = [0.02, 0.04, 0.06, 0.08, 0.10, 0.15]
 DOWNSIDE_TRUSTS = [0.1, 0.3, 0.5, 0.8, 1.0]
@@ -70,21 +71,30 @@ def run_grid_search(df):
         mae = mean_absolute_error(subset['actual'], preds)
         skill = (1 - (mae / trend_mae)) * 100
 
-        results.append((thresh, dt, ut, mae, skill))
+        results.append({
+            'Threshold': thresh,
+            'Downside_Trust': dt,
+            'Upside_Trust': ut,
+            'MAE': mae,
+            'Skill_Pct': skill
+        })
 
         if mae < best_mae:
             best_mae = mae
             best_params = (thresh, dt, ut)
 
-    # Sort by MAE
-    results.sort(key=lambda x: x[3])
+    # Convert to DataFrame
+    res_df = pd.DataFrame(results).sort_values('MAE')
 
     logging.info("\nTop 10 Configurations:")
-    logging.info(f"{'Thresh':<8} {'DT':<5} {'UT':<5} {'MAE':<10} {'Skill (%)'}")
-    for res in results[:10]:
-        logging.info(f"{res[0]:<8.2f} {res[1]:<5.1f} {res[2]:<5.1f} {res[3]:<10.4f} {res[4]:.2f}")
+    logging.info(res_df.head(10).to_string(index=False, float_format="%.4f"))
 
     logging.info(f"\nBest Params: Thresh={best_params[0]}, DT={best_params[1]}, UT={best_params[2]}")
+
+    # Save to CSV
+    output_path = OUTPUT_DIR / 'sensitivity_results.csv'
+    res_df.to_csv(output_path, index=False)
+    logging.info(f"Saved sensitivity results to {output_path}")
 
 def main():
     df = load_data()
