@@ -18,7 +18,7 @@ A minimum training window of 10 years was enforced before fitting the ARIMA comp
 \[ M_{trend}(t) = \hat{y}_{\text{trend}}(t) + \hat{y}_{\text{residual}}(t) \]
 
 \subsection{The Leak-Free Standard}
-We rigorously purged all information unavailable on March 1st to ensure a realistic production forecast. Specifically, economic data (Sugar Prices) were strictly lagged by 1 year ($T-1$ prices used for year $T$) to reflect autumn purchasing decisions made prior to the planting season. This eliminates the "look-ahead bias" common in retrospective studies where contemporaneous prices are used as proxies for management intensity.
+We rigorously purged all information unavailable on March 1st to ensure a realistic production forecast. Specifically, economic data (Sugar Prices) were strictly lagged by 1 year ($t-1$ prices used for year $t$) to reflect autumn purchasing decisions made prior to the planting season. This eliminates the "look-ahead bias" common in retrospective studies where contemporaneous prices are used as proxies for management intensity.
 
 \subsection{Predictive Algorithms}
 The system utilizes three specialized components:
@@ -30,7 +30,7 @@ The system utilizes three specialized components:
 
     \item \textbf{The Hybrid Detector ($M_{hybrid}$):} A specialized XGBoost model trained to predict deviations from the trend.
     \begin{itemize}
-        \item \textbf{Target:} \texttt{log(yield / trend)} with symmetric clipping at $[-0.6, 0.6]$ to focus on realizable anomalies.
+        \item \textbf{Target:} $\log(y_t / M_{trend}(t))$ (natural logarithm) with symmetric clipping at $[-0.6, 0.6]$ to focus on realizable anomalies.
         \item \textbf{Features:} An "Unleashed" feature set (106 features) including \texttt{sowing\_doy}, \texttt{heat\_signal}, and the risk outputs from the Physical Prior ($M_{phys}$).
         \item \textbf{Constraints:} The model is heavily regularized (\texttt{max\_depth=5}, \texttt{reg\_lambda=2.0}) to prevent overfitting to winter noise, ensuring it only triggers on robust signals.
     \end{itemize}
@@ -49,6 +49,17 @@ We replaced traditional ensemble blending with a deterministic \textbf{Asymmetri
     \end{itemize}
 \end{enumerate}
 
+Define the relative deviation as $\text{Dev}(t) = (M_{hybrid}(t) - M_{trend}(t))\, /\, M_{trend}(t)$.
+
+Formally, the final forecast is: 
+\[ 
+Y_{final}(t) = \begin{cases} 
+M_{hybrid}(t) & \text{if } \text{Dev}(t) < -0.04 \\ 
+0.5\, M_{hybrid}(t) + 0.5\, M_{trend}(t) & \text{if } \text{Dev}(t) > +0.04 \\ 
+M_{trend}(t) & \text{otherwise} 
+\end{cases} 
+\] 
+
 The 4.0\% threshold was selected based on a sensitivity analysis over the validation period, which indicated that this value provides a robust balance between ignoring noise (threshold $< 2$\%) and missing signal (threshold $> 6$\%), with performance remaining stable within the 3--5\% range.
 
 \begin{figure}[h]
@@ -60,3 +71,9 @@ The 4.0\% threshold was selected based on a sensitivity analysis over the valida
 
 \subsection{Statistical Evaluation}
 Statistical significance of skill improvements was assessed using the Diebold-Mariano test (one-sided, $H_0$: equal predictive accuracy).
+
+The Skill Score measures the percentage improvement in MAE over the Statistical Trend baseline: 
+\[ 
+\text{Skill}(\%) = \left(1 - \frac{\text{MAE}_{\text{model}}} 
+{\text{MAE}_{\text{trend}}}\right) \times 100 
+\]

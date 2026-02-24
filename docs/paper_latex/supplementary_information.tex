@@ -107,7 +107,7 @@ The Physical Prior is a Climatological Ensemble of WOFOST (v7.2) simulations.
 The Gate determines the final forecast by comparing the Hybrid Detector ($M_{hybrid}$) with the Statistical Trend ($M_{trend}$).
 
 \begin{enumerate}
-    \item \textbf{Trigger:} Activate if $|M_{hybrid} - M_{trend}| > 4.0\%$.
+    \item \textbf{Trigger:} Activate if $|\text{Dev}| > 0.04$.
     \item \textbf{Downside Trust (Crash):} If Triggered AND $M_{hybrid} < M_{trend}$:
     \[ Y_{final} = 1.0 \times M_{hybrid} \]
     (Trust the Crash signal fully).

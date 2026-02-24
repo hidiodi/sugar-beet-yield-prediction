@@ -43,7 +43,7 @@ Validation over 2005--2024 ($N=3794$) using the strict Leak-Free Standard (Table
 \end{figure}
 
 \subsection{Quantification of Look-Ahead Bias}
-To quantify the cost of look-ahead bias, we compared a permissive validation (including contemporaneous sugar prices) against the Leak-Free Standard. Permissive validation yields inflated skill scores of approximately 10--12\%, compared to 7.33\% under the Leak-Free Standard. This gap of 3--5 percentage points represents bias introduced by using contemporaneous prices as a proxy for management intensity---information unavailable on March 1st. By strictly lagging prices to $T-1$, the reported skill reflects genuinely achievable operational performance.
+To quantify the cost of look-ahead bias, we compared a permissive validation (including contemporaneous sugar prices) against the Leak-Free Standard. Permissive validation yields inflated skill scores of approximately 10--12\%, compared to 7.33\% under the Leak-Free Standard. This gap of 3--5 percentage points represents bias introduced by using contemporaneous prices as a proxy for management intensity---information unavailable on March 1st. By strictly lagging prices to $t-1$, the reported skill reflects genuinely achievable operational performance.
 
 \subsection{Anomaly Forensics (Black Swan Events)}
 Table~\ref{tab:anomalies} details performance during historic anomalies. The Physically-Gated Anomaly Detector significantly reduced errors in the 2018 drought by identifying stress signals in the WOFOST outputs, while remaining stable in the 2014 bumper year.
