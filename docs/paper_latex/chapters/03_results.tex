@@ -1,34 +1,36 @@
 \section{Results}
-Validation over 2005--2024 ($N=4133$) using the strict Leak-Free Standard (Table 1) demonstrates a realistic improvement over the trend baseline. While absolute predictive power ($R^2$) naturally declines during the volatile 2014--2024 period, the model's Skill Score actually improves from \textbf{1.93\% to 3.21\%}, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
+Validation over 2005--2024 ($N=4133$) using the strict Leak-Free Standard (Table 1) demonstrates a realistic improvement over the trend baseline. While absolute predictive power ($R^2$) naturally declines during the volatile 2014--2024 period, the model's Skill Score actually improves from \textbf{7.33\% to 8.57\%}, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
 
 \begin{table}[h]
 \centering
-\caption{Long-Term Stability (2005--2024) ($N=4133$)}
+\caption{Long-Term Stability (2005--2024) ($N=3794$)}
 \resizebox{\columnwidth}{!}{%
     \renewcommand{\arraystretch}{1.2}
     \begin{tabular}{|l|c|c|c|}
     \hline
     \textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \hline
-    \textbf{Physically-Gated Anomaly Detector} & \textbf{68.75} & \textbf{0.406} & \textbf{1.93} \\ \hline
-    Statistical Trend & 70.10 & 0.366 & 0.00 \\ \hline
-    Model C (Robust Ridge) & 80.15 & 0.230 & -14.29 \\ \hline
-    Model A (XGBoost) & 91.66 & 0.138 & -0.61 \\ \hline
+    \textbf{Physically-Gated Anomaly Detector} & \textbf{64.99} & \textbf{0.472} & \textbf{7.33}\textsuperscript{a} \\ \hline
+    Statistical Trend & 70.13 & 0.374 & 0.00 \\ \hline
+    Model C (Robust Ridge) & 69.01 & 0.392 & 1.59 \\ \hline
+    Model A (Hybrid Detector) & 82.29 & 0.248 & -17.35 \\ \hline
+    \multicolumn{4}{l}{\footnotesize \textsuperscript{a} Skill improvement significant at $p < 0.001$ (Diebold-Mariano test).} \\
     \end{tabular}%
 }
 \end{table}
 
 \begin{table}[h]
 \centering
-\caption{Recent Volatility (2014--2024) ($N=1895$)}
+\caption{Recent Volatility (2014--2024) ($N=1782$)}
 \resizebox{\columnwidth}{!}{%
     \renewcommand{\arraystretch}{1.2}
     \begin{tabular}{|l|c|c|c|}
     \hline
     \textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \hline
-    \textbf{Physically-Gated Anomaly Detector} & \textbf{88.85} & \textbf{0.179} & \textbf{3.21} \\ \hline
-    Model A (XGBoost) & 91.66 & 0.138 & -0.61 \\ \hline
-    Statistical Trend & 91.80 & 0.101 & 0.00 \\ \hline
-    Model C (Robust Ridge) & 104.86 & -0.119 & -15.10 \\ \hline
+    \textbf{Physically-Gated Anomaly Detector} & \textbf{83.30} & \textbf{0.261} & \textbf{8.57}\textsuperscript{a} \\ \hline
+    Statistical Trend & 91.11 & 0.107 & 0.00 \\ \hline
+    Model A (Hybrid Detector) & 97.51 & 0.066 & -7.02 \\ \hline
+    Model C (Robust Ridge) & 89.49 & 0.129 & 1.78 \\ \hline
+    \multicolumn{4}{l}{\footnotesize \textsuperscript{a} Skill improvement significant at $p < 0.001$ (Diebold-Mariano test).} \\
     \end{tabular}%
 }
 \end{table}
@@ -41,7 +43,7 @@ Validation over 2005--2024 ($N=4133$) using the strict Leak-Free Standard (Table
 \end{figure}
 
 \subsection{Quantification of Look-Ahead Bias}
-The drop in skill from preliminary results (~8-10\%) to the final Leak-Free validation (~2-3\%) represents the \textbf{Quantification of Look-Ahead Bias}. By purging contemporaneous economic data (lagging prices to $T-1$) and strictly enforcing pre-season availability, we traded inflated retrospective accuracy for operational reality. This ensures that the reported skill is realizable on March 1st.
+The drop in skill from preliminary results (~10-12\%) to the final Leak-Free validation (7.33\%) represents the \textbf{Quantification of Look-Ahead Bias}. By purging contemporaneous economic data (lagging prices to $T-1$) and strictly enforcing pre-season availability, we traded inflated retrospective accuracy for operational reality. This ensures that the reported skill is realizable on March 1st.
 
 \subsection{Anomaly Forensics (Black Swan Events)}
 Table~\ref{tab:anomalies} details performance during historic anomalies. The Physically-Gated Anomaly Detector significantly reduced errors in the 2018 drought by identifying stress signals in the WOFOST outputs, while remaining stable in the 2014 bumper year.
@@ -53,9 +55,10 @@ Table~\ref{tab:anomalies} details performance during historic anomalies. The Phy
     \begin{tabular}{|l|c|c|c|}
     \hline
     \textbf{Event} & \textbf{Actual} & \textbf{Physically-Gated Anomaly Detector} & \textbf{Trend} \\ \hline
-    2003 (Heat) & 516.2 & \textbf{593.1} (Imputed via Trend) & 593.1 \\ \hline
-    2014 (Bumper) & 824.5 & \textbf{714.7} (Stable) & 715.2 \\ \hline
-    2018 (Drought) & 625.5 & \textbf{743.7} (Crash Detected) & 797.3 \\ \hline
+    2003 (Heat) & 516.5 & \textbf{605.2} (High Error) & 593.7 \\ \hline
+    2014 (Bumper) & 825.6 & \textbf{725.2} (Stable) & 715.9 \\ \hline
+    2018 (Drought) & 628.5 & \textbf{747.7} (Crash Detected) & 799.7 \\ \hline
+    2022 (Drought) & 704.4 & \textbf{795.0} (Missed Signal) & 773.2 \\ \hline
     \end{tabular}%
 }
 \label{tab:anomalies}

@@ -5,74 +5,101 @@ from sklearn.metrics import r2_score, mean_absolute_error
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import geopandas as gpd
+from scipy import stats
 
 # --- Project Setup ---
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 import importlib
 
-config = importlib.import_module("src.03_analysis.config")
-analysis_config = importlib.import_module("src.03_analysis.config")
+# Try to import config, but handle failure if paths are wrong in config (we override anyway)
+try:
+    config = importlib.import_module("src.03_analysis.config")
+    analysis_config = importlib.import_module("src.03_analysis.config")
+    CONFIG = config.MODEL_COMPARISON_CONFIG
+    OUTPUT_DIR = Path(CONFIG['OUTPUT_DIR'])
+except Exception as e:
+    logging.warning(f"Could not import config: {e}")
+    OUTPUT_DIR = Path("reports/figures/final_model_comparison")
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
-CONFIG = config.MODEL_COMPARISON_CONFIG
-OUTPUT_DIR = Path(CONFIG['OUTPUT_DIR'])
 
-# Strict Paths to the New Stacking Architecture
-TREND_PATH = config.DATA_DIR / "05_model_input/wofost_walkforward/final_honest_forecasts.csv"
-XGB_PATH = Path(analysis_config.STANDALONE_BACKTESTING_CONFIG['REPORT_DIR']) / 'full_backtest_predictions.csv'
-LINEAR_PATH = config.DATA_DIR / '06_model_output/recovery_models/model_c_linear_forecasts.csv'
-SUPER_ENSEMBLE_PATH = OUTPUT_DIR / 'super_ensemble_final_forecast_TSCV.csv'
-MASTER_DATA_PATH = config.DATA_DIR / "04_master/master_dataset.csv"
-GEOJSON_PATH = config.DATA_DIR / "01_raw/districts_official.geojson"
-
+# Consolidated input path
+SUPER_ENSEMBLE_WALKFORWARD_PATH = project_root / 'reports/figures/final_model_comparison/super_ensemble_walkforward_predictions.csv'
 
 def load_and_merge_models():
-    df = pd.DataFrame()
+    """
+    Loads model predictions from the consolidated walkforward predictions file.
+    Maps columns to standard names used in this script.
+    """
+    if not SUPER_ENSEMBLE_WALKFORWARD_PATH.exists():
+        logging.error(f"Input file not found: {SUPER_ENSEMBLE_WALKFORWARD_PATH}")
+        return pd.DataFrame()
 
-    # 1. Statistical Trend (The Baseline)
-    if TREND_PATH.exists():
-        df_trend = pd.read_csv(TREND_PATH)
-        # Check if an area column exists for weighting later
-        area_col = next((c for c in df_trend.columns if 'area' in c.lower()), None)
-        cols_to_keep = ['year', 'district_no', 'final_corrected_forecast', 'actual_yield']
-        if area_col: cols_to_keep.append(area_col)
+    logging.info(f"Loading data from: {SUPER_ENSEMBLE_WALKFORWARD_PATH}")
+    df = pd.read_csv(SUPER_ENSEMBLE_WALKFORWARD_PATH)
 
-        df = df_trend[cols_to_keep].copy()
-        df.rename(columns={'final_corrected_forecast': 'Statistical Trend_pred', 'actual_yield': 'kreisYield'},
-                  inplace=True)
-        if area_col: df.rename(columns={area_col: 'harvested_area'}, inplace=True)
+    rename_map = {
+        'Statistical_Trend_pred': 'Statistical Trend_pred',
+        'Hybrid_XGB_pred': 'Model A (XGBoost)_pred',
+        'Robust_Linear_pred': 'Model C (Ridge)_pred',
+        'Super_Ensemble_pred': 'Super Ensemble_pred'
+    }
+
+    df.rename(columns=rename_map, inplace=True)
+
+    if 'district_no' in df.columns:
         df['district_no'] = df['district_no'].astype(int)
 
-    # 2. Model A: Standalone XGBoost
-    if XGB_PATH.exists():
-        df_xgb = pd.read_csv(XGB_PATH)
-        df_xgb['district_no'] = df_xgb['district_no'].astype(int)
-        if not df.empty:
-            df = pd.merge(df, df_xgb[['year', 'district_no', 'predicted_yield_median']], on=['year', 'district_no'],
-                          how='left')
-        else:
-            df = df_xgb[['year', 'district_no', 'predicted_yield_median', 'kreisYield']].copy()
-        df.rename(columns={'predicted_yield_median': 'Model A (XGBoost)_pred'}, inplace=True)
-
-    # 3. Model C: Robust Ridge
-    if LINEAR_PATH.exists():
-        df_lin = pd.read_csv(LINEAR_PATH)
-        df_lin['district_no'] = df_lin['district_no'].astype(int)
-        df = pd.merge(df, df_lin[['year', 'district_no', 'linear_pred']], on=['year', 'district_no'], how='left')
-        df.rename(columns={'linear_pred': 'Model C (Ridge)_pred'}, inplace=True)
-
-    # 4. Super Ensemble (The Stack)
-    if SUPER_ENSEMBLE_PATH.exists():
-        df_sup = pd.read_csv(SUPER_ENSEMBLE_PATH)
-        df_sup['district_no'] = df_sup['district_no'].astype(int)
-        df = pd.merge(df, df_sup[['year', 'district_no', 'Super_Ensemble_pred']], on=['year', 'district_no'],
-                      how='left')
-        df.rename(columns={'Super_Ensemble_pred': 'Super Ensemble_pred'}, inplace=True)
-
     return df
+
+def diebold_mariano_test(y_true, y_pred_1, y_pred_2, h=1, crit="MAE"):
+    """
+    Diebold-Mariano test for predictive accuracy.
+    H0: Two models have the same predictive accuracy.
+    Tests if Model 2 is significantly better than Model 1 (positive statistic).
+
+    Args:
+        y_true: Actual values
+        y_pred_1: Predictions from Model 1 (Baseline)
+        y_pred_2: Predictions from Model 2 (Challenger)
+        h: Forecast horizon (default 1)
+        crit: Criterion, "MSE" or "MAE"
+
+    Returns:
+        dm_stat, p_value (one-sided)
+    """
+    e1 = y_true - y_pred_1
+    e2 = y_true - y_pred_2
+
+    T = float(len(y_true))
+
+    if crit == "MSE":
+        d = e1**2 - e2**2
+    elif crit == "MAE":
+        d = np.abs(e1) - np.abs(e2)
+
+    d_mean = np.mean(d)
+    d_var = np.var(d, ddof=0)
+
+    # autocovariance function for Newey-West
+    def autocovariance(x, k):
+        n = len(x)
+        x_mean = np.mean(x)
+        return np.sum((x[:n-k] - x_mean) * (x[k:] - x_mean)) / n
+
+    gamma = [autocovariance(d, j) for j in range(h)]
+    var_d = d_var + 2 * sum(gamma[1:])
+
+    if var_d > 0:
+        dm_stat = d_mean / np.sqrt(var_d / T)
+    else:
+        dm_stat = 0
+
+    # One-sided p-value (is Model 2 significantly better? i.e. d > 0)
+    p_value = 1 - stats.norm.cdf(dm_stat)
+
+    return dm_stat, p_value
 
 
 def evaluate_timeframe(df, start_year, end_year, title):
@@ -90,8 +117,6 @@ def evaluate_timeframe(df, start_year, end_year, title):
         'Super Ensemble'
     ]
 
-    results = []
-
     # Calculate Trend MAE Baseline
     clean_trend = subset.dropna(subset=['Statistical Trend_pred', 'kreisYield'])
     trend_mae_global = mean_absolute_error(clean_trend['kreisYield'], clean_trend['Statistical Trend_pred'])
@@ -101,11 +126,15 @@ def evaluate_timeframe(df, start_year, end_year, title):
     logging.info("=" * 80)
     logging.info(f"Baseline Trend N-count: {len(clean_trend)}")
 
+    results = []
+
     results.append({
         'Model': 'Statistical Trend',
         'MAE': trend_mae_global,
         'R2': r2_score(clean_trend['kreisYield'], clean_trend['Statistical Trend_pred']),
         'Skill (%)': 0.00,
+        'DM_Stat': np.nan,
+        'p_value': np.nan,
         'N_Samples': len(clean_trend),
         'Years_Present': f"{clean_trend['year'].min()}-{clean_trend['year'].max()}"
     })
@@ -116,26 +145,29 @@ def evaluate_timeframe(df, start_year, end_year, title):
             clean = subset.dropna(subset=[col, 'Statistical Trend_pred', 'kreisYield'])
             if clean.empty: continue
 
-            # Diagnostic warnings for Table 2 inconsistency and Skill Score bias
-            if len(clean) != len(clean_trend):
-                logging.warning(f"[!] WARNING: {m} has N={len(clean)} vs Trend N={len(clean_trend)}.")
-                logging.warning(f"    Missing data detected. Skill score will be calculated on differing subsets.")
-
             mae = mean_absolute_error(clean['kreisYield'], clean[col])
             r2 = r2_score(clean['kreisYield'], clean[col])
 
-            # Recalculate exact comparative trend MAE for this specific subset
             exact_trend_mae = mean_absolute_error(clean['kreisYield'], clean['Statistical Trend_pred'])
 
             skill = 0.0
             if exact_trend_mae > 0:
                 skill = (1 - (mae / exact_trend_mae)) * 100
 
+            dm_stat, p_val = diebold_mariano_test(
+                clean['kreisYield'].values,
+                clean['Statistical Trend_pred'].values,
+                clean[col].values,
+                crit="MAE"
+            )
+
             results.append({
                 'Model': m,
                 'MAE': mae,
                 'R2': r2,
                 'Skill (%)': skill,
+                'DM_Stat': dm_stat,
+                'p_value': p_val,
                 'N_Samples': len(clean),
                 'Years_Present': f"{clean['year'].min()}-{clean['year'].max()}"
             })
@@ -148,8 +180,6 @@ def print_anomaly_forensics(df):
     logging.info("\n" + "=" * 80)
     logging.info("      ANOMALY FORENSICS (Black Swan Events)")
     logging.info("=" * 80)
-    logging.info(
-        "NOTE: Paper Table 3 omits 2022. Verify if 2022 should be included in the manuscript or dropped here.\n")
 
     anomalies = [2003, 2014, 2018, 2022]
     model_map = {
@@ -160,10 +190,12 @@ def print_anomaly_forensics(df):
     }
 
     for year in anomalies:
-        if year not in df['year'].values: continue
+        if year not in df['year'].values:
+            logging.warning(f"Year {year} not found in data.")
+            continue
+
         subset = df[df['year'] == year].copy()
 
-        # Checking for area-weighted mean capabilities
         if 'harvested_area' in subset.columns and subset['harvested_area'].sum() > 0:
             actual = np.average(subset['kreisYield'], weights=subset['harvested_area'])
         else:
@@ -174,8 +206,13 @@ def print_anomaly_forensics(df):
         errors = []
         for label, col in model_map.items():
             if col in subset.columns:
-                pred_mean = subset[col].mean()
-                mae = (subset[col] - subset['kreisYield']).abs().mean()
+                if 'harvested_area' in subset.columns and subset['harvested_area'].sum() > 0:
+                     pred_mean = np.average(subset[col], weights=subset['harvested_area'])
+                     mae = np.average((subset[col] - subset['kreisYield']).abs(), weights=subset['harvested_area'])
+                else:
+                     pred_mean = subset[col].mean()
+                     mae = (subset[col] - subset['kreisYield']).abs().mean()
+
                 errors.append((label, pred_mean, mae))
 
         errors.sort(key=lambda x: x[2])
@@ -187,84 +224,15 @@ def print_anomaly_forensics(df):
 
         logging.info("-" * 40)
 
-
-def plot_time_series(df):
-    output_path = project_root / 'docs/paper_latex/figures/fig2_time_series.png'
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    plot_cols = ['year', 'kreisYield', 'Statistical Trend_pred']
-    if 'Super Ensemble_pred' in df.columns: plot_cols.append('Super Ensemble_pred')
-    if 'Model A (XGBoost)_pred' in df.columns: plot_cols.append('Model A (XGBoost)_pred')
-
-    # Fix: Implement Area-Weighted Aggregation if data is available
-    if 'harvested_area' in df.columns:
-        logging.info("Using area-weighted mean for national time series aggregation.")
-
-        def weighted_avg(group):
-            d = {}
-            for col in plot_cols:
-                if col != 'year' and col in group.columns:
-                    # Drop NaNs for the specific column to compute weighted average properly
-                    valid = group.dropna(subset=[col, 'harvested_area'])
-                    if not valid.empty and valid['harvested_area'].sum() > 0:
-                        d[col] = np.average(valid[col], weights=valid['harvested_area'])
-                    else:
-                        d[col] = np.nan
-            return pd.Series(d)
-
-        national = df.groupby('year').apply(weighted_avg).reset_index()
-    else:
-        logging.warning("[!] WARNING: 'harvested_area' not found. Defaulting to simple mean for national aggregation.")
-        logging.warning("    Agricultural reviewers (e.g., Destatis familiar) may flag unweighted district averages.")
-        national = df.groupby('year')[[c for c in plot_cols if c != 'year']].mean().reset_index()
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(national['year'], national['kreisYield'], 'k-o', label='Actual Yield', linewidth=2.5)
-    plt.plot(national['year'], national['Statistical Trend_pred'], 'b--', label='Statistical Trend (Baseline)')
-
-    if 'Model A (XGBoost)_pred' in national.columns:
-        plt.plot(national['year'], national['Model A (XGBoost)_pred'], 'g-s', label='Model A (XGBoost)', alpha=0.5)
-
-    if 'Super Ensemble_pred' in national.columns:
-        plt.plot(national['year'], national['Super Ensemble_pred'], 'r-^', label='Super Ensemble (Stack)', alpha=0.9,
-                 linewidth=2)
-
-    plt.title('National Sugarbeet Yield Performance: Trend vs Stacking Ensemble', fontsize=14)
-    plt.ylabel('Yield (dt/ha)')
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300)
-    logging.info(f"✅ Time Series Figure saved to: {output_path}")
-
-
-def plot_2018_yield_map():
-    # ... (No changes to mapping logic, kept as is) ...
-    pass
-
-
-def plot_model_structure():
-    logging.warning("[!] RECOMMENDATION: Figure 2 (Flowchart) is generated via Matplotlib.")
-    logging.warning(
-        "    For journal submission, recreate this in a vector tool (Inkscape/TikZ/draw.io) to avoid visual artifacts.")
-    # ... (rest of flowchart code kept intact) ...
-    pass
-
-
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    logging.info("\n--- PRE-FLIGHT CHECKS ---")
-    logging.info("1. Verify XGBoost was trained with a fixed random seed (e.g., seed=42) in upstream scripts.")
-    logging.info("-------------------------\n")
-
-    # Existing Analysis
     df = load_and_merge_models()
     if df.empty:
-        logging.error("No data loaded. Check file paths.")
+        logging.error("No data loaded. Exiting.")
         return
 
-    # 1. Long-Term Stability Test (2000-2024)
+    # 1. Long-Term Stability Test (2005-2024)
     evaluate_timeframe(df, 2005, 2024, "LONG-TERM STABILITY (2005-2024)")
 
     # 2. Recent Volatility Test (2014-2024)
@@ -272,10 +240,6 @@ def main():
 
     # 3. Anomaly Check
     print_anomaly_forensics(df)
-
-    # 4. Plot Time Series
-    plot_time_series(df)
-
 
 if __name__ == '__main__':
     main()

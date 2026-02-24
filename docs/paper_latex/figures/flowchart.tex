@@ -1,0 +1,45 @@
+\begin{tikzpicture}[node distance=2cm, auto, >=latex, thick]
+    % Styles
+    \tikzstyle{input} = [trapezium, trapezium left angle=70, trapezium right angle=110, minimum width=2.5cm, minimum height=1cm, text centered, draw=black, fill=blue!10]
+    \tikzstyle{process} = [rectangle, minimum width=3cm, minimum height=1.5cm, text centered, text width=3cm, draw=black, fill=orange!20, rounded corners]
+    \tikzstyle{decision} = [diamond, minimum width=2.5cm, minimum height=1cm, text centered, text width=2cm, draw=black, fill=green!20, aspect=1.5]
+    \tikzstyle{output} = [ellipse, minimum width=2.5cm, minimum height=1cm, text centered, draw=black, fill=red!10]
+    \tikzstyle{arrow} = [thick,->,>=stealth]
+
+    % Nodes
+    % Left Column: Inputs & Physical Prior
+    \node (inputs) [input] {Multi-Source Data \\ (Weather, Soil, Yield)};
+    \node (wofost) [process, below of=inputs, node distance=3cm] {Physical Prior \\ ($M_{phys}$) \\ WOFOST Ensemble};
+
+    % Middle Column: Components
+    \node (trend) [process, right of=inputs, node distance=5cm] {Statistical Trend \\ ($M_{trend}$) \\ Baseline};
+    \node (xgb) [process, right of=wofost, node distance=5cm] {Hybrid Detector \\ ($M_{hybrid}$) \\ XGBoost};
+
+    % Right Column: Logic
+    \node (gate) [decision, below of=trend, node distance=4.5cm] {Gate: \\ $|Dev| > 4\%$? \\ ($M_{hybrid}$ vs $M_{trend}$)};
+
+    \node (crash) [process, below of=gate, node distance=4cm, fill=yellow!20, text width=3.5cm] {Asymmetric Trust \\ Crash: 100\% $M_{hybrid}$ \\ Bumper: 50\% Mix};
+
+    \node (final) [output, right of=gate, node distance=5cm] {Final Forecast};
+
+    % Edges
+    % Inputs flow
+    \draw [arrow] (inputs) -- (wofost);
+    \draw [arrow] (inputs) -- (trend);
+    \draw [arrow] (inputs) -- (xgb);
+
+    % Prior to Hybrid
+    \draw [arrow] (wofost) -- node[anchor=south, font=\footnotesize] {Risk Signals ($p10$)} (xgb);
+
+    % To Gate
+    \draw [arrow] (trend) -- (gate);
+    \draw [arrow] (xgb) -- (gate);
+
+    % Gate Logic
+    \draw [arrow] (gate) -- node[anchor=south] {No (Default)} (final);
+    \draw [arrow] (gate) -- node[anchor=east] {Yes (Anomaly)} (crash);
+
+    % From Crash to Final
+    \draw [arrow] (crash.east) to [out=0,in=270] (final.south);
+
+\end{tikzpicture}

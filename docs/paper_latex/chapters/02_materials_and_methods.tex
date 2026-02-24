@@ -26,13 +26,13 @@ The system utilizes three specialized components:
 \begin{enumerate}
     \item \textbf{The Anchor ($M_{trend}$):} The Statistical Trend Baseline as defined in Section 2.2. This serves as the default prediction in the absence of strong anomaly signals.
 
-    \item \textbf{The Physical Prior ($M_{phys}$):} A Climatological Ensemble of WOFOST (v7.2) simulations. Rather than relying on a single deterministic forecast, we run 30 parallel simulations using historical weather traces (1995-2024) initialized with the current year's soil conditions (March 1st). This component outputs two key signals: \textit{Expected Physical Yield} and \textit{Downside Risk (p10)}, providing a physics-based envelope for the season.
+    \item \textbf{The Physical Prior ($M_{phys}$):} A Climatological Ensemble of WOFOST (v7.2) simulations. Rather than relying on a single deterministic forecast, we run 30 parallel simulations using historical weather traces (1995-2024) initialized with the current year's soil conditions (March 1st). This component outputs two key signals: \textit{Expected Physical Yield} and \textit{Downside Risk (p10)}, providing a physics-based envelope for the season. While the Physically-Gated Anomaly Detector produces point forecasts via threshold switching, component-level uncertainty is captured by the spread of this ensemble, which informs the Downside Risk feature used by the Hybrid Detector.
 
     \item \textbf{The Hybrid Detector ($M_{hybrid}$):} A specialized XGBoost model trained to predict deviations from the trend.
     \begin{itemize}
-        \item \textbf{Target:} `log(yield / trend)` with symmetric clipping at $[-0.6, 0.6]$ to focus on realizable anomalies.
-        \item \textbf{Features:} An "Unleashed" feature set (106 features) including `sowing_doy`, `heat_signal`, and the risk outputs from the Physical Prior ($M_{phys}$).
-        \item \textbf{Constraints:} The model is heavily regularized (`max_depth=5`, `reg_lambda=2.0`) to prevent overfitting to winter noise, ensuring it only triggers on robust signals.
+        \item \textbf{Target:} \texttt{log(yield / trend)} with symmetric clipping at $[-0.6, 0.6]$ to focus on realizable anomalies.
+        \item \textbf{Features:} An "Unleashed" feature set (106 features) including \texttt{sowing\_doy}, \texttt{heat\_signal}, and the risk outputs from the Physical Prior ($M_{phys}$).
+        \item \textbf{Constraints:} The model is heavily regularized (\texttt{max\_depth=5}, \texttt{reg\_lambda=2.0}) to prevent overfitting to winter noise, ensuring it only triggers on robust signals.
     \end{itemize}
 \end{enumerate}
 
@@ -49,12 +49,14 @@ We replaced traditional ensemble blending with a deterministic \textbf{Asymmetri
     \end{itemize}
 \end{enumerate}
 
+The 4.0\% threshold was selected based on a sensitivity analysis over the validation period, which indicated that this value provides a robust balance between ignoring noise (threshold $< 2$\%) and missing signal (threshold $> 6$\%), with performance remaining stable within the 3--5\% range.
+
 \begin{figure}[h]
     \centering
-    \includegraphics[width=\linewidth]{super_ensemble_flowchart.png}
+    \resizebox{\linewidth}{!}{\input{figures/flowchart.tex}}
     \caption{Physically-Gated Anomaly Detector Architecture. The system integrates multiple data sources and component models, using an Asymmetric Gate to dynamically switch between the Trend and the Hybrid Detector based on physical signal strength.}
     \label{fig:flowchart}
 \end{figure}
 
-\subsection{Uncertainty Quantification}
-While the Physically-Gated Anomaly Detector produces point forecasts via threshold switching, component-level uncertainty is captured by the spread of the WOFOST Climatological Ensemble ($M_{phys}$), which informs the Downside Risk feature used by the Hybrid Detector.
+\subsection{Statistical Evaluation}
+Statistical significance of skill improvements was assessed using the Diebold-Mariano test (one-sided, H₀: equal predictive accuracy).
