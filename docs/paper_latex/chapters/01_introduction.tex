@@ -17,9 +17,10 @@ Recent literature has increasingly adopted ``Process-Guided Machine Learning'' (
 While recent work by \citet{paudel2021machine} established that ML models can rival these operational systems, they typically treat yield distributions as continuous and unimodal, optimizing for average performance. Our work extends this lineage by moving beyond static feature integration to a \textbf{dynamic ensemble} approach. Unlike static hybrids which smooth over extremes, our system explicitly acknowledges non-stationarity, switching its structural reliance from statistical trends to physiological limits when ``Black Swan'' precursors are detected.
 
 \subsection{Research Gap: The Regime Switching Hypothesis}
-Most existing approaches treat crop yield distributions as continuous and unimodal. We hypothesize that yield formation follows a ``Regime Switching'' process:
-\begin{itemize}
-    \item \textbf{Regime A (Normal):} Yields are driven by gradual technological trends and minor weather fluctuations. Statistical extrapolation works well.
-    \item \textbf{Regime B (Extreme Stress):} Yields are limited by distinct physiological bottlenecks (e.g., stomatal closure, root anoxia) that act as ``kill switches.'' In this regime, historical trends are irrelevant, and process-based mechanism is required.
-\end{itemize}
+Most existing approaches treat crop yield distributions as continuous and unimodal. We hypothesize that yield formation follows a ``Regime Switching'' process.
+
+\textbf{Regime A (Normal):} Yields are driven by gradual technological trends and minor weather fluctuations. Statistical extrapolation works well.
+
+\textbf{Regime B (Extreme Stress):} Yields are limited by distinct physiological bottlenecks (e.g., stomatal closure, root anoxia) that act as ``kill switches.'' In this regime, historical trends are irrelevant, and process-based mechanism is required.
+
 Our novel contribution is an Expert System that explicitly detects the active regime and adapts the forecasting strategy accordingly. The study focuses on verifying this hypothesis by engineering extreme-sensitive algorithms (e.g., the Heat Signal model). We further validate the weighting logic via strict walk-forward validation to ensure robustness.

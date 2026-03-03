@@ -4,64 +4,57 @@
 The study covers sugarbeet cultivation districts in Germany, utilizing a multi-source dataset spanning 1981--2024. The validation set (2005--2024) comprises $N=3794$ district-year observations, representing the strict intersection of all component data sources (meteorological, soil, and yield records) to ensure consistent comparison. This subset covers active cultivation districts across 13 federal states and includes yield data (Thuringian State Institute, Destatis), meteorological forcing (AgERA5, ECMWF SEAS5), teleconnections (NAO, SCAND, MEI), soil conditions (ERA5-Land, SoilGrids 250m), and spatial masks (DLR CropMap, MODIS). Yields are reported in decitonnes per hectare (dt/ha). Technical specifications are provided in the Supplementary Information (Table S1).
 
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
-The Statistical Trend Baseline model ($M_{trend}$) is a robust time-series forecasting pipeline executed via strict Walk-Forward Validation. The forecasting process for any target year $t$ involves a two-stage decomposition:
-
-\begin{enumerate}
-    \item \textbf{Trend Component (Long-Term):} The secular technological trend is modeled using a Generalized Additive Model (GAM) where $f(t)$ is a smoothing spline (10 splines):
-    \[ \hat{y}_{\text{trend}}(t) = f(t) \]
-
-    \item \textbf{Residual Component (Short-Term):} Let $R_i = y_i - \hat{y}_{\text{trend}}(i)$ represent the historical residuals for years $i < t$. This sequence is modeled using an ARIMA(1, 0, 0) process to capture short-term autocorrelation:
-    \[ \hat{y}_{\text{residual}}(t) = \text{ARIMA}(R_{1 \dots t-1}) \]
-\end{enumerate}
+The Statistical Trend Baseline model ($M_{\text{trend}}$) is a robust time-series forecasting pipeline executed via strict Walk-Forward Validation. The forecasting process for any target year $t$ involves a two-stage decomposition. First, the \textbf{Trend Component (Long-Term)} captures the secular technological trend using a Generalized Additive Model (GAM) where $f(t)$ is a smoothing spline (10 splines):
+\[ \hat{y}_{\text{trend}}(t) = f(t). \]
+Second, the \textbf{Residual Component (Short-Term)} captures short-term autocorrelation. We define the historical residual sequence as $\{R_i\}_{i=1}^{t-1}$, where $R_i = y_i - \hat{y}_{\text{trend}}(i)$ represents the historical residuals for years $i < t$. This sequence is fed into an ARIMA(1, 0, 0) process:
+\[ \hat{y}_{\text{residual}}(t) = \text{ARIMA}(\{R_i\}_{i=1}^{t-1}). \]
 
 A minimum training window of 10 years was enforced before fitting the ARIMA component. The final trend forecast for year $t$ is the sum of these two components:
-\[ M_{trend}(t) = \hat{y}_{\text{trend}}(t) + \hat{y}_{\text{residual}}(t) \]
+\[ M_{\text{trend}}(t) = \hat{y}_{\text{trend}}(t) + \hat{y}_{\text{residual}}(t). \]
 
 \subsection{The Leak-Free Standard}
-We rigorously purged all information unavailable on March 1st to ensure a realistic production forecast. Specifically, economic data (Sugar Prices) were strictly lagged by 1 year ($t-1$ prices used for year $t$) to reflect autumn purchasing decisions made prior to the planting season. This eliminates the "look-ahead bias" common in retrospective studies where contemporaneous prices are used as proxies for management intensity.
+We rigorously purged all information unavailable on March 1st to ensure a realistic production forecast. Specifically, economic data (Sugar Prices) were strictly lagged by 1 year ($t-1$ prices used for year $t$) to reflect autumn purchasing decisions made prior to the planting season. This eliminates the ``look-ahead bias'' common in retrospective studies where contemporaneous prices are used as proxies for management intensity.
 
 \subsection{Predictive Algorithms}
 The system utilizes three specialized components:
 
-\begin{enumerate}
-    \item \textbf{The Anchor ($M_{trend}$):} The Statistical Trend Baseline as defined in Section 2.2. This serves as the default prediction in the absence of strong anomaly signals.
+\subsubsection{2.4.1 The Anchor}
+The Statistical Trend Baseline ($M_{\text{trend}}$) as defined in Section 2.2. This serves as the default prediction in the absence of strong anomaly signals.
 
-    \item \textbf{The Physical Prior ($M_{phys}$):} A Climatological Ensemble of WOFOST (v7.2) simulations. Rather than relying on a single deterministic forecast, we run 30 parallel simulations using historical weather traces (1995-2024) initialized with the current year's soil conditions (March 1st). This component outputs two key signals: \textit{Expected Physical Yield} and \textit{Downside Risk (p10)}, providing a physics-based envelope for the season. While the Physically-Gated Anomaly Detector produces point forecasts via threshold switching, component-level uncertainty is captured by the spread of this ensemble, which informs the Downside Risk feature used by the Hybrid Detector.
+\subsubsection{2.4.2 The Physical Prior}
+A Climatological Ensemble of WOFOST (v7.2) simulations ($M_{\text{phys}}$). Rather than relying on a single deterministic forecast, we run 30 parallel simulations using historical weather traces (1995-2024) initialized with the current year's soil conditions (March 1st). This component outputs two key signals: \textit{Expected Physical Yield} and \textit{Downside Risk (p10)}, providing a physics-based envelope for the season. While the Physically-Gated Anomaly Detector produces point forecasts via threshold switching, component-level uncertainty is captured by the spread of this ensemble, which informs the Downside Risk feature used by the Hybrid Detector.
 
-    \item \textbf{The Hybrid Detector ($M_{hybrid}$):} A specialized XGBoost model trained to predict deviations from the trend.
-    \begin{itemize}
-        \item \textbf{Target:} $\log(y_t / M_{trend}(t))$ (natural logarithm) with symmetric clipping at $[-0.6, 0.6]$ to focus on realizable anomalies.
-        \item \textbf{Features:} An "Unleashed" feature set (106 features) including \texttt{sowing\_doy}, \texttt{heat\_signal}, and the risk outputs from the Physical Prior ($M_{phys}$).
-        \item \textbf{Constraints:} The model is heavily regularized (\texttt{max\_depth=5}, \texttt{reg\_lambda=2.0}) to prevent overfitting to winter noise, ensuring it only triggers on robust signals.
-    \end{itemize}
-\end{enumerate}
+\subsubsection{2.4.3 The Hybrid Detector}
+A specialized XGBoost model ($M_{\text{hybrid}}$) trained to predict deviations from the trend.
+\begin{itemize}
+    \item \textbf{Target:} $\log(y_t / M_{\text{trend}}(t))$ (natural logarithm) with symmetric clipping at $[-0.6, 0.6]$ to focus on realizable anomalies.
+    \item \textbf{Features:} An ``Unleashed'' feature set (106 features) including $D_{\text{sow}}$, $S_{\text{heat}}$, and the risk outputs from the Physical Prior ($M_{\text{phys}}$).
+    \item \textbf{Constraints:} The model is heavily regularized (\texttt{max\_depth=5}, \texttt{reg\_lambda=2.0}) to prevent overfitting to winter noise, ensuring it only triggers on robust signals.
+\end{itemize}
 
 \subsection{Asymmetric Threshold Gating}
-We replaced traditional ensemble blending with a deterministic \textbf{Asymmetric Gate}. The logic follows a "Safety First" principle:
+We replaced traditional ensemble blending with a deterministic \textbf{Asymmetric Gate}. The logic follows a ``Safety First'' principle.
 
-\begin{enumerate}
-    \item \textbf{Default State:} The system defaults to the \textbf{Statistical Trend} ($M_{trend}$).
-    \item \textbf{Trigger Mechanism:} The Gate activates only if the Hybrid Detector ($M_{hybrid}$) deviates from the Trend by more than \textbf{4.0\%}.
-    \item \textbf{Asymmetric Trust:}
-    \begin{itemize}
-        \item \textbf{Downside (Crash):} 100\% Trust. If $M_{hybrid}$ predicts a crash based on physical signals (e.g., Late Sowing + Dry Soil), the system fully adopts the forecast.
-        \item \textbf{Upside (Bumper):} 50\% Trust. Bumper yields are harder to guarantee in March, so the system remains conservative, blending the upside prediction with the trend.
-    \end{itemize}
-\end{enumerate}
+The system defaults to the \textbf{Statistical Trend} ($M_{\text{trend}}$). The Gate activates only if the Hybrid Detector ($M_{\text{hybrid}}$) deviates from the Trend by more than \textbf{4.0\%}.
 
-Define the relative deviation as $\text{Dev}(t) = (M_{hybrid}(t) - M_{trend}(t))\, /\, M_{trend}(t)$.
+When triggered, the system applies \textbf{Asymmetric Trust}. On the downside (``Crash''), there is 100\% Trust: if $M_{\text{hybrid}}$ predicts a crash based on physical signals (e.g., Late Sowing + Dry Soil), the system fully adopts the forecast. On the upside (``Bumper''), there is 50\% Trust: bumper yields are harder to guarantee in March, so the system remains conservative, blending the upside prediction with the trend.
+
+Define the relative deviation as $\text{Dev}(t) = (M_{\text{hybrid}}(t) - M_{\text{trend}}(t))\, /\, M_{\text{trend}}(t)$.
 
 Formally, the final forecast is: 
-\[ 
-Y_{final}(t) = \begin{cases} 
-M_{hybrid}(t) & \text{if } \text{Dev}(t) < -0.04 \\ 
-0.5\, M_{hybrid}(t) + 0.5\, M_{trend}(t) & \text{if } \text{Dev}(t) > +0.04 \\ 
-M_{trend}(t) & \text{otherwise} 
-\end{cases} 
-\] 
+\begin{equation*}
+\resizebox{\columnwidth}{!}{%
+$Y_{\text{final}}(t) = \begin{cases}
+M_{\text{hybrid}}(t) & \text{if } \text{Dev}(t) < -0.04 \\
+0.5\, M_{\text{hybrid}}(t) + 0.5\, M_{\text{trend}}(t) & \text{if } \text{Dev}(t) > +0.04 \\
+M_{\text{trend}}(t) & \text{otherwise.}
+\end{cases}$%
+}
+\end{equation*}
 
 The 4.0\% threshold was selected based on a sensitivity analysis over the validation period, which indicated that this value provides a robust balance between ignoring noise (threshold $< 2$\%) and missing signal (threshold $> 6$\%), with performance remaining stable within the 3--5\% range.
 
+\vspace{1em}
 \begin{figure}[h]
     \centering
     \resizebox{\linewidth}{!}{\input{figures/flowchart.tex}}
@@ -75,5 +68,5 @@ Statistical significance of skill improvements was assessed using the Diebold-Ma
 The Skill Score measures the percentage improvement in MAE over the Statistical Trend baseline: 
 \[ 
 \text{Skill}(\%) = \left(1 - \frac{\text{MAE}_{\text{model}}} 
-{\text{MAE}_{\text{trend}}}\right) \times 100 
+{\text{MAE}_{\text{trend}}}\right) \times 100.
 \]
