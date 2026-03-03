@@ -59,17 +59,17 @@ The operational forecasting pipeline integrates multi-source data streams to bri
 \centering
 \caption{Comprehensive Data Sources and Specifications}
 \resizebox{\columnwidth}{!}{%
-\begin{tabular}{|l|l|l|l|}
-\hline
-\textbf{Dataset} & \textbf{Source} & \textbf{Resolution} & \textbf{Role} \\ \hline
-Yield Data & Thuringian State Inst. / Destatis \citep{destatis2024} & District (Annual) & Target Variable \\ \hline
-AgERA5 & ECMWF / Copernicus \citep{agera5} & 0.1$^\circ$ (Daily) & Historical Weather \\ \hline
-SEAS5 & ECMWF \citep{ecmwf_seas5} & 1.0$^\circ$ (Monthly) & Seasonal Forecast \\ \hline
-ERA5-Land & ECMWF \citep{era5land} & 0.1$^\circ$ (Monthly) & Soil Moisture / Temp \\ \hline
-SoilGrids & ISRIC \citep{hengl2017soilgrids250m} & 250m & Static Soil Properties \\ \hline
-CropMap & DLR \citep{dlr_cropmap} & 10m & Spatial Mask \\ \hline
-MOD13Q1 & NASA LP DAAC \citep{didan2015mod13q1} & 250m (16-day) & Vegetation Anomalies \\ \hline
-Teleconnections & NOAA (NAO, SCAND, MEI) & Monthly & Climate Indices \\ \hline
+\begin{tabular}{llll}
+\toprule
+\textbf{Dataset} & \textbf{Source} & \textbf{Resolution} & \textbf{Role} \\ \midrule
+Yield Data & Thuringian State Inst. / Destatis \citep{destatis2024} & District (Annual) & Target Variable \\
+AgERA5 & ECMWF / Copernicus \citep{agera5} & 0.1$^\circ$ (Daily) & Historical Weather \\
+SEAS5 & ECMWF \citep{ecmwf_seas5} & 1.0$^\circ$ (Monthly) & Seasonal Forecast \\
+ERA5-Land & ECMWF \citep{era5land} & 0.1$^\circ$ (Monthly) & Soil Moisture / Temp \\
+SoilGrids & ISRIC \citep{hengl2017soilgrids250m} & 250m & Static Soil Properties \\
+CropMap & DLR \citep{dlr_cropmap} & 10m & Spatial Mask \\
+MOD13Q1 & NASA LP DAAC \citep{didan2015mod13q1} & 250m (16-day) & Vegetation Anomalies \\
+Teleconnections & NOAA (NAO, SCAND, MEI) & Monthly & Climate Indices \\ \bottomrule
 \end{tabular}%
 }
 \label{tab:datasources_si}
@@ -81,11 +81,11 @@ Teleconnections & NOAA (NAO, SCAND, MEI) & Monthly & Climate Indices \\ \hline
 \section{Predictive Algorithms \& Hyperparameters}
 The Physically-Gated Anomaly Detector utilizes specialized components configured for operational stability.
 
-\subsection{Model A: The Hybrid Detector ($M_{hybrid}$)}
+\subsection{Model A: The Hybrid Detector ($M_{\text{hybrid}}$)}
 The Hybrid Detector is an XGBoost model designed to predict yield deviations from the trend.
 \begin{itemize}
-    \item \textbf{Target:} $\log(Y_{actual} / Y_{trend})$, clipped symmetrically at $[-0.6, 0.6]$.
-    \item \textbf{Features:} 106 "Unleashed" features, including `sowing_doy`, `heat_signal`, and outputs from the Physical Prior.
+    \item \textbf{Target:} $\log(Y_{\text{actual}} / Y_{\text{trend}})$, clipped symmetrically at $[-0.6, 0.6]$.
+    \item \textbf{Features:} 106 ``Unleashed'' features, including $D_{\text{sow}}$, $S_{\text{heat}}$, and outputs from the Physical Prior.
     \item \textbf{Hyperparameters:} heavily regularized to prevent overfitting:
     \begin{itemize}
         \item \texttt{max\_depth=5}
@@ -94,29 +94,30 @@ The Hybrid Detector is an XGBoost model designed to predict yield deviations fro
     \end{itemize}
 \end{itemize}
 
-\subsection{Model B: The Physical Prior ($M_{phys}$)}
+\subsection{Model B: The Physical Prior ($M_{\text{phys}}$)}
 The Physical Prior is a Climatological Ensemble of WOFOST (v7.2) simulations.
 \begin{itemize}
     \item \textbf{Configuration:} 30 parallel simulations.
     \item \textbf{Weather Traces:} Historical weather data from 1995--2024.
     \item \textbf{Initialization:} Current year's soil moisture and temperature (March 1st).
-    \item \textbf{Outputs:} Expected Physical Yield ($Y_{phys}$) and Downside Risk (10th percentile).
+    \item \textbf{Outputs:} Expected Physical Yield ($Y_{\text{phys}}$) and Downside Risk (10th percentile).
 \end{itemize}
 
 \subsection{Asymmetric Threshold Gate}
-The Gate determines the final forecast by comparing the Hybrid Detector ($M_{hybrid}$) with the Statistical Trend ($M_{trend}$).
+The Gate determines the final forecast by comparing the Hybrid Detector ($M_{\text{hybrid}}$) with the Statistical Trend ($M_{\text{trend}}$). The system applies a trigger mechanism when the deviation, defined as $\text{Dev}(t) = (M_{\text{hybrid}}(t) - M_{\text{trend}}(t))\, /\, M_{\text{trend}}(t)$, exceeds a magnitude of $0.04$.
 
-\begin{enumerate}
-    \item \textbf{Trigger:} Activate if $|\text{Dev}| > 0.04$.
-    \item \textbf{Downside Trust (Crash):} If Triggered AND $M_{hybrid} < M_{trend}$:
-    \[ Y_{final} = 1.0 \times M_{hybrid} \]
-    (Trust the Crash signal fully).
-    \item \textbf{Upside Trust (Bumper):} If Triggered AND $M_{hybrid} > M_{trend}$:
-    \[ Y_{final} = 0.5 \times M_{hybrid} + 0.5 \times M_{trend} \]
-    (Blend the Bumper signal conservatively).
-    \item \textbf{Default (Safety Mode):} Else:
-    \[ Y_{final} = M_{trend} \]
-\end{enumerate}
+When triggered, the system applies asymmetric trust depending on the direction of the anomaly. On the downside (``Crash'' signal), the system places full trust in the physical model, setting the final forecast to match the Hybrid Detector's prediction. On the upside (``Bumper'' signal), the system applies a conservative 50\% trust, blending the Hybrid prediction equally with the Statistical Trend. If the deviation does not exceed the trigger threshold, the system defaults to the ``Safety Mode,'' fully relying on the Statistical Trend.
+
+Formally, the final forecast is:
+\begin{equation*}
+\resizebox{\columnwidth}{!}{%
+$Y_{\text{final}}(t) = \begin{cases}
+M_{\text{hybrid}}(t) & \text{if } \text{Dev}(t) < -0.04 \\
+0.5\, M_{\text{hybrid}}(t) + 0.5\, M_{\text{trend}}(t) & \text{if } \text{Dev}(t) > +0.04 \\
+M_{\text{trend}}(t) & \text{otherwise.}
+\end{cases}$%
+}
+\end{equation*}
 
 \bibliographystyle{plainnat}
 \bibliography{references}

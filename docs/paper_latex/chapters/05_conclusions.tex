@@ -2,9 +2,9 @@
 
 The developed Physically-Gated Anomaly Detector represents a robust solution for crop yield forecasting. It successfully integrates process-based simulation (WOFOST Climatological Scenarios) with robust machine learning (XGBoost) by utilizing a transparent Asymmetric Threshold Gating logic.
 
-The architecture effectively filters winter noise while correctly triggering on strong physical signals (Sowing Date + Soil Moisture) to capture extreme yield crashes, achieving a statistically significant +8.57\% skill improvement in recent volatile years ($p < 0.001$, Diebold-Mariano).
+The architecture effectively filters winter noise while correctly triggering on strong physical signals (Sowing Date + Soil Moisture) to capture extreme yield crashes, achieving a statistically significant +8.6\% skill improvement in recent volatile years ($p < 0.001$, Diebold-Mariano).
 
-This approach offers significant value for agricultural decision-making by providing reliable forecasts even under increasingly volatile climate conditions. By rigorously purging unavailable information (The "Leak-Free" Standard), the system provides a blueprint for next-generation environmental forecasting systems that prioritize scientific integrity and operational reality over theoretical performance.
+This approach offers significant value for agricultural decision-making by providing reliable forecasts even under increasingly volatile climate conditions. By rigorously purging unavailable information (The ``Leak-Free'' Standard), the system provides a blueprint for next-generation environmental forecasting systems that prioritize scientific integrity and operational reality over theoretical performance.
 
 \subsection{Future Work}
 Future work will focus on extending the Physical Prior to other tuber crops and implementing conformal prediction. While the current Hybrid Detector serves as a powerful anomaly scanner, closing the remaining error gap requires high-fidelity, site-specific parameterization of WOFOST 7.2 to better capture localized extremes like the 2003 heatwave.
