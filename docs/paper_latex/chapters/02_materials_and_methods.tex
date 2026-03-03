@@ -4,7 +4,7 @@
 The study covers sugarbeet cultivation districts in Germany, utilizing a multi-source dataset spanning 1981--2024. The validation set (2005--2024) comprises $N=3794$ district-year observations, representing the strict intersection of all component data sources (meteorological, soil, and yield records) to ensure consistent comparison. This subset covers active cultivation districts across 13 federal states and includes yield data (Thuringian State Institute, Destatis), meteorological forcing (AgERA5, ECMWF SEAS5), teleconnections (NAO, SCAND, MEI), soil conditions (ERA5-Land, SoilGrids 250m), and spatial masks (DLR CropMap, MODIS). Yields are reported in decitonnes per hectare (dt/ha). Technical specifications are provided in the Supplementary Information (Table S1).
 
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
-The Statistical Trend Baseline model ($M_{\text{trend}}$) is a robust time-series forecasting pipeline executed via strict Walk-Forward Validation. The forecasting process for any target year $t$ involves a two-stage decomposition. First, the \textbf{Trend Component (Long-Term)} captures the secular technological trend using a Generalized Additive Model (GAM) where $f(t)$ is a smoothing spline (10 splines):
+The statistical trend baseline model ($M_{\text{trend}}$) is a standard time-series forecasting pipeline executed via strict walk-forward validation. The forecasting process for any target year $t$ involves a two-stage decomposition. First, the \textbf{Trend Component (Long-Term)} captures the secular technological trend using a Generalized Additive Model (GAM) where $f(t)$ is a smoothing spline (10 splines):
 \[ \hat{y}_{\text{trend}}(t) = f(t). \]
 Second, the \textbf{Residual Component (Short-Term)} captures short-term autocorrelation. We define the historical residual sequence as $\{R_i\}_{i=1}^{t-1}$, where $R_i = y_i - \hat{y}_{\text{trend}}(i)$ represents the historical residuals for years $i < t$. This sequence is fed into an ARIMA(1, 0, 0) process:
 \[ \hat{y}_{\text{residual}}(t) = \text{ARIMA}(\{R_i\}_{i=1}^{t-1}). \]
@@ -19,25 +19,20 @@ We rigorously purged all information unavailable on March 1st to ensure a realis
 The system utilizes three specialized components:
 
 \subsubsection{2.4.1 The Anchor}
-The Statistical Trend Baseline ($M_{\text{trend}}$) as defined in Section 2.2. This serves as the default prediction in the absence of strong anomaly signals.
+The statistical trend baseline ($M_{\text{trend}}$) as defined in Section 2.2. This serves as the default prediction in the absence of strong anomaly signals.
 
 \subsubsection{2.4.2 The Physical Prior}
-A Climatological Ensemble of WOFOST (v7.2) simulations ($M_{\text{phys}}$). Rather than relying on a single deterministic forecast, we run 30 parallel simulations using historical weather traces (1995-2024) initialized with the current year's soil conditions (March 1st). This component outputs two key signals: \textit{Expected Physical Yield} and \textit{Downside Risk (p10)}, providing a physics-based envelope for the season. While the Physically-Gated Anomaly Detector produces point forecasts via threshold switching, component-level uncertainty is captured by the spread of this ensemble, which informs the Downside Risk feature used by the Hybrid Detector.
+A climatological ensemble of WOFOST (v7.2) simulations ($M_{\text{phys}}$). Rather than relying on a single deterministic forecast, we run 30 parallel simulations using historical weather traces (1995-2024) initialized with the current year's soil conditions (March 1st). This component outputs two key signals: \textit{Expected Physical Yield} and \textit{Downside Risk (p10)}, providing a physics-based envelope for the season. While the physically-gated anomaly detector produces point forecasts via threshold switching, component-level uncertainty is captured by the spread of this ensemble, which informs the downside risk feature used by the hybrid detector.
 
 \subsubsection{2.4.3 The Hybrid Detector}
-A specialized XGBoost model ($M_{\text{hybrid}}$) trained to predict deviations from the trend.
-\begin{itemize}
-    \item \textbf{Target:} $\log(y_t / M_{\text{trend}}(t))$ (natural logarithm) with symmetric clipping at $[-0.6, 0.6]$ to focus on realizable anomalies.
-    \item \textbf{Features:} An ``Unleashed'' feature set (106 features) including $D_{\text{sow}}$, $S_{\text{heat}}$, and the risk outputs from the Physical Prior ($M_{\text{phys}}$).
-    \item \textbf{Constraints:} The model is heavily regularized (\texttt{max\_depth=5}, \texttt{reg\_lambda=2.0}) to prevent overfitting to winter noise, ensuring it only triggers on robust signals.
-\end{itemize}
+A specialized XGBoost model ($M_{\text{hybrid}}$) trained to predict deviations from the trend. The \textbf{Target} is defined as $\log(y_t / M_{\text{trend}}(t))$ (natural logarithm) with symmetric clipping at $[-0.6, 0.6]$ to focus on realizable anomalies. The model uses a comprehensive set of 106 \textbf{Features}, including $D_{\text{sow}}$, $S_{\text{heat}}$, and the risk outputs from the physical prior ($M_{\text{phys}}$). To prevent overfitting to winter noise, the \textbf{Constraints} heavily regularize the model (\texttt{max\_depth=5}, \texttt{reg\_lambda=2.0}), ensuring it only triggers on consistent signals.
 
 \subsection{Asymmetric Threshold Gating}
-We replaced traditional ensemble blending with a deterministic \textbf{Asymmetric Gate}. The logic follows a ``Safety First'' principle.
+We replaced traditional ensemble blending with a deterministic \textbf{asymmetric gate}. The logic follows a ``safety mode'' principle.
 
-The system defaults to the \textbf{Statistical Trend} ($M_{\text{trend}}$). The Gate activates only if the Hybrid Detector ($M_{\text{hybrid}}$) deviates from the Trend by more than \textbf{4.0\%}.
+The system defaults to the \textbf{statistical trend} ($M_{\text{trend}}$). The gate activates only if the hybrid detector ($M_{\text{hybrid}}$) deviates from the trend by more than \textbf{4.0\%}.
 
-When triggered, the system applies \textbf{Asymmetric Trust}. On the downside (``Crash''), there is 100\% Trust: if $M_{\text{hybrid}}$ predicts a crash based on physical signals (e.g., Late Sowing + Dry Soil), the system fully adopts the forecast. On the upside (``Bumper''), there is 50\% Trust: bumper yields are harder to guarantee in March, so the system remains conservative, blending the upside prediction with the trend.
+When triggered, the system applies \textbf{asymmetric weighting}. On the downside (``crash''), there is 100\% trust: if $M_{\text{hybrid}}$ predicts a crash based on physical signals (e.g., Late Sowing + Dry Soil), the system fully adopts the forecast. On the upside (``bumper''), there is 50\% trust: bumper yields are harder to guarantee in March, so the system remains conservative, blending the upside prediction with the trend.
 
 Define the relative deviation as $\text{Dev}(t) = (M_{\text{hybrid}}(t) - M_{\text{trend}}(t))\, /\, M_{\text{trend}}(t)$.
 
@@ -52,20 +47,20 @@ M_{\text{trend}}(t) & \text{otherwise.}
 }
 \end{equation*}
 
-The 4.0\% threshold was selected based on a sensitivity analysis over the validation period, which indicated that this value provides a robust balance between ignoring noise (threshold $< 2$\%) and missing signal (threshold $> 6$\%), with performance remaining stable within the 3--5\% range.
+The 4.0\% threshold was selected based on a sensitivity analysis over the validation period, which indicated that this value provides an optimal balance between ignoring noise (threshold $< 2$\%) and missing signal (threshold $> 6$\%), with performance remaining stable within the 3--5\% range.
 
 \vspace{1em}
 \begin{figure}[h]
     \centering
     \resizebox{\linewidth}{!}{\input{figures/flowchart.tex}}
-    \caption{Physically-Gated Anomaly Detector Architecture. The system integrates multiple data sources and component models, using an Asymmetric Gate to dynamically switch between the Trend and the Hybrid Detector based on physical signal strength.}
+    \caption{Physically-Gated Anomaly Detector Architecture. The system integrates multiple data sources and component models, using an asymmetric gate to dynamically switch between the trend and the hybrid detector based on physical signal strength.}
     \label{fig:flowchart}
 \end{figure}
 
 \subsection{Statistical Evaluation}
 Statistical significance of skill improvements was assessed using the Diebold-Mariano test (one-sided, $H_0$: equal predictive accuracy).
 
-The Skill Score measures the percentage improvement in MAE over the Statistical Trend baseline: 
+The skill score measures the percentage improvement in MAE over the statistical trend baseline:
 \[ 
 \text{Skill}(\%) = \left(1 - \frac{\text{MAE}_{\text{model}}} 
 {\text{MAE}_{\text{trend}}}\right) \times 100.
