@@ -1,5 +1,6 @@
 \section{Results}
-Validation over 2005--2024 ($N=3794$) using the strict leak-free standard (Table 1) demonstrates a realistic improvement over the trend baseline. While absolute predictive power ($R^2$) naturally declines during the volatile 2014--2024 period, the model's skill score actually improves from \textbf{7.3\% to 8.6\%}, demonstrating that physics-informed switching becomes more valuable as climate noise increases.
+Validation over 2005--2024 ($N=3794$) using the strict leak-free standard (Table 1) demonstrates a realistic improvement over the trend baseline. While absolute predictive power ($R^2$) naturally declines during the volatile 2014--2024 period,
+the model's skill score actually improves from \textbf{7.3\% to 8.6\%}, demonstrating that physics-informed switching becomes more valuable as volatility increases.
 
 \begin{table}[h]
 \centering
@@ -48,7 +49,7 @@ To quantify the cost of look-ahead bias, we compared a permissive validation (in
 \subsection{Anomaly Forensics (Extreme Events)}
 Table~\ref{tab:anomalies} details performance during historic anomalies. The physically-gated anomaly detector significantly reduced errors in the 2018 drought by identifying stress signals in the WOFOST outputs, while remaining stable in the 2014 bumper year.
 
-\begin{table}[h]
+\begin{table}[H]
 \centering
 \caption{Performance during Extreme Events (dt/ha)}
 \resizebox{\columnwidth}{!}{%
@@ -64,14 +65,14 @@ Table~\ref{tab:anomalies} details performance during historic anomalies. The phy
 \label{tab:anomalies}
 \end{table}
 
-\begin{figure}[h]
+\begin{figure}[H]
     \centering
     \includegraphics[width=\linewidth]{fig2_time_series.png}
     \caption{National average sugarbeet yield: Actual observations vs. physically-gated anomaly detector forecasts and statistical trend baseline. Note the superior tracking of the 2018 drought event.}
     \label{fig:timeseries}
 \end{figure}
 
-\begin{figure}[h]
+\begin{figure}[H]
     \centering
     \includegraphics[width=\linewidth]{fig3_parity_plot.png}
     \caption{Parity plot showing Actual vs Predicted yields, colored by the model selected by the gate. Note how the ``crash mode'' is activated during extreme stress years like 2018, while the trend is preferred for stable years.}

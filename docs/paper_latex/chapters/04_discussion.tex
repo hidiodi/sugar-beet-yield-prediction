@@ -9,6 +9,16 @@ The system's diagnostic capability is driven by the $M_{\text{hybrid}}$ hybrid d
 \subsection{Limitations and Anomaly Forensics}
 Limitations include reliance on interpolated weather grids, which smooth localized extremes. However, the system's conservative nature prevents over-reaction. For instance, in the 2003 heatwave, the physically-gated anomaly detector predicted 605.2 dt/ha, slightly higher than the trend (593.7 dt/ha). While this missed the full extent of the crash (actual: 516.5~dt/ha) and performed marginally worse than the baseline, it maintained stability without erratic deviations. This highlights a trade-off: the gate prioritizes robustness against false alarms (over-prediction of crashes) at the cost of occasionally missing the full extent of legitimate extremes when signals are ambiguous.
 
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{fig2_predicted_map_2018.png}
+    \caption{Predicted spatial distribution of sugarbeet yields during the 2018 drought. When compared to the observed reality (Fig. 1),
+        the physically-gated anomaly detector successfully captures the geographic concentration of the stress, but fails in its extreme severity.}
+    \label{fig:predicted_map_2018}
+\end{figure}
+
+
 Conversely, the 2018 drought error reduction (trend 799.7 vs gate 747.7) demonstrates the value of the ``crash mode''. The strong physical signals (Late Sowing + Dry Soil) triggered the 100\% trust mechanism, successfully pulling the forecast down towards reality (628.5~dt/ha).
 
 However, the 2022 anomaly highlights a limitation. Despite significant yield reduction (actual: 704.4~dt/ha), the physically-gated anomaly detector predicted 795.0~dt/ha, performing worse than the trend (773.2~dt/ha). This suggests that ambiguous physical signals or conflicting component outputs can lead the gate to favor optimistic forecasts, missing certain types of stress events.

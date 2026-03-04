@@ -281,6 +281,62 @@ def plot_2018_yield_map():
     logging.info(f"✅ Figure 1 (Map) saved to: {output_path}")
 
 
+def plot_2018_predicted_yield_map(df):
+    """Generates Figure 2: 2018 Predicted Yield Map (Super Ensemble)."""
+    output_path = project_root / 'docs/paper_latex/figures/fig2_predicted_map_2018.png'
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not GEOJSON_PATH.exists():
+        logging.warning(f"GeoJSON not found at {GEOJSON_PATH}. Skipping Predicted Map.")
+        return
+
+    # Filter the predictions DataFrame for 2018
+    df_2018 = df[df['year'] == 2018].copy()
+
+    if df_2018.empty:
+        logging.warning("No prediction data for 2018 found. Skipping Predicted Map.")
+        return
+
+    # Load GeoJSON
+    gdf = gpd.read_file(GEOJSON_PATH)
+
+    # Ensure district_no is same type (zero-padded string of length 5)
+    df_2018['district_no'] = df_2018['district_no'].astype(str).str.zfill(5)
+
+    # The GeoJSON uses 'id' or 'RS' for the district code
+    if 'id' in gdf.columns:
+        gdf['id'] = gdf['id'].astype(str).str.zfill(5)
+        join_col = 'id'
+    elif 'RS' in gdf.columns:
+        gdf['RS'] = gdf['RS'].astype(str).str.zfill(5)
+        join_col = 'RS'
+    else:
+        logging.error(f"GeoJSON columns: {gdf.columns}. Cannot find district code (id/RS).")
+        return
+
+    # Merge spatial data with prediction data
+    merged = gdf.merge(df_2018, left_on=join_col, right_on='district_no', how='inner')
+
+    if merged.empty:
+        logging.warning("No matched districts for 2018 predicted map. Check district IDs.")
+        return
+
+    # Plot
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+
+    # Note: load_and_merge_models() maps the column to 'Super Ensemble_pred'
+    merged.plot(column='Super Ensemble_pred', ax=ax, legend=True,
+                legend_kwds={'label': "Predicted Sugarbeet Yield (dt/ha)", 'orientation': "horizontal"},
+                cmap='RdYlGn', edgecolor='black', linewidth=0.5)
+
+    ax.set_title('Predicted Sugarbeet Yields (2018 Drought) - Physically-Gated Anomaly Detector', fontsize=15)
+    ax.set_axis_off()
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    logging.info(f"✅ Figure 2 (Predicted Map) saved to: {output_path}")
+
+
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -298,6 +354,7 @@ def main():
     # 3. Anomaly Check
     print_anomaly_forensics(df)
     plot_2018_yield_map()
+    plot_2018_predicted_yield_map(df)
 
 if __name__ == '__main__':
     main()

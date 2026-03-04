@@ -27,7 +27,7 @@
 }
 
 % --- Title Information ---
-\title{Supplementary Information for:\\ \textbf{Physically-Gated Anomaly Detector: Bridging Process-Based Simulation and Machine Learning for Pre-Season Risk Assessment}}
+\title{Supplementary Information for:\\ {Physically-Gated Anomaly Detector: Bridging Process-Based Simulation and Machine Learning for Pre-Season Risk Assessment}}
 \author{Tim Schweitzer}
 \date{\today}
 
@@ -61,7 +61,7 @@ The operational forecasting pipeline integrates multi-source data streams to bri
 \resizebox{\columnwidth}{!}{%
 \begin{tabular}{llll}
 \toprule
-\textbf{Dataset} & \textbf{Source} & \textbf{Resolution} & \textbf{Role} \\ \midrule
+{Dataset} & {Source} & {Resolution} & {Role} \\ \midrule
 Yield Data & Thuringian State Inst. / Destatis \citep{destatis2024} & District (Annual) & Target Variable \\
 AgERA5 & ECMWF / Copernicus \citep{agera5} & 0.1$^\circ$ (Daily) & Historical Weather \\
 SEAS5 & ECMWF \citep{ecmwf_seas5} & 1.0$^\circ$ (Monthly) & Seasonal Forecast \\
@@ -82,10 +82,10 @@ Teleconnections & NOAA (NAO, SCAND, MEI) & Monthly & Climate Indices \\ \bottomr
 The physically-gated anomaly detector utilizes specialized components configured for operational stability.
 
 \subsection{Model A: The Hybrid Detector ($M_{\text{hybrid}}$)}
-The hybrid detector is an XGBoost model designed to predict yield deviations from the trend. The \textbf{Target} is defined as $\log(y_t / M_{\text{trend}}(t))$, clipped symmetrically at $[-0.6, 0.6]$. The model uses a set of 106 comprehensive \textbf{Features}, including $D_{\text{sow}}$, $S_{\text{heat}}$, and outputs from the physical prior. To prevent overfitting, the \textbf{Hyperparameters} are heavily regularized (\texttt{max\_depth=5}, \texttt{reg\_lambda=2.0}, \texttt{learning\_rate=0.05}).
+The hybrid detector is an XGBoost model designed to predict yield deviations from the trend. The {Target} is defined as $\log(y_t / M_{\text{trend}}(t))$, clipped symmetrically at $[-0.6, 0.6]$. The model uses a set of 106 comprehensive {Features}, including $D_{\text{sow}}$, $S_{\text{heat}}$, and outputs from the physical prior. To prevent overfitting, the {Hyperparameters} are heavily regularized (\texttt{max\_depth=5}, \texttt{reg\_lambda=2.0}, \texttt{learning\_rate=0.05}).
 
 \subsection{Model B: The Physical Prior ($M_{\text{phys}}$)}
-The physical prior is a climatological ensemble of WOFOST (v7.2) simulations. Its \textbf{Configuration} consists of 30 parallel simulations. The simulations run on \textbf{Weather Traces} from historical weather data spanning 1995--2024. The model \textbf{Initialization} uses the current year's soil moisture and temperature (as of March 1st). Finally, the \textbf{Outputs} provided are the Expected Physical Yield ($Y_{\text{phys}}$) and the Downside Risk (10th percentile).
+The physical prior is a climatological ensemble of WOFOST (v7.2) simulations. Its {Configuration} consists of 30 parallel simulations. The simulations run on {Weather Traces} from historical weather data spanning 1995--2024. The model {Initialization} uses the current year's soil moisture and temperature (as of March 1st). Finally, the {Outputs} provided are the Expected Physical Yield ($Y_{\text{phys}}$) and the Downside Risk (10th percentile).
 
 \subsection{Asymmetric Threshold Gate}
 The gate determines the final forecast by comparing the hybrid detector ($M_{\text{hybrid}}$) with the statistical trend ($M_{\text{trend}}$). The system applies a trigger mechanism when the deviation, defined as $\text{Dev}(t) = (M_{\text{hybrid}}(t) - M_{\text{trend}}(t))\, /\, M_{\text{trend}}(t)$, exceeds a magnitude of $0.04$.
