@@ -28,15 +28,15 @@
     \draw [arrow] (inputs) -- (trend);
     \draw [arrow] (inputs) -- (xgb);
 
-    % Prior to Hybrid
-    \draw [arrow] (wofost) -- node[anchor=south, font=\footnotesize] {Risk Signals ($p10$)} (xgb);
+    % Prior to Hybrid - Pushed even further down
+    \draw [arrow] (wofost) -- node[below, yshift=-0.7cm, font=\footnotesize] {Risk Signals ($p10$)} (xgb);
 
     % To Gate
     \draw [arrow] (trend) -- (gate);
     \draw [arrow] (xgb) -- (gate);
 
-    % Gate Logic
-    \draw [arrow] (gate) -- node[anchor=south] {No (Default)} (final);
+    % Gate Logic - Pushed even further up
+    \draw [arrow] (gate) -- node[above, yshift=0.6cm] {No (Default)} (final);
     \draw [arrow] (gate) -- node[anchor=east] {Yes (Anomaly)} (crash);
 
     % From Crash to Final
