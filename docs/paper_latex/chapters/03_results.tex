@@ -15,7 +15,7 @@ which illustrates how the gate maintains controlled error rates even in extreme 
     \textbf{Physically-Gated Anomaly Detector} & \textbf{65.0} & \textbf{0.47} & \textbf{7.3}\textsuperscript{a} \\
     Statistical Trend & 70.1 & 0.37 & 0.0 \\
     Standalone XGBoost & 82.3 & 0.25 & -17.4 \\
-    \multicolumn{4}{l}{\footnotesize \textsuperscript{a} $p < 0.001$, \textsuperscript{b} $p = 0.055$ (Diebold-Mariano test).} \\ \bottomrule
+    \multicolumn{4}{l}{\footnotesize \textsuperscript{a} $p < 0.001$ (Diebold-Mariano test).} \\ \bottomrule
     \end{tabular}%
 }\label{tab:stability}
 \end{table}
@@ -31,7 +31,7 @@ which illustrates how the gate maintains controlled error rates even in extreme 
     \textbf{Physically-Gated Anomaly Detector} & \textbf{83.3} & \textbf{0.26} & \textbf{8.6}\textsuperscript{a} \\
     Statistical Trend & 91.1 & 0.11 & 0.0 \\
     Standalone XGBoost & 97.5 & 0.07 & -7.0 \\
-    \multicolumn{4}{l}{\footnotesize \textsuperscript{a} $p < 0.001$, \textsuperscript{b} $p = 0.093$ (Diebold-Mariano test).} \\ \bottomrule
+    \multicolumn{4}{l}{\footnotesize \textsuperscript{a} $p < 0.001$ (Diebold-Mariano test).} \\ \bottomrule
     \end{tabular}%
 }\label{tab:volatility}
 \end{table}
@@ -46,7 +46,8 @@ which illustrates how the gate maintains controlled error rates even in extreme 
 \subsection{Quantification of Look-Ahead Bias}
 To quantify the cost of look-ahead bias, we compared a permissive validation (including contemporaneous sugar prices) against the leak-free standard.
 Permissive validation yields inflated skill scores of approximately 10--12\%, compared to 7.3\% under the leak-free standard.
-This gap of 3--5 percentage points represents bias introduced by using contemporaneous prices as a proxy for management intensity---information unavailable on March 1st.
+This gap of 3--5 percentage points represents bias introduced by using contemporaneous
+prices as a proxy for management intensity, information unavailable on March 1st.
 By strictly lagging prices to $t-1$, the reported skill reflects genuinely achievable operational performance.
 
 \subsection{Anomaly Forensics (Extreme Events)}
