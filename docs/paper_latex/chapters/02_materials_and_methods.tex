@@ -24,7 +24,7 @@ Economic data (Sugar/Fertilizer Prices) were strictly lagged by 1 year ($t-1$ pr
 This eliminates the ``look-ahead bias'' common in retrospective studies where contemporaneous prices are used as proxies for management intensity.
 
 \subsection{Predictive Algorithms}
-The system utilizes three specialized components:
+The system utilizes three specialized components, governed by an asymmetric gate to form the complete architecture (illustrated in Figure~\ref{fig:flowchart}):
 
 \subsubsection{The Anchor}
 The statistical trend baseline ($M_{\text{trend}}$) as defined in Section 2.2. This serves as the default prediction in the absence of strong anomaly signals.

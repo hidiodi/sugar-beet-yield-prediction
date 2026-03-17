@@ -1,6 +1,8 @@
 \section{Results}
-Validation over 2005--2024 ($N=3794$) using the strict leak-free standard (Table 1) demonstrates a realistic improvement over the trend baseline. While absolute predictive power ($R^2$) naturally declines during the volatile 2014--2024 period,
+Validation over 2005--2024 ($N=3794$) using the strict leak-free standard (Table~\ref{tab:stability}) demonstrates a realistic improvement over the trend baseline. While absolute predictive power ($R^2$) naturally declines during the volatile 2014--2024 period,
 the model's skill score actually improves from \textbf{7.3\% to 8.6\%}, demonstrating that physics-informed switching becomes more valuable as volatility increases.
+This robustness is further visualized in the error landscape (Figure~\ref{fig:error_landscape}),
+which illustrates how the gate maintains controlled error rates even in extreme low-yield crash scenarios.
 
 \begin{table}[H]
 \centering
@@ -16,7 +18,7 @@ the model's skill score actually improves from \textbf{7.3\% to 8.6\%}, demonstr
     Standalone XGBoost & 82.3 & 0.25 & -17.4 \\
     \multicolumn{4}{l}{\footnotesize \textsuperscript{a} $p < 0.001$, \textsuperscript{b} $p = 0.055$ (Diebold-Mariano test).} \\ \bottomrule
     \end{tabular}%
-}
+}\label{tab:stability}
 \end{table}
 
 \begin{table}[H]
@@ -33,7 +35,7 @@ the model's skill score actually improves from \textbf{7.3\% to 8.6\%}, demonstr
     Model C (Robust Ridge) & 89.5 & 0.13 & 1.8\textsuperscript{b} \\
     \multicolumn{4}{l}{\footnotesize \textsuperscript{a} $p < 0.001$, \textsuperscript{b} $p = 0.093$ (Diebold-Mariano test).} \\ \bottomrule
     \end{tabular}%
-}
+}\label{tab:volatility}
 \end{table}
 
 \begin{figure}[H]
@@ -44,10 +46,16 @@ the model's skill score actually improves from \textbf{7.3\% to 8.6\%}, demonstr
 \end{figure}
 
 \subsection{Quantification of Look-Ahead Bias}
-To quantify the cost of look-ahead bias, we compared a permissive validation (including contemporaneous sugar prices) against the leak-free standard. Permissive validation yields inflated skill scores of approximately 10--12\%, compared to 7.3\% under the leak-free standard. This gap of 3--5 percentage points represents bias introduced by using contemporaneous prices as a proxy for management intensity---information unavailable on March 1st. By strictly lagging prices to $t-1$, the reported skill reflects genuinely achievable operational performance.
+To quantify the cost of look-ahead bias, we compared a permissive validation (including contemporaneous sugar prices) against the leak-free standard.
+Permissive validation yields inflated skill scores of approximately 10--12\%, compared to 7.3\% under the leak-free standard.
+This gap of 3--5 percentage points represents bias introduced by using contemporaneous prices as a proxy for management intensity---information unavailable on March 1st.
+By strictly lagging prices to $t-1$, the reported skill reflects genuinely achievable operational performance.
 
 \subsection{Anomaly Forensics (Extreme Events)}
-Table~\ref{tab:anomalies} details performance during historic anomalies. The physically-gated anomaly detector significantly reduced errors in the 2018 drought by identifying stress signals in the WOFOST outputs, while remaining stable in the 2014 bumper year.
+Table~\ref{tab:anomalies} details performance during historic anomalies.
+The physically-gated anomaly detector significantly reduced errors in the 2018 drought by identifying stress signals in the WOFOST outputs, allowing it to accurately track the national yield crash (Figure~\ref{fig:timeseries}),
+while remaining stable in the 2014 bumper year.
+The precise activation of this ``crash mode'' versus the standard trend baseline across different stress levels is distinctly visible in the parity plot (Figure~\ref{fig:parity}).
 
 \begin{table}[H]
 \centering
