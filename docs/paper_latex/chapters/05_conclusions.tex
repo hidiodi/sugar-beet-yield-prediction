@@ -7,10 +7,10 @@ The architecture effectively filters winter noise while correctly triggering on 
 This approach offers value for agricultural decision-making by providing reliable forecasts even under increasingly volatile climate conditions. By rigorously purging unavailable information (the ``leak-free'' standard), the system provides a blueprint for next-generation environmental forecasting systems that prioritize scientific integrity and operational reality over theoretical performance.
 
 \subsection{Future Work}
-Future work will focus on extending the physical prior to other tuber crops and implementing conformal prediction.
-While the current hybrid detector serves as a powerful anomaly scanner, closing the remaining error gap requires high-fidelity
-, site-specific parameterization of WOFOST 7.2 to better capture localized extremes like the 2003 heatwave.
-Furthermore, while the physical prior effectively models physiological boundaries, its reliance on historical weather traces limits its ability to
-anticipate risks driven by truly unprecedented future climate extremes. As climate volatility increases,
-future iterations must explore substituting historical climatology with synthetic extreme weather generators or dynamically downscaled
-climate ensembles capable of simulating out-of-sample weather events.}
+Subsequent research will extend the physical prior to other tuber crops and implement conformal prediction.
+Closing the remaining error gap requires site-specific calibration of WOFOST 7.2 to better capture localized extremes like the 2003 heatwave.
+Disease detection also remains a significant hurdle; outbreak dynamics are highly erratic, and field observations are often too sparse to support robust modeling,
+making it difficult to fully extrapolate the severity of localized diseases.
+Finally, because the physical prior currently generates its downside risk estimates using historical weather traces (1995–2024), it contains an inherent blind spot for entirely unprecedented climate extremes.
+To better equip the gate for novel volatility, future iterations must expand the WOFOST ensemble with synthetic weather generators .
+Simulating out-of-sample weather trajectories will provide the hybrid detector with a much more robust assessment of true downside risk for pre-season, March 1st forecasts.
