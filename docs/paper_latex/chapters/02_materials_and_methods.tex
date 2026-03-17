@@ -8,7 +8,8 @@ teleconnections (NAO, SCAND, MEI), soil conditions (ERA5-Land \citep{era5land}, 
 and spatial masks (DLR CropMap\citep{dlr_cropmap}, MODIS\citep{didan2015mod13q1}).
 
 \subsection{The Statistical Trend Baseline (GAM + ARIMA)}
-The statistical trend baseline model ($M_{\text{trend}}$) is a standard time-series forecasting pipeline implemented via standard libraries like \citep{scikitlearn} and Statsmodels \citep{seabold2010statsmodels}, executed via strict walk-forward validation.
+The statistical trend baseline model ($M_{\text{trend}}$) is
+a standard time-series forecasting pipeline implemented via \texttt{scikit-learn} \citep{scikitlearn} and Statsmodels \citep{seabold2010statsmodels}, executed via strict walk-forward validation.
 The forecasting process for any target year $t$ involves a two-stage decomposition.
 First, the Trend Component (Long-Term) captures the secular technological trend using a Generalized Additive Model (GAM) where $f(t)$ is a smoothing spline (10 splines):
 \[ \hat{y}_{\text{trend}}(t) = f(t). \]

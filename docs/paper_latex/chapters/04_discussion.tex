@@ -1,11 +1,15 @@
 \section{Discussion}
 
 \subsection{Regime Selection Efficiency and Benchmark Failure}
-The physically-gated anomaly detector achieves a \textbf{7.3\%} skill gain (8.6\% in recent years) by employing an asymmetric threshold gating strategy.
-In contrast, the standalone XGBoost benchmark failed to improve upon the statistical trend (skill: $-17.4\%$), while Model C (Robust Ridge) showed improvements (skill: $1.6\%$, $p=0.055$). While Model C outperforms the trend, the physically-gated anomaly detector provides a significantly stronger signal.
-This result highlights the limitations of ``comprehensive'' machine learning in high-variance, low-signal-to-noise agricultural environments.
-The gate's superior performance confirms that dynamic regime switching—explicitly separating ``normal'' from ``extreme'' logic is essential for capturing non-stationary climate impacts that static ensembles miss,
-aligning with recent findings on the efficacy of dynamic gating architectures \citep{li2025dynamic}
+The physically-gated anomaly detector achieves a \textbf{7.3\%} skill gain (8.6\% in
+recent years) by employing an asymmetric threshold gating strategy.
+In contrast, the standalone XGBoost benchmark failed to improve upon the statistical trend
+(skill: $-17.4\%$), highlighting the limitations of ``comprehensive'' machine learning
+in high-variance, low-signal-to-noise agricultural environments.
+The gate's better performance confirms that dynamic regime switching, explicitly separating ``normal''
+from ``extreme'' logic, is helping to capture non-stationary climate impacts that
+static ensembles miss, aligning with recent findings on the efficacy of dynamic gating
+architectures \citep{li2025dynamic}.
 
 \subsection{Uncertainty and Drivers}
 The system's diagnostic capability is driven by the $M_{\text{hybrid}}$ hybrid detector, which integrates physical priors from WOFOST. Forensic analysis confirms that the underlying regime dynamics are driven by complex mechanism-informed features like $D_{\text{sow}}$ and $S_{\text{heat}}$.
