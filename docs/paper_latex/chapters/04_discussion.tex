@@ -1,13 +1,21 @@
 \section{Discussion}
 
 \subsection{Regime Selection Efficiency and Benchmark Failure}
-The physically-gated anomaly detector achieves a \textbf{7.3\%} skill gain (8.6\% in recent years) by employing an asymmetric threshold gating strategy. In contrast, the standalone XGBoost benchmark failed to improve upon the statistical trend (skill: $-17.4\%$), while Model C (Robust Ridge) showed improvements (skill: $1.6\%$, $p=0.055$). While Model C outperforms the trend, the physically-gated anomaly detector provides a significantly stronger signal. This result highlights the limitations of ``comprehensive'' machine learning in high-variance, low-signal-to-noise agricultural environments. The gate's superior performance confirms that dynamic regime switching—explicitly separating ``normal'' from ``extreme'' logic—is essential for capturing non-stationary climate impacts that static ensembles miss.
+The physically-gated anomaly detector achieves a \textbf{7.3\%} skill gain (8.6\% in recent years) by employing an asymmetric threshold gating strategy.
+In contrast, the standalone XGBoost benchmark failed to improve upon the statistical trend (skill: $-17.4\%$), while Model C (Robust Ridge) showed improvements (skill: $1.6\%$, $p=0.055$). While Model C outperforms the trend, the physically-gated anomaly detector provides a significantly stronger signal.
+This result highlights the limitations of ``comprehensive'' machine learning in high-variance, low-signal-to-noise agricultural environments.
+The gate's superior performance confirms that dynamic regime switching—explicitly separating ``normal'' from ``extreme'' logic is essential for capturing non-stationary climate impacts that static ensembles miss,
+aligning with recent findings on the efficacy of dynamic gating architectures \citep{li2025dynamic}
 
 \subsection{Uncertainty and Drivers}
-The system's diagnostic capability is driven by the $M_{\text{hybrid}}$ hybrid detector, which integrates physical priors from WOFOST. Forensic analysis confirms that the underlying regime dynamics are driven by complex mechanism-informed features like $D_{\text{sow}}$ and $S_{\text{heat}}$. While the operational gate relies on a simplified threshold logic ($|\text{Dev}| > 4.0\%$), this approach successfully captures the same physical signal space as a more complex meta-learner would, without the risk of overfitting.
+The system's diagnostic capability is driven by the $M_{\text{hybrid}}$ hybrid detector, which integrates physical priors from WOFOST. Forensic analysis confirms that the underlying regime dynamics are driven by complex mechanism-informed features like $D_{\text{sow}}$ and $S_{\text{heat}}$.
+While the operational gate relies on a simplified threshold logic ($|\text{Dev}| > 4.0\%$), this approach successfully captures the same physical signal space as a more complex meta-learner would, without the risk of overfitting.
 
 \subsection{Limitations and Anomaly Forensics}
-Limitations include reliance on interpolated weather grids, which smooth localized extremes. However, the system's conservative nature prevents over-reaction. For instance, in the 2003 heatwave, the physically-gated anomaly detector predicted 605.2 dt/ha, slightly higher than the trend (593.7 dt/ha). While this missed the full extent of the crash (actual: 516.5~dt/ha) and performed marginally worse than the baseline, it maintained stability without erratic deviations. This highlights a trade-off: the gate prioritizes robustness against false alarms (over-prediction of crashes) at the cost of occasionally missing the full extent of legitimate extremes when signals are ambiguous.
+Limitations include reliance on interpolated weather grids, which smooth localized extremes.
+However, the system's conservative nature prevents over-reaction.\ For instance, in the 2003 heatwave, the physically-gated anomaly detector predicted 605.2 dt/ha, slightly higher than the trend (593.7 dt/ha).
+While this missed the full extent of the crash (actual: 516.5~dt/ha) and performed marginally worse than the baseline, it maintained stability without erratic deviations.
+This highlights a trade-off: the gate prioritizes robustness against false alarms (over-prediction of crashes) at the cost of occasionally missing the full extent of legitimate extremes when signals are ambiguous.
 
 
 \begin{figure}[h]
@@ -19,14 +27,22 @@ Limitations include reliance on interpolated weather grids, which smooth localiz
 \end{figure}
 
 
-Conversely, the 2018 drought error reduction (trend 799.7 vs gate 747.7) demonstrates the value of the ``crash mode''. The strong physical signals (Late Sowing + Dry Soil) triggered the 100\% trust mechanism, successfully pulling the forecast down towards reality (628.5~dt/ha).
+Conversely, the 2018 drought error reduction (trend 799.7 vs gate 747.7) demonstrates the value of the ``crash mode'' (compare Fig.~\ref{fig:intro_context} and Fig.~\ref{fig:predicted_map_2018}).
+The strong physical signals (Late Sowing + Dry Soil) triggered the 100\% trust mechanism, successfully pulling the forecast down towards reality (628.5~dt/ha).
 
-However, the 2022 anomaly highlights a limitation. Despite significant yield reduction (actual: 704.4~dt/ha), the physically-gated anomaly detector predicted 795.0~dt/ha, performing worse than the trend (773.2~dt/ha). This suggests that ambiguous physical signals or conflicting component outputs can lead the gate to favor optimistic forecasts, missing certain types of stress events.
+However, the 2022 anomaly highlights a limitation.
+Despite significant yield reduction (actual: 704.4~dt/ha), the physically-gated anomaly detector predicted 795.0~dt/ha, performing worse than the trend (773.2~dt/ha).
+This suggests that ambiguous physical signals or conflicting component outputs can lead the gate to favor optimistic forecasts, missing certain types of stress events.
 
 \subsection{Methodological Considerations}
 
 \subsubsection{The Leak-Free Reality}
-By strictly enforcing the leak-free standard, we accept lower nominal skill scores in exchange for operational integrity. As quantified in Section~3.1, the bias introduced by contemporaneous economic data amounts to 3--5 percentage points. This ensures that the reported skill is not inflated by future information, providing a true test of pre-season predictability.
+By strictly enforcing the leak-free standard, we accept lower nominal skill scores in exchange for operational integrity.
+As quantified in Section~3.1, the bias introduced by contemporaneous economic data amounts to 3--5 percentage points.
+This ensures that the reported skill is not inflated by future information, providing a true test of pre-season predictability.
 
 \subsubsection{Safety Mode Rationale}
-The asymmetric gate includes a ``safety mode'' (trend default) that reverts to the statistical trend during ambiguous signals. This is a necessary ``min-max regret'' strategy for pre-season forecasting. Early-season signals (March 1st) for extreme crashes have high uncertainty; false alarms can be economically more damaging than missing a crash. The 50\% trust in ``bumper'' signals reflects this caution—upside potential is harder to guarantee than downside risk.
+The asymmetric gate includes a ``safety mode'' (trend default) that reverts to the statistical trend during ambiguous signals.
+This is a necessary ``min-max regret'' strategy for pre-season forecasting.
+Early-season signals (March 1st) for extreme crashes have high uncertainty; false alarms can be economically more damaging than missing a crash.
+The 50\% trust in ``bumper'' signals reflects this caution—upside potential is harder to guarantee than downside risk.
