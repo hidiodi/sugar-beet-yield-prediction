@@ -14,7 +14,6 @@ which illustrates how the gate maintains controlled error rates even in extreme 
     \textbf{Model} & \textbf{MAE (dt/ha)} & \textbf{$R^2$} & \textbf{Skill (\%)} \\ \midrule
     \textbf{Physically-Gated Anomaly Detector} & \textbf{65.0} & \textbf{0.47} & \textbf{7.3}\textsuperscript{a} \\
     Statistical Trend & 70.1 & 0.37 & 0.0 \\
-    Model C (Robust Ridge) & 69.0 & 0.39 & 1.6\textsuperscript{b} \\
     Standalone XGBoost & 82.3 & 0.25 & -17.4 \\
     \multicolumn{4}{l}{\footnotesize \textsuperscript{a} $p < 0.001$, \textsuperscript{b} $p = 0.055$ (Diebold-Mariano test).} \\ \bottomrule
     \end{tabular}%
@@ -32,7 +31,6 @@ which illustrates how the gate maintains controlled error rates even in extreme 
     \textbf{Physically-Gated Anomaly Detector} & \textbf{83.3} & \textbf{0.26} & \textbf{8.6}\textsuperscript{a} \\
     Statistical Trend & 91.1 & 0.11 & 0.0 \\
     Standalone XGBoost & 97.5 & 0.07 & -7.0 \\
-    Model C (Robust Ridge) & 89.5 & 0.13 & 1.8\textsuperscript{b} \\
     \multicolumn{4}{l}{\footnotesize \textsuperscript{a} $p < 0.001$, \textsuperscript{b} $p = 0.093$ (Diebold-Mariano test).} \\ \bottomrule
     \end{tabular}%
 }\label{tab:volatility}
