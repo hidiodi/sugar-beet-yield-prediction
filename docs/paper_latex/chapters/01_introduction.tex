@@ -2,7 +2,12 @@
 
 As climate change increases the frequency of extreme weather events, traditional statistical models (which rely on interpolation) and pure process-based models (which suffer from calibration issues) both face limitations. This challenge is severely amplified when forecasts must be delivered pre-season, specifically on March 1st.
 
-The core challenge is the ``Interpolation vs. Extrapolation'' dilemma. Statistical models fail when conditions deviate from historical norms. The value of this regime-switching approach was demonstrated during the 2018 European drought (Fig.~\ref{fig:intro_context}), where the unprecedented magnitude of yield anomalies across Northern Europe exposed the limitations of standard forecasting models in capturing compound extremes \citep{beillouin2020impact}. See Table~\ref{tab:anomalies} for specific forensic performance during such events.
+The core challenge is the ``Interpolation vs.
+Extrapolation'' dilemma.
+Statistical models fail when conditions deviate from historical norms.
+The 2018 European drought (Fig.~\ref{fig:intro_context}) illustrates this dilemma starkly:
+the unprecedented magnitude of yield anomalies across Northern Europe exposed the limitations of standard forecasting models in capturing compound extremes \citep{beillouin2020impact}.
+See Table~\ref{tab:anomalies} for specific forensic performance during such events.
 
 \begin{figure}[H]
     \centering
@@ -27,7 +32,7 @@ Unlike static hybrids which smooth over extremes, our system explicitly acknowle
 Most existing approaches treat crop yield distributions as continuous and unimodal.
 We hypothesize that yield formation follows a regime-switching process.
 In a normal regime, yields are driven by gradual technological trends and minor weather fluctuations, making statistical extrapolation highly effective.
-Conversely, under an extreme stress regime, yields are limited by distinct physiological bottlenecks---such as severe stomatal closure or xylem cavitation that act as absolute biological limits.
+Conversely, under an extreme stress regime, yields are limited by distinct physiological bottlenecks, such as severe stomatal closure or xylem cavitation that act as absolute biological limits.
 Under these conditions, standard historical trends become uninformative\ldots.
 
 Our primary contribution is a dynamic system that explicitly detects the active regime and adapts the forecasting strategy accordingly.

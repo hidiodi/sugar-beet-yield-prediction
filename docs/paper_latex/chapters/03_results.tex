@@ -2,7 +2,8 @@
 Validation over 2005--2024 ($N=3794$) using the strict leak-free standard (Table~\ref{tab:stability}) demonstrates a realistic improvement over the trend baseline. While absolute predictive power ($R^2$) naturally declines during the volatile 2014--2024 period,
 the model's skill score actually improves from \textbf{7.3\% to 8.6\%}, demonstrating that physics-informed switching becomes more valuable as volatility increases.
 This robustness is further visualized in the error landscape (Figure~\ref{fig:error_landscape}),
-which illustrates how the gate maintains controlled error rates even in extreme low-yield crash scenarios.
+which illustrates the gate's selective advantage: largest error reductions in extreme low-yield regimes (255--613 dt/ha),
+comparable performance in the mid-range, and a tradeoff of higher errors at high yields (above 792 dt/ha).
 
 \begin{table}[H]
 \centering
@@ -39,7 +40,9 @@ which illustrates how the gate maintains controlled error rates even in extreme 
 \begin{figure}[H]
     \centering
     \includegraphics[width=\linewidth]{super_ensemble_error_landscape.png}
-    \caption{Physically-Gated Anomaly Detector Error Landscape across Yield Stress Levels. Unlike traditional models that degrade linearly, the gate maintains controlled error rates even in extreme low-yield ``crash'' scenarios.}
+    \caption{Super Ensemble error landscape across yield stress levels. The ensemble achieves its largest gains over the baseline in extreme low-yield regimes (255--613 dt/ha),
+    where errors are reduced by up to $\sim$10 dt/ha. Performance is the same in the mid-range (613--792 dt/ha),
+    while the ensemble underperforms the baseline at high yields (above 792 dt/ha).}
     \label{fig:error_landscape}
 \end{figure}
 
@@ -64,7 +67,7 @@ The precise activation of this ``crash mode'' versus the standard trend baseline
     \textbf{Event} & \textbf{Actual} & \textbf{Physically-Gated Anomaly Detector} & \textbf{Trend} \\ \midrule
     2003 (Heat) & 516.5 & \textbf{605.2} (High Error) & 593.7 \\
     2014 (Bumper) & 825.6 & \textbf{725.2} (Stable) & 715.9 \\
-    2018 (Drought) & 628.5 & \textbf{747.7} (Crash Detected) & 799.7 \\
+    2018 (Drought) & 628.5 & \textbf{747.7} (Crash Partially Detected) & 799.7 \\
     2022 (Drought) & 704.4 & \textbf{795.0} (Missed Signal) & 773.2 \\ \bottomrule
     \end{tabular}%
 }
