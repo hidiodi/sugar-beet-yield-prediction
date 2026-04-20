@@ -2,7 +2,7 @@
 
 This repository contains a pipeline for predicting sugar beet yields at the district level in Germany. The project utilizes a hybrid modeling approach, integrating agronomic crop simulations, meteorological data, and satellite imagery to achieve high-accuracy predictions.
 
-## 🌟 Key Features
+## Key Features
 
 * **Hybrid Modeling Approach:** Combines process-based crop simulation models (e.g., WOFOST) with advanced machine learning techniques.
 * **Multi-Source Data Integration:** Utilizes diverse data sources including:
@@ -12,7 +12,7 @@ This repository contains a pipeline for predicting sugar beet yields at the dist
 * **Automated Data Pipelines:** Streamlined scripts for data downloading, preprocessing, and feature engineering.
 * **Modular Architecture:** Clear separation of data processing, modeling, and analysis workflows.
 
-## 📂 Project Structure
+## Project Structure
 
 ```text
 .
@@ -26,7 +26,7 @@ This repository contains a pipeline for predicting sugar beet yields at the dist
 └── README.md           # Project overview and setup instructions
 ```
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -53,7 +53,7 @@ This repository contains a pipeline for predicting sugar beet yields at the dist
    pip install -r requirements.txt
    ```
 
-## 💻 Usage
+## Usage
 
 The project is structured into modular pipelines. You can execute these pipelines from the project root directory.
 
@@ -76,7 +76,7 @@ Run the analysis scripts to generate reports, evaluate the components, and visua
 python src/03_analysis/comprehensive_pipeline_analysis.py
 ```
 
-## 🛠️ Built With
+## Built With
 
 * **Python:** Core programming language
 * **Google Earth Engine (GEE):** Geospatial data extraction and pipeline processing
