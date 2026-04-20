@@ -72,12 +72,13 @@ FEATURE_ENGINEERING_CONFIG = {
     }
 }
 
+import os
 # --- GEE Configuration ---
-GEE_PROJECT_ID = 'augmented-audio-471809-h3'
+GEE_PROJECT_ID = os.environ.get('GEE_PROJECT_ID', 'YOUR_GEE_PROJECT_ID_HERE')
 GEE_HIGH_VOLUME_ENDPOINT = 'https://earthengine-highvolume.googleapis.com'
 DISTRICTS_GEOJSON_PATH = RAW_DATA_DIR / "districts_official.geojson"
 STATIC_FEATURES_OUTPUT_PATH = PROCESSED_DATA_DIR / "static_features_districts.csv"
-FARMLAND_MASK_ASSET_ID = 'projects/augmented-audio-471809-h3/assets/farmland_mask_germany'
+FARMLAND_MASK_ASSET_ID = f'projects/{GEE_PROJECT_ID}/assets/farmland_mask_germany'
 DEM_IMAGE = 'USGS/SRTMGL1_003'
 SOIL_PROPERTIES = ['bdod', 'clay', 'sand', 'soc', 'phh2o']
 SOIL_DEPTHS = ['0-5cm', '5-15cm', '15-30cm', '30-60cm', '60-100cm']
