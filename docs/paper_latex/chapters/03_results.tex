@@ -1,11 +1,7 @@
 \section{Results}
-Validation over 2005--2024 ($N=3794$) using the strict leak-free standard (Table~\ref{tab:stability}) demonstrates a realistic improvement over the trend baseline. While absolute predictive power ($R^2$) naturally declines during the volatile 2014--2024 period,
-the model's skill score actually improves from \textbf{7.3\% to 8.6\%}, demonstrating that physics-informed switching becomes more valuable as volatility increases.
-This robustness is further visualized in the error landscape (Figure~\ref{fig:error_landscape}),
-which illustrates the gate's selective advantage: largest error reductions in extreme low-yield regimes (255--613 dt/ha),
-comparable performance in the mid-range, and a tradeoff of higher errors at high yields (above 792 dt/ha).
+Validation over 2005--2024 ($N=3794$) using the strict leak-free standard (Table~\ref{tab:stability}) demonstrates a realistic improvement over the trend baseline. While absolute predictive power ($R^2$) naturally declines during the volatile 2014--2024 period, the model's skill score actually improves from \textbf{7.3\% to 8.6\%}, demonstrating that physics-informed switching becomes more valuable as volatility increases. This robustness is further visualized in the error landscape (Figure~\ref{fig:error_landscape}), which illustrates the gate's selective advantage: largest error reductions in extreme low-yield regimes (255--613 dt/ha), comparable performance in the mid-range, and a tradeoff of higher errors at high yields (above 792 dt/ha).
 
-\begin{table}[H]
+\begin{table}[t]
 \centering
 \caption{Long-Term Stability (2005--2024) ($N=3794$)}
 \resizebox{\columnwidth}{!}{%
@@ -21,7 +17,7 @@ comparable performance in the mid-range, and a tradeoff of higher errors at high
 }\label{tab:stability}
 \end{table}
 
-\begin{table}[H]
+\begin{table}[t]
 \centering
 \caption{Recent Volatility (2014--2024) ($N=1782$)}
 \resizebox{\columnwidth}{!}{%
@@ -37,26 +33,18 @@ comparable performance in the mid-range, and a tradeoff of higher errors at high
 }\label{tab:volatility}
 \end{table}
 
-\begin{figure}[H]
+\begin{figure}[htbp]
     \centering
     \includegraphics[width=\linewidth]{super_ensemble_error_landscape.png}
-    \caption{Super Ensemble error landscape across yield stress levels. The ensemble achieves its largest gains over the baseline in extreme low-yield regimes (255--613 dt/ha),
-    where errors are reduced by up to $\sim$10 dt/ha. Performance is the same in the mid-range (613--792 dt/ha),
-    while the ensemble underperforms the baseline at high yields (above 792 dt/ha).}
+    \caption{Super Ensemble error landscape across yield stress levels. The ensemble achieves its largest gains over the baseline in extreme low-yield regimes (255--613 dt/ha), where errors are reduced by up to $\sim$10 dt/ha. Performance is the same in the mid-range (613--792 dt/ha), while the ensemble underperforms the baseline at high yields (above 792 dt/ha).}
     \label{fig:error_landscape}
 \end{figure}
 
 \subsection{Quantification of Look-Ahead Bias}
-To quantify the cost of look-ahead bias, we compared a permissive validation (including contemporaneous sugar prices) against the leak-free standard.
-Permissive validation yields inflated skill scores of approximately 10--12\%, compared to 7.3\% under the leak-free standard.
-This gap of 3--5 percentage points represents bias introduced by using contemporaneous prices as a proxy for management intensity---information unavailable on March 1st.
-By strictly lagging prices to $t-1$, the reported skill reflects genuinely achievable operational performance.
+To quantify the cost of look-ahead bias, we compared a permissive validation (including contemporaneous sugar prices) against the leak-free standard. Permissive validation yields inflated skill scores of approximately 10--12\%, compared to 7.3\% under the leak-free standard. This gap of 3--5 percentage points represents bias introduced by using contemporaneous prices as a proxy for management intensity---information unavailable on March 1st. By strictly lagging prices to $t-1$, the reported skill reflects genuinely achievable operational performance.
 
 \subsection{Anomaly Forensics (Extreme Events)}
-Table~\ref{tab:anomalies} details performance during historic anomalies.
-The physically-gated anomaly detector significantly reduced errors in the 2018 drought by identifying stress signals in the WOFOST outputs, allowing it to accurately track the national yield crash (Figure~\ref{fig:timeseries}),
-while remaining stable in the 2014 bumper year.
-The precise activation of this ``crash mode'' versus the standard trend baseline across different stress levels is distinctly visible in the parity plot (Figure~\ref{fig:parity}).
+Table~\ref{tab:anomalies} details performance during historic anomalies. The physically-gated anomaly detector significantly reduced errors in the 2018 drought by identifying stress signals in the WOFOST outputs, allowing it to accurately track the national yield crash (Figure~\ref{fig:timeseries}), while remaining stable in the 2014 bumper year. The precise activation of this ``crash mode'' versus the standard trend baseline across different stress levels is distinctly visible in the parity plot (Figure~\ref{fig:parity}).
 
 \begin{table}[t]
 \centering
@@ -81,9 +69,10 @@ The precise activation of this ``crash mode'' versus the standard trend baseline
     \label{fig:timeseries}
 \end{figure}
 
-\begin{figure}[t]
+\begin{figure}[!htbp]
     \centering
-    \includegraphics[width=\linewidth]{fig3_parity_plot.png}
+    \includegraphics[width=0.7\textwidth]{fig3_parity_plot.png}
     \caption{Parity plot showing Actual vs Predicted yields, colored by the model selected by the gate. Note how the ``crash mode'' is activated during extreme stress years like 2018, while the trend is preferred for stable years.}
     \label{fig:parity}
 \end{figure}
+

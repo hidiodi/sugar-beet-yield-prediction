@@ -1,37 +1,39 @@
-\documentclass[twocolumn]{article}
+% Use the standard Springer document class (usually llncs for these proceedings) [cite: 25]
+\documentclass{llncs}
+
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage[utf8]{inputenc}
 \usepackage{booktabs}
 \usepackage{amsmath}
-\usepackage{natbib}
+% natbib has been removed because Springer requires citations by sequential numbers in brackets [cite: 105, 106]
 \usepackage{subcaption}
 \usepackage{tikz}
-\usepackage{float}
+%\usepackage{float}
 \usetikzlibrary{shapes.geometric, arrows, positioning}
+\usepackage{bbding}
 
 \graphicspath{{figures/}}
 
 \title{Dynamic Regime Switching for Pre-Season Crop Yield Forecasting: Integrating Biophysical Limits with Machine Learning}
+
 \author{Tim Schweitzer}
-\date{\today}
+
+\authorrunning{T. Schweitzer}
+
+\institute{
+RWU Hochschule Ravensburg-Weingarten University of Applied Sciences, Germany \\
+\email{tim.schweitzer@hs-weingarten.de}}
 
 \begin{document}
 
-\twocolumn[
-  \begin{@twocolumnfalse}
-    \maketitle
-    \begin{abstract}
-      Early-season crop yield forecasting faces a fundamental dilemma: statistical models fail to extrapolate to unprecedented weather events, while process-based simulations struggle with calibration at scale.
-      We present a physically-gated anomaly detector for sugarbeet yield forecasting in Germany that resolves this by dynamically switching between a statistical baseline and a physics-informed hybrid detector based on bio-physical stress signals.
-      A strict leak-free validation framework, enforcing pre-season data availability as of March 1st, ensures reported skill scores are operationally realizable.
-      Validated via time-dependent cross-validation over 2005–2024 (N=3794), the system achieves MAE of 65.0 dt/ha a +$7.3\%$ skill improvement over a standard trend baseline
-      (p$<$0.001, Diebold-Mariano).
-      Performance concentrates in volatile conditions: skill increases to +$8.6\%$ in 2014–2024, with the 2018 drought handled better and false alarms avoided in stable years.
-      \vspace{1cm}
-    \end{abstract}
-  \end{@twocolumnfalse}
-]
+\maketitle
+
+% Removed the custom \twocolumn environment to fit Springer's standard layout [cite: 25]
+\begin{abstract}
+Early-season crop yield forecasting faces a fundamental dilemma: statistical models fail to extrapolate to unprecedented weather events, while process-based simulations struggle with calibration at scale. We present a physically-gated anomaly detector for sugarbeet yield forecasting in Germany that resolves this by dynamically switching between a statistical baseline and a physics-informed hybrid detector based on bio-physical stress signals. A strict leak-free validation framework, enforcing pre-season data availability as of March 1st, ensures reported skill scores are operationally realizable. Validated via time-dependent cross-validation over 2005–2024 (N=3794), the system achieves MAE of 65.0 dt/ha a +7.3\% skill improvement over a standard trend baseline (p$<$0.001, Diebold-Mariano). Performance concentrates in volatile conditions: skill increases to +8.6\% in 2014–2024, with the 2018 drought handled better and false alarms avoided in stable years.
+\keywords{Process-Guided Machine Learning \and Dynamic Gating \and Ensemble Forecasting \and Time-Series Anomaly Detection \and Crop Yield Prediction}
+\end{abstract}
 
 \input{chapters/01_introduction}
 \input{chapters/02_materials_and_methods}
@@ -39,7 +41,8 @@
 \input{chapters/04_discussion}
 \input{chapters/05_conclusions}
 
-\bibliographystyle{plainnat}
+% LaTeX users should use the bibliographic style MathPhySci for computer science proceedings
+\bibliographystyle{splncs04}
 \bibliography{references}
 
 \end{document}

@@ -1,15 +1,8 @@
 \section{Introduction}
 
-As climate change increases the frequency of extreme weather events, traditional statistical models (which rely on interpolation) and pure process-based models (which suffer from calibration issues) both face limitations. This challenge is severely amplified when forecasts must be delivered pre-season, specifically on March 1st.
+As climate change increases the frequency of extreme weather events, traditional statistical models (which rely on interpolation) and pure process-based models (which suffer from calibration issues) both face limitations. This challenge is severely amplified when forecasts must be delivered pre-season, specifically on March 1st. The core challenge is the ``Interpolation vs. Extrapolation'' dilemma. Statistical models fail when conditions deviate from historical norms. The 2018 European drought (Fig.~\ref{fig:intro_context}) illustrates this dilemma starkly: the unprecedented magnitude of yield anomalies across Northern Europe exposed the limitations of standard forecasting models in capturing compound extremes \cite{beillouin2020impact}. See Table~\ref{tab:anomalies} for specific forensic performance during such events.
 
-The core challenge is the ``Interpolation vs.
-Extrapolation'' dilemma.
-Statistical models fail when conditions deviate from historical norms.
-The 2018 European drought (Fig.~\ref{fig:intro_context}) illustrates this dilemma starkly:
-the unprecedented magnitude of yield anomalies across Northern Europe exposed the limitations of standard forecasting models in capturing compound extremes \citep{beillouin2020impact}.
-See Table~\ref{tab:anomalies} for specific forensic performance during such events.
-
-\begin{figure}[H]
+\begin{figure}[ht]
     \centering
     \includegraphics[width=0.9\linewidth]{fig1_regime_map_2018.png}
     \caption{The 2018 Yield Map. It illustrates the spatial distribution of observed sugarbeet yields (in dt/ha) across German districts during the 2018 extreme drought event and the impact of localized diseases.}
@@ -17,25 +10,9 @@ See Table~\ref{tab:anomalies} for specific forensic performance during such even
 \end{figure}
 
 \subsection{Contextualizing Hybrid Approaches}
-Recent literature has increasingly adopted ``Process-Guided Machine Learning'' (PGML) to address these limitations.
-As noted by \citet{reichstein2019deep}, integrating physical consistency into data-driven models is crucial for generalization beyond training distributions.
-In agriculture, \citet{shahhosseini2021coupling} demonstrated that using crop simulation outputs as features in Random Forests \citep{breiman2001random} could reduce error by 7--20\% compared to pure weather-based models.
-Operational benchmarks like the JRC-MARS Crop Yield Forecasting System (CGMS) \citep{vandervelde2019mars} similarly rely on process-based simulations to inform large-scale monitoring,
-yet often struggle with localized extreme events due to coarse resolution.
-
-While recent work by \citet{paudel2021machine} established that rigorous, leak-free ML models can achieve performance comparable to operational systems,
-standard data-driven algorithms inherently optimize for average predictive skill across continuous distributions, leaving them vulnerable to unprecedented extremes.
-Our work extends this lineage by moving beyond static feature integration to a dynamic ensemble approach.
-Unlike static hybrids which smooth over extremes, our system explicitly acknowledges non-stationarity, switching its structural reliance from statistical trends to physiological limits when extreme event precursors are detected.
+Recent literature has increasingly adopted ``Process-Guided Machine Learning'' (PGML) to address these limitations. As noted by \cite{reichstein2019deep}, integrating physical consistency into data-driven models is crucial for generalization beyond training distributions. In agriculture, \cite{shahhosseini2021coupling} demonstrated that using crop simulation outputs as features in Random Forests \cite{breiman2001random} could reduce error by 7--20\% compared to pure weather-based models. Operational benchmarks like the JRC-MARS Crop Yield Forecasting System (CGMS) \cite{vandervelde2019mars} similarly rely on process-based simulations to inform large-scale monitoring, yet often struggle with localized extreme events due to coarse resolution. While recent work by \cite{paudel2021machine} established that rigorous, leak-free ML models can achieve performance comparable to operational systems, standard data-driven algorithms inherently optimize for average predictive skill across continuous distributions, leaving them vulnerable to unprecedented extremes. Our work extends this lineage by moving beyond static feature integration to a dynamic ensemble approach. Unlike static hybrids which smooth over extremes, our system explicitly acknowledges non-stationarity, switching its structural reliance from statistical trends to physiological limits when extreme event precursors are detected.
 
 \subsection{Research Gap: The Regime Switching Hypothesis}
-Most existing approaches treat crop yield distributions as continuous and unimodal.
-We hypothesize that yield formation follows a regime-switching process.
-In a normal regime, yields are driven by gradual technological trends and minor weather fluctuations, making statistical extrapolation highly effective.
-Conversely, under an extreme stress regime, yields are limited by distinct physiological bottlenecks, such as severe stomatal closure or xylem cavitation that act as absolute biological limits.
-Under these conditions, standard historical trends become uninformative\ldots.
+Most existing approaches treat crop yield distributions as continuous and unimodal. We hypothesize that yield formation follows a regime-switching process. In a normal regime, yields are driven by gradual technological trends and minor weather fluctuations, making statistical extrapolation highly effective. Conversely, under an extreme stress regime, yields are limited by distinct physiological bottlenecks, such as severe stomatal closure or xylem cavitation that act as absolute biological limits. Under these conditions, standard historical trends become uninformative\ldots.
 
-Our primary contribution is a dynamic system that explicitly detects the active regime and adapts the forecasting strategy accordingly.
-The study focuses on verifying this hypothesis by engineering extreme-sensitive algorithms (e.g., the Heat Signal model).
-We further validate the weighting logic via strict walk-forward validation to ensure reliability.
-
+Our primary contribution is a dynamic system that explicitly detects the active regime and adapts the forecasting strategy accordingly. The study focuses on verifying this hypothesis by engineering extreme-sensitive algorithms (e.g., the Heat Signal model). We further validate the weighting logic via strict walk-forward validation to ensure reliability.
