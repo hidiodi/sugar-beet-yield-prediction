@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Dynamic Regime Switching · KI2026</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.3.1/reset.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.3.1/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.3.1/theme/white.min.css">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink:#1a1a2e; --slate:#4a5568; --muted:#718096; --rule:#e2e8f0;
+  --accent:#c0392b; --accent-light:#fdf2f1;
+  --ok:#1a6b3c; --ok-light:#f0faf4;
+  --sand:#f7f5f2; --hi:#2563eb; --amber:#d97706; --amber-light:#fffbeb;
+}
+html,body,.reveal { height:100%; }
+.reveal { font-family:'DM Sans',sans-serif; background:#fafaf8; font-size:16px; }
+.reveal .slides section {
+  top:0 !important; height:100%; box-sizing:border-box;
+  padding:18px 28px 12px; display:flex !important; flex-direction:column; overflow:hidden;
+}
+.reveal .slides section.center { justify-content:center; align-items:center; text-align:center; }
+
+.reveal h1,.reveal h2,.reveal h3 {
+  font-family:'DM Serif Display',serif; color:var(--ink);
+  text-transform:none; font-weight:400; letter-spacing:-0.01em; margin:0 0 10px; line-height:1.15;
+}
+.reveal h2 { font-size:1.28em; border-bottom:2px solid var(--ink); display:inline-block; padding-bottom:4px; margin-bottom:12px; }
+.reveal p,.reveal li { color:var(--slate); font-size:0.85em; line-height:1.48; margin:0 0 8px; }
+.reveal li { margin-bottom:10px; }
+.reveal strong { color:var(--ink); font-weight:600; }
+.reveal code { font-family:'DM Mono',monospace; font-size:0.88em; }
+
+.slabel { font-family:'DM Mono',monospace; font-size:0.6em; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin-bottom:2px; }
+.row { display:flex; gap:24px; flex:1; min-height:0; align-items:stretch; }
+.col { flex:1; display:flex; flex-direction:column; justify-content:flex-start; min-width:0; }
+.col-6 { flex:1.6; }
+
+.box { border-radius:4px; padding:12px 16px; margin-top:12px; font-size:0.8em; line-height:1.45; }
+.box:first-child { margin-top:0; }
+.bblue  { background:#eff6ff; border-left:3px solid var(--hi); }
+.bred   { background:var(--accent-light); border-left:3px solid var(--accent); }
+.bgreen { background:var(--ok-light); border-left:3px solid var(--ok); }
+.bgrey  { background:var(--sand); border-left:3px solid var(--muted); }
+
+.reveal table { font-size:0.76em; width:100%; border-collapse:collapse; font-family:'DM Mono',monospace; margin:6px 0; }
+.reveal table th { background:var(--ink); color:#fff; padding:6px 10px; text-align:left; font-family:'DM Sans',sans-serif; font-weight:500; font-size:0.88em; }
+.reveal table td { padding:6px 10px; border-bottom:1px solid var(--rule); color:var(--slate); }
+.reveal table tr:nth-child(even) td { background:var(--sand); }
+.reveal table tr.tbest td { color:var(--ok); font-weight:700; }
+.reveal table tr.twrst td { color:var(--accent); }
+
+.tsuper { font-family:'DM Mono',monospace; font-size:0.7em; color:var(--muted); letter-spacing:.12em; text-transform:uppercase; margin-bottom:12px; }
+.tmain  { font-family:'DM Serif Display',serif; font-size:1.8em; line-height:1.2; color:var(--ink); margin-bottom:8px; }
+.tsub   { font-size:0.88em; color:var(--muted); font-style:italic; font-family:'DM Serif Display',serif; }
+.tmeta  { margin-top:28px; font-size:0.78em; color:var(--muted); line-height:1.65; }
+
+.pill { display:inline-block; padding:2px 8px; border-radius:99px; font-size:0.76em; font-weight:600; margin-right:4px; }
+.pg { background:var(--ok); color:#fff; }
+.pr { background:var(--accent); color:#fff; }
+
+.svgwrap { flex:1; min-height:0; display:flex; align-items:center; justify-content:center; }
+.svgwrap svg { max-width:100%; max-height:100%; }
+.chart-img { max-width: 100%; max-height: 55vh; object-fit: contain; border: 1px solid var(--rule); border-radius: 5px; }
+
+.reveal .slide-number { font-family:'DM Mono',monospace; font-size:0.65em; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- ════ S1: TITLE ════ -->
+<section class="center">
+  <div class="tsuper">KI2026 · Conference Presentation</div>
+  <div class="tmain">Dynamic Regime Switching<br>for Pre-Season Crop Yield Forecasting</div>
+  <div class="tsub">Integrating Biophysical Limits with Machine Learning</div>
+  <div class="tmeta">
+    Tim Schweitzer &nbsp;·&nbsp; Germany<br>
+    <em>Sugarbeet · 2005–2024 · N = 3,794 district-years</em>
+  </div>
+  <aside class="notes">Welcome. Today I am presenting our work on dynamic regime switching for crop yield forecasting. The core challenge we address is how to build an operational forecast that issues reliable predictions before the season even begins, navigating the extreme uncertainty of long-range weather forecasting.</aside>
+</section>
+
+<!-- ════ S2: MOTIVATION ════ -->
+<section>
+  <div class="slabel">Motivation</div>
+  <h2>The Forecasting Problem</h2>
+  <div class="row">
+    <div class="col">
+      <ul>
+        <li><strong>Operational Constraint:</strong> Forecasts must be issued before sowing, using only antecedent soil states and highly uncertain seasonal forecasts.</li>
+        <li><strong>Interpolation vs Extrapolation:</strong> Statistical models learn long-term tech trends perfectly, but fail completely during climate shocks (e.g., 2018 drought).</li>
+        <li><strong>The ML Dilemma:</strong> Machine learning algorithms overfit to historical variance and struggle to extrapolate novel shocks without hard physiological boundaries.</li>
+        <li><strong>The Data Challenge:</strong> The feature space is highly dimensional yet historically sparse, making unconstrained machine learning models extremely susceptible to overfitting.</li>
+      </ul>
+    </div>
+    <div class="col col-6" style="align-items:center; justify-content:center;">
+      <img src="../reports/figures/presentation_updates/Graph_0_National_Yield.png" class="chart-img" alt="National Yield Variance">
+    </div>
+  </div>
+  <aside class="notes">Our constraint is strict: predict the harvest on March 1st. As the chart shows, European yields have a strong technological upward trend, punctuated by severe crashes like 2003 and 2018. Statistical trend lines miss these crashes entirely. Pure ML overfits the noise. We needed an architecture that defaults to the trend, but switches to physics when limits are breached.</aside>
+</section>
+
+<!-- ════ S3: HYPOTHESIS ════ -->
+<section>
+  <div class="slabel">Theory</div>
+  <h2>Yield Formation as a Regime-Switching Process</h2>
+  <div class="row">
+    <div class="col">
+      <ul>
+        <li><strong><span class="pill pg">Normal Regime</span></strong> Driven by secular technological trends and minor weather variance. Statistical interpolation dominates.</li>
+        <li><strong><span class="pill pr">Extreme Stress</span></strong> Driven by hard physiological bottlenecks (e.g., heat damage, xylem cavitation). Historical trends become uninformative.</li>
+      </ul>
+      <div class="box bgrey" style="margin-top:20px;">
+        <strong>Empirical Confirmation:</strong><br>
+        A standalone XGBoost model forced to learn both regimes simultaneously achieved a skill score of <strong style="color:var(--accent)">−17.4%</strong> vs the baseline. Unconstrained ML in a high-variance agricultural setting actively degrades performance.
+      </div>
+    </div>
+  </div>
+  <aside class="notes">Our core hypothesis is that crop yield operates in distinct regimes. In normal years, the trend is king. In stress years, physics take over. We empirically confirmed this: an un-gated XGBoost model performed 17.4% worse than a simple trend line. A model that cannot distinguish regimes is worse than doing nothing.</aside>
+</section>
+
+<!-- ════ S4: ARCHITECTURE ════ -->
+<section>
+  <div class="slabel">Architecture</div>
+  <h2>Three Components, One Asymmetric Gate</h2>
+  <div class="row">
+    <div class="col col-6">
+      <div class="svgwrap">
+      <svg viewBox="0 0 400 280" xmlns="http://www.w3.org/2000/svg">
+        <rect width="400" height="280" fill="#f7f5f2" rx="6"/>
+        <rect x="130" y="10" width="140" height="30" rx="4" fill="#1a1a2e"/>
+        <text x="200" y="30" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="9" fill="#fff">Multi-Source Data (Weather, Soil, Yield)</text>
+        <rect x="10"  y="65" width="110" height="38" rx="4" fill="#718096"/>
+        <text x="65"  y="79" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="8.5" fill="#fff" font-weight="600">① Statistical Trend</text>
+        <text x="65"  y="92" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="7.5" fill="rgba(255,255,255,.85)">GAM + ARIMA · Default</text>
+        <rect x="145" y="65" width="110" height="38" rx="4" fill="#2563eb"/>
+        <text x="200" y="79" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="8.5" fill="#fff" font-weight="600">② Physical Prior</text>
+        <text x="200" y="92" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="7.5" fill="rgba(255,255,255,.85)">WOFOST · 30 members</text>
+        <rect x="280" y="65" width="110" height="38" rx="4" fill="#8e44ad"/>
+        <text x="335" y="79" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="8.5" fill="#fff" font-weight="600">③ Hybrid Detector</text>
+        <text x="335" y="92" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="7.5" fill="rgba(255,255,255,.85)">XGBoost · 106 features</text>
+        <line x1="160" y1="40" x2="65"  y2="65" stroke="#718096" stroke-width="1.2" marker-end="url(#arr)"/>
+        <line x1="200" y1="40" x2="200" y2="65" stroke="#2563eb" stroke-width="1.2" marker-end="url(#arr)"/>
+        <line x1="240" y1="40" x2="335" y2="65" stroke="#8e44ad" stroke-width="1.2" marker-end="url(#arr)"/>
+        <path d="M255,84 Q268,84 268,110 Q268,136 280,136" fill="none" stroke="#2563eb" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arr2)"/>
+        <text x="272" y="122" font-family="DM Sans,sans-serif" font-size="7" fill="#2563eb">p10 risk</text>
+        <rect x="110" y="128" width="180" height="40" rx="4" fill="var(--ink)" stroke="#c0392b" stroke-width="1.5"/>
+        <text x="200" y="145" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="8.5" fill="#fff" font-weight="600">Asymmetric Gate</text>
+        <text x="200" y="159" text-anchor="middle" font-family="DM Mono,monospace" font-size="8" fill="rgba(255,255,255,.75)">|Dev| &gt; 4% ?</text>
+        <line x1="65"  y1="103" x2="65"  y2="128" stroke="#718096" stroke-width="1.2" marker-end="url(#arr)"/>
+        <line x1="65"  y1="120" x2="110" y2="140" stroke="#718096" stroke-width="1" stroke-dasharray="3,2"/>
+        <line x1="335" y1="103" x2="335" y2="128" stroke="#8e44ad" stroke-width="1.2" marker-end="url(#arr)"/>
+        <line x1="335" y1="120" x2="290" y2="140" stroke="#8e44ad" stroke-width="1" stroke-dasharray="3,2"/>
+        <rect x="10"  y="196" width="110" height="32" rx="4" fill="#c0392b"/>
+        <text x="65"  y="208" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="8" fill="#fff" font-weight="600">Crash</text>
+        <text x="65"  y="220" text-anchor="middle" font-family="DM Mono,monospace" font-size="7.5" fill="rgba(255,255,255,.85)">100% Hybrid</text>
+        <rect x="145" y="196" width="110" height="32" rx="4" fill="#1a6b3c"/>
+        <text x="200" y="208" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="8" fill="#fff" font-weight="600">Normal (default)</text>
+        <text x="200" y="220" text-anchor="middle" font-family="DM Mono,monospace" font-size="7.5" fill="rgba(255,255,255,.85)">100% Trend</text>
+        <rect x="280" y="196" width="110" height="32" rx="4" fill="#2563eb"/>
+        <text x="335" y="208" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="8" fill="#fff" font-weight="600">Bumper</text>
+        <text x="335" y="220" text-anchor="middle" font-family="DM Mono,monospace" font-size="7.5" fill="rgba(255,255,255,.85)">50 / 50 Blend</text>
+        <line x1="155" y1="168" x2="65"  y2="196" stroke="#c0392b" stroke-width="1.2" marker-end="url(#arr)"/>
+        <line x1="200" y1="168" x2="200" y2="196" stroke="#1a6b3c" stroke-width="1.2" marker-end="url(#arr)"/>
+        <line x1="245" y1="168" x2="335" y2="196" stroke="#2563eb" stroke-width="1.2" marker-end="url(#arr)"/>
+        <rect x="130" y="248" width="140" height="26" rx="4" fill="#1a1a2e"/>
+        <text x="200" y="265" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="9" fill="#fff" font-weight="600">Final Forecast Y(t)</text>
+        <line x1="65"  y1="232" x2="165" y2="248" stroke="#1a1a2e" stroke-width="1" marker-end="url(#arr)"/>
+        <line x1="200" y1="232" x2="200" y2="248" stroke="#1a1a2e" stroke-width="1" marker-end="url(#arr)"/>
+        <line x1="335" y1="232" x2="235" y2="248" stroke="#1a1a2e" stroke-width="1" marker-end="url(#arr)"/>
+        <defs>
+          <marker id="arr" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="#718096"/></marker>
+          <marker id="arr2" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="#2563eb"/></marker>
+        </defs>
+      </svg>
+      </div>
+    </div>
+    <div class="col">
+      <div class="formula" style="margin-top:0;">
+        <strong>Asymmetric Gate Logic:</strong><br><br>
+        If ML deviates &lt; −0.04 <br>&nbsp;&nbsp;→ <strong>100% Trust ML</strong><br><br>
+        If ML deviates &gt; +0.04 <br>&nbsp;&nbsp;→ <strong>50% ML / 50% Trend</strong><br><br>
+        Else <br>&nbsp;&nbsp;→ <strong>100% Trust Trend</strong>
+      </div>
+      <div class="box bgrey">
+        Crashes are governed by hard physiological bounds (extrapolation). Bumpers are harder to guarantee pre-season (interpolation limits). We enforce a conservative 50% constraint on the upside.
+      </div>
+    </div>
+  </div>
+  <aside class="notes">To constrain the ML, we designed an asymmetric gate. The Trend is the default. We only trigger the Hybrid when it deviates strongly. We fully trust it on the downside because droughts hit hard physiological limits. We penalize it 50% on the upside to prevent ML extrapolation hallucination. But how do we build the features that trigger this gate?</aside>
+</section>
+
+<!-- ════ S5: ENGINEERING 1 - HEAT SIGNAL ════ -->
+<section>
+  <div class="slabel">Feature Engineering</div>
+  <h2>Extracting Signal: The Custom Heat Model ($S_{heat}$)</h2>
+  <div class="row">
+    <div class="col">
+      <ul>
+        <li><strong>The Problem:</strong> European long-range seasonal weather forecasts (SEAS5) issued in March have near-zero correlation with actual summer weather.</li>
+        <li><strong>The Solution:</strong> We built a dedicated XGBoost sub-model to predict "Days > 25°C". </li>
+        <li>We engineered non-linear interactions between SEAS5 ensembles and local soil characteristics (e.g., <code>heat_sand_interaction</code>).</li>
+      </ul>
+      <div class="box bgreen" style="margin-top:15px;">
+        <strong>Result:</strong> By transforming raw, noisy meteorological data into a targeted agronomic metric, our sub-model achieves <strong>$r = 0.63$</strong> pre-season, capturing the majority of predictable signal.
+      </div>
+    </div>
+    <div class="col col-6">
+      <div class="svgwrap">
+      <svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
+        <rect width="300" height="200" fill="#f7f5f2" rx="6"/>
+        <text x="150" y="20" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="9" fill="#718096">Pre-Season Correlation with Actual Summer Heat Days</text>
+        <line x1="40" y1="160" x2="270" y2="160" stroke="#e2e8f0" stroke-width="1.5"/>
+        <line x1="40" y1="40" x2="40" y2="160" stroke="#e2e8f0" stroke-width="1.5"/>
+        <!-- Bars -->
+        <rect x="70" y="155" width="50" height="5" rx="1" fill="#718096"/>
+        <text x="95" y="148" text-anchor="middle" font-family="DM Mono,monospace" font-size="8" fill="#718096">r ≈ 0.05</text>
+        <rect x="180" y="55" width="50" height="105" rx="2" fill="#1a6b3c"/>
+        <text x="205" y="48" text-anchor="middle" font-family="DM Mono,monospace" font-size="9" fill="#1a6b3c" font-weight="bold">r = 0.63</text>
+        <!-- X labels -->
+        <text x="95" y="175" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="8" fill="#1a1a2e">Raw SEAS5</text>
+        <text x="95" y="185" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="7" fill="#718096">(Ensemble Mean)</text>
+        <text x="205" y="175" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="8" fill="#1a1a2e">Our ML Sub-Model</text>
+        <text x="205" y="185" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="7" fill="#718096">(Targeted XGBoost)</text>
+      </svg>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">One of the major engineering hurdles is that long-range seasonal forecasts issued in March are notoriously unreliable. If we fed raw SEAS5 data into our yield model, it would learn nothing. Instead, we built a dedicated XGBoost sub-model that learns the interaction between SEAS5 signals and static soil properties, achieving a correlation of 0.63. We extract the signal from the noise before it ever hits the main yield model.</aside>
+</section>
+
+<!-- ════ S6: ENGINEERING 2 - WOFOST ════ -->
+<section>
+  <div class="slabel">Feature Engineering</div>
+  <h2>Grounding ML in Physics: The WOFOST Ensemble</h2>
+  <div class="row">
+    <div class="col">
+      <ul>
+        <li><strong>Initialization:</strong> We initialize the WOFOST crop simulator on March 1st using actual district-level soil moisture and antecedent winter conditions.</li>
+        <li><strong>The Unknown Future:</strong> Because we do not know the summer weather, we run <strong>30 parallel simulations</strong> using historical weather traces (1995-2024).</li>
+      </ul>
+      <div class="box bblue" style="margin-top:20px;">
+        <strong>The Output:</strong> This ensemble generates a probability distribution of potential yields. We extract the 10th percentile (p10) as a <strong>Downside Risk feature</strong>, giving the XGBoost model a hard, physiologically-calculated boundary for droughts.
+      </div>
+    </div>
+    <div class="col col-6">
+      <div class="svgwrap">
+      <svg viewBox="0 0 350 200" xmlns="http://www.w3.org/2000/svg">
+        <rect width="350" height="200" fill="#f7f5f2" rx="6"/>
+        <text x="175" y="18" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="9" fill="#718096">WOFOST Ensemble Plume (30 Historical Traces)</text>
+        <!-- Axes -->
+        <line x1="40" y1="170" x2="320" y2="170" stroke="#e2e8f0" stroke-width="1.5"/>
+        <line x1="40" y1="30" x2="40" y2="170" stroke="#e2e8f0" stroke-width="1.5"/>
+        <text x="110" y="185" text-anchor="middle" font-family="DM Mono,monospace" font-size="8" fill="#718096">March 1st (Init)</text>
+        <text x="270" y="185" text-anchor="middle" font-family="DM Mono,monospace" font-size="8" fill="#718096">Harvest (Oct)</text>
+        <!-- Vertical Line -->
+        <line x1="110" y1="30" x2="110" y2="170" stroke="#c0392b" stroke-width="1" stroke-dasharray="4,2"/>
+        <!-- Actual growth up to March 1 -->
+        <path d="M40,165 Q75,160 110,130" fill="none" stroke="#1a1a2e" stroke-width="2"/>
+        <!-- Plume (30 lines fanning out) -->
+        <path d="M110,130 Q190,40 270,35" fill="none" stroke="#2563eb" stroke-width="0.5" opacity="0.4"/>
+        <path d="M110,130 Q190,50 270,55" fill="none" stroke="#2563eb" stroke-width="0.5" opacity="0.4"/>
+        <path d="M110,130 Q190,70 270,75" fill="none" stroke="#2563eb" stroke-width="0.5" opacity="0.4"/>
+        <path d="M110,130 Q190,90 270,95" fill="none" stroke="#2563eb" stroke-width="1.5" opacity="0.8"/> <!-- Mean -->
+        <path d="M110,130 Q190,110 270,120" fill="none" stroke="#2563eb" stroke-width="0.5" opacity="0.4"/>
+        <path d="M110,130 Q190,140 270,150" fill="none" stroke="#c0392b" stroke-width="1.5" opacity="0.8"/> <!-- p10 risk -->
+        <path d="M110,130 Q190,150 270,160" fill="none" stroke="#2563eb" stroke-width="0.5" opacity="0.4"/>
+        <!-- Labels -->
+        <text x="280" y="98" text-anchor="start" font-family="DM Sans,sans-serif" font-size="8" fill="#2563eb">Mean Expected</text>
+        <text x="280" y="153" text-anchor="start" font-family="DM Sans,sans-serif" font-size="8" fill="#c0392b" font-weight="bold">p10 Downside Risk</text>
+      </svg>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">To integrate biophysical limits, we don't just feed raw weather to an ML model. On March 1st, we initialize the WOFOST simulator with the actual antecedent winter conditions. We then run 30 parallel simulations representing historical weather trajectories. The resulting ensemble spread allows us to extract the 10th percentile downside risk, grounding the XGBoost model in a mathematically rigorous physiological boundary.</aside>
+</section>
+
+<!-- ════ S7: LEAK-FREE CV ════ -->
+<section>
+  <div class="slabel">Validation</div>
+  <h2>The Leak-Free Standard</h2>
+  <div class="row">
+    <div class="col">
+      <ul>
+        <li>Walk-forward time-series CV, 2005–2024. <strong>Zero future information permitted.</strong></li>
+        <li>Economic prices strictly lagged <strong>t−1</strong> (autumn purchasing decisions available March 1st).</li>
+      </ul>
+      <div class="box bblue" style="margin-top:20px;">
+        Economic leakage (contemporaneous prices) falsely inflates skill by <strong>+3–5 percentage points</strong>. Our reported skill represents genuinely achievable operational performance.
+      </div>
+    </div>
+    <div class="col col-6">
+      <div class="svgwrap">
+      <svg viewBox="0 0 380 180" xmlns="http://www.w3.org/2000/svg">
+        <rect width="380" height="180" fill="#f7f5f2" rx="6"/>
+        <text x="190" y="16" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="9.5" fill="#718096">Walk-Forward Validation</text>
+        <text x="8" y="48" font-family="DM Mono,monospace" font-size="8" fill="#718096">Fold 1</text>
+        <rect x="40" y="36" width="140" height="16" rx="2" fill="#1a1a2e" opacity=".75"/>
+        <rect x="184" y="36" width="28" height="16" rx="2" fill="#c0392b"/>
+        <text x="8" y="72" font-family="DM Mono,monospace" font-size="8" fill="#718096">Fold 2</text>
+        <rect x="40" y="60" width="168" height="16" rx="2" fill="#1a1a2e" opacity=".75"/>
+        <rect x="212" y="60" width="28" height="16" rx="2" fill="#c0392b"/>
+        <text x="190" y="100" font-family="DM Mono,monospace" font-size="10" fill="#718096">· · ·</text>
+        <text x="8" y="128" font-family="DM Mono,monospace" font-size="8" fill="#718096">Fold N</text>
+        <rect x="40" y="116" width="280" height="16" rx="2" fill="#1a1a2e" opacity=".75"/>
+        <rect x="324" y="116" width="28" height="16" rx="2" fill="#c0392b"/>
+        <rect x="40" y="150" width="30" height="12" rx="2" fill="#1a1a2e" opacity=".75"/>
+        <text x="74" y="160" font-family="DM Sans,sans-serif" font-size="8" fill="#1a1a2e">Training data (past only)</text>
+        <rect x="200" y="150" width="18" height="12" rx="2" fill="#c0392b"/>
+        <text x="222" y="160" font-family="DM Sans,sans-serif" font-size="8" fill="#c0392b">Test year</text>
+      </svg>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">We evaluate strictly via Walk-Forward Validation. When we predict 2018, the model has only seen years up to 2017. Many retrospective studies use contemporaneous commodity prices as proxies for management intensity. We explicitly quantified that this "look-ahead bias" inflates skill by 3-5 points. Our results are grounded in what is actually operational on March 1st.</aside>
+</section>
+
+<!-- ════ SLIDE 8: RESULTS TABLE ════ -->
+<section>
+  <div class="slabel">Results</div>
+  <h2>Regression Performance (N = 3,794)</h2>
+  <div class="row">
+    <div class="col">
+      <table>
+        <thead><tr><th>Model</th><th>MAE (dt/ha)</th><th>Skill</th></tr></thead>
+        <tbody>
+          <tr><td colspan="3" style="background:#e8edf2; font-weight:600; text-align:center; font-family:'DM Sans',sans-serif;">Full validation period 2005–2024</td></tr>
+          <tr class="tbest"><td>Physically-Gated (ours)</td><td>65.0</td><td>+7.3% ***</td></tr>
+          <tr><td>Statistical Trend</td><td>70.1</td><td>0.0%</td></tr>
+          <tr><td colspan="3" style="background:#e8edf2; font-weight:600; text-align:center; font-family:'DM Sans',sans-serif;">Volatile sub-period 2014–2024 (N = 1,782)</td></tr>
+          <tr class="tbest"><td>Physically-Gated (ours)</td><td>83.3</td><td>+8.6% ***</td></tr>
+          <tr><td>Statistical Trend</td><td>91.1</td><td>0.0%</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:0.68em; color:var(--muted); margin-top:4px;">*** p&lt;0.001, Diebold-Mariano test (one-sided).</p>
+
+      <div class="box bblue" style="margin-top:20px;">
+        Skill <strong>increases</strong> during the volatile 2014–2024 decade. Physics-informed switching provides the most value exactly when climate volatility breaks historical stationarity.
+      </div>
+    </div>
+  </div>
+  <aside class="notes">Our architecture achieves a statistically significant 7.3% improvement overall, which jumps to 8.6% during the highly volatile 2014-2024 decade. But 8.6% doesn't sound massive. Where exactly is this improvement coming from? The next slide explains.</aside>
+</section>
+
+<!-- ════ SLIDE 9: ERROR BUTTERFLY ════ -->
+<section>
+  <div class="slabel">Empirical Boundary Conditions</div>
+  <h2>The Error Butterfly</h2>
+  <div class="row">
+    <div class="col">
+      <ul>
+        <li>The aggregate MAE improvement is driven <strong>entirely</strong> by the extreme crash regime (&lt;500 dt/ha).</li>
+        <li>In normal and bumper yield years, the statistical trend is highly efficient and should not be overridden.</li>
+      </ul>
+      <div class="box bgrey" style="margin-top:15px;">
+        <strong>Strategic Shift:</strong> Because the system functions as a <em>crash-regime specialist</em>, evaluating it purely on aggregate regression RMSE obscures its operational value.
+      </div>
+    </div>
+    <div class="col col-6" style="align-items:center; justify-content:center;">
+      <img src="../reports/figures/presentation_updates/Graph_1_Error_Butterfly.png" class="chart-img" alt="Error Butterfly">
+    </div>
+  </div>
+  <aside class="notes">Look at the Error Butterfly. The baseline trend is highly accurate in the middle, but explodes at the extremes. Our model sacrifices accuracy in the middle to aggressively tame the downside tail. Because of this explicit trade-off, we must evaluate this model as an anomaly detector — not a general regression model.</aside>
+</section>
+
+<!-- ════ SLIDE 10: CLASSIFICATION / ANOMALY DETECTION ════ -->
+<section>
+  <div class="slabel">Anomaly Detection</div>
+  <h2>Evaluating the Crash Specialist</h2>
+  <div class="row">
+    <div class="col">
+      <ul>
+        <li><strong>Crash Event:</strong> District yield drops ≥10% below trend forecast.</li>
+        <li>The trend model achieves <strong>0% Recall</strong> by definition.</li>
+      </ul>
+      <div class="box bgreen" style="margin-top:15px;">
+        Our physically-gated system successfully catches <strong>53.8% of all district crashes pre-season</strong>, providing actionable early warnings for catastrophic agricultural risk.
+      </div>
+      <div class="box bgrey" style="margin-top:10px; font-size:0.76em;">
+        Precision = 19.7%: approximately 4 in 5 crash predictions are false alarms. Acceptable for insurance and supply-chain risk management; requires calibration for farm-level decisions.
+      </div>
+    </div>
+    <div class="col col-6" style="align-items:center; justify-content:center;">
+      <img src="../reports/figures/presentation_updates/Graph_3_Shock_Localization.png" class="chart-img" alt="Shock Localization">
+    </div>
+  </div>
+  <aside class="notes">When we view this as a classification problem, the value is clear. The trend catches 0% of crashes by construction. Our model catches over 53% of catastrophic district failures pre-season. Precision is ~20% — we issue false alarms. But in agricultural risk management, a false positive means unnecessary caution; a false negative means an uninsured crop failure.</aside>
+</section>
+
+<!-- ════ SLIDE 11: FORENSICS ════ -->
+<section>
+  <div class="slabel">Mechanism Analysis</div>
+  <h2>What the Model Actually Detects</h2>
+  <div class="row">
+    <div class="col col-6">
+      <table>
+        <thead><tr><th>Year</th><th>Crash Recall</th><th>Winter GDD</th><th>SEAS5 Summer Heat</th></tr></thead>
+        <tbody>
+          <tr class="tbest"><td><strong>2003</strong></td><td>89.4%</td><td style="color:var(--accent);">−59.5 (Cold)</td><td style="color:var(--hi);">−0.19 (Missed)</td></tr>
+          <tr class="tbest"><td><strong>2018</strong></td><td>92.9%</td><td>+27.4</td><td style="color:var(--accent);">+0.37 (Hot)</td></tr>
+          <tr class="twrst"><td><strong>2022</strong></td><td>50.9%</td><td>+0.6 (Neutral)</td><td style="color:var(--accent); font-weight:bold;">+1.07 (Extreme)</td></tr>
+        </tbody>
+      </table>
+      <div class="box bgrey" style="margin-top:15px;">
+        <strong>The Revelation:</strong> In 2003, the meteorological summer forecast was wrong. Yet the model triggered the alarm because it detected severe <em>antecedent winter structural fragility</em>.
+      </div>
+    </div>
+    <div class="col">
+      <div class="box bblue" style="margin-top:0;">
+        The model does not act as a mere pass-through filter for summer weather forecasts. It is highly sensitive to the <strong>structural state of the crop</strong> established in winter.
+      </div>
+      <div class="box bamber" style="margin-top:15px;">
+        So why did 2022 fail despite a perfect summer heat forecast?
+      </div>
+    </div>
+  </div>
+  <aside class="notes">Let's look at what the model actually bases its decisions on. In 2003, the summer forecast missed the heatwave. Yet the model caught 89% of the crashes. How? It saw the brutal winter GDD deficit and realized the plant was structurally compromised. So why did 2022 only achieve 51% recall when it had the strongest heat forecast on record?</aside>
+</section>
+
+<!-- ════ SLIDE 12: 2022 FAILURE ════ -->
+<section>
+  <div class="slabel">Empirical Boundary Conditions</div>
+  <h2>2022: The Covariate Shift Blindspot</h2>
+  <div class="row">
+    <div class="col">
+      <p style="margin-bottom:8px;">Z-scores of key features (2018 vs. 2022):</p>
+      <table>
+        <thead><tr><th>Feature</th><th>2018 Anomaly</th><th>2022 Anomaly</th></tr></thead>
+        <tbody>
+          <tr class="twrst"><td>Fertilizer Cost</td><td style="color:var(--muted);">+0.13 σ</td><td style="color:var(--accent); font-weight:700;">+3.66 σ</td></tr>
+          <tr><td>SEAS5 Summer Heat</td><td>−0.07 σ</td><td style="color:var(--accent);">+2.19 σ</td></tr>
+          <tr><td>Spring Precip</td><td style="color:var(--ok);">+1.76 σ</td><td style="color:var(--muted);">−0.35 σ</td></tr>
+        </tbody>
+      </table>
+      <div class="box bred" style="margin-top:15px;">
+        Tree-based ML models cannot extrapolate out-of-distribution (OOD). The Ukraine war pushed fertilizer prices to <strong>+3.66σ</strong>. The economic noise blinded the model to the physical heat warning.
+      </div>
+    </div>
+    <div class="col">
+      <div class="box bgreen" style="margin-top:0;">
+        <strong>Causal confirmation from Ablation:</strong><br>
+        When we explicitly strip economic features from the model, 2022 crash recall nearly doubles.
+      </div>
+    </div>
+  </div>
+  <aside class="notes">2022 suffered from severe Covariate Shift. The Ukraine war caused fertilizer and energy prices to spike to unprecedented levels. XGBoost was confused by this extreme economic noise and essentially ignored the correct summer heat forecast. We proved this causally: when we remove economic data, 2022 recall doubles.</aside>
+</section>
+
+<!-- ════ SLIDE 13: CONCLUSION ════ -->
+<section class="center">
+  <div class="slabel">Conclusion</div>
+  <h2>Summary & Future Work</h2>
+  <div style="max-width:820px; text-align:left; flex:1; display:flex; flex-direction:column; justify-content:center; gap:8px;">
+    <div class="box bgreen" style="margin-top:0;">
+      <strong>Key Contributions:</strong> We engineered highly predictive pre-season features ($S_{heat}$ $r=0.63$) and introduced a leak-free, physically-gated architecture that catches <strong>53.8% of district crashes</strong>. It successfully detects structural crop vulnerability from antecedent winter signals.
+    </div>
+    <div class="box bamber">
+      <strong>Empirical Boundary Conditions:</strong> The system is a crash-regime specialist; it generates a high false-alarm rate in normal years. Tree-based integration is highly vulnerable to socio-economic covariate shifts.
+    </div>
+    <div class="box bblue">
+      <strong>Future Work:</strong>
+      <ul style="margin-top:5px; margin-bottom:0;">
+        <li>Substitute flat feature spaces for hard biophysical override gates.</li>
+        <li>Separate biological feature streams from economic management variables.</li>
+        <li>Inject <em>Monte Carlo synthetic weather</em> into WOFOST to train the ML model on unprecedented extremes.</li>
+      </ul>
+    </div>
+  </div>
+  <aside class="notes">To conclude, we built a system that extracts massive pre-season signal from noisy data. It proves that to predict black swan events, we must let machine learning handle the complex non-linear center, but rigorously subordinate it to hard biophysical limits at the extremes. Thank you, I will now take questions.</aside>
+</section>
+
+</div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.3.1/reveal.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.3.1/plugin/notes/notes.min.js"></script>
+<script>
+Reveal.initialize({
+  hash:true, slideNumber:'c/t', transition:'fade', transitionSpeed:'fast',
+  plugins:[RevealNotes],
+  width:1100, height:760, margin:0.03, minScale:0.15, maxScale:2.0,
+  center:false
+});
+</script>
+</body>
+</html>
